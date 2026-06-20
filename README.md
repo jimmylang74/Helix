@@ -150,3 +150,6 @@ python3 test_agent.py
 - 同时输出到屏幕和控制台文件 `debugout.log`
 - 颜色标识: 蓝色(Agent→LLM), 绿色(LLM→Agent), 青色(Tool调用), 黄色(Orchestrator状态)
 - 管理控制台提供Web日志查看器
+
+## 版权
+MIT

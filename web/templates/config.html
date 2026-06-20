@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <h2>配置管理</h2>
+    <p class="text-muted">管理系统配置，包括 LLM、工具和意图设置</p>
+</div>
+
+<div class="tabs">
+    <button class="tab-btn active" data-tab="llm">LLM 配置</button>
+    <button class="tab-btn" data-tab="tools">工具配置</button>
+    <button class="tab-btn" data-tab="intents">意图管理</button>
+    <button class="tab-btn" data-tab="server">服务设置</button>
+</div>
+
+<!-- LLM Config -->
+<div class="tab-content active" id="tab-llm">
+    <div class="card">
+        <div class="card-header">
+            <h3>LLM 提供商</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>选择提供商</label>
+                <select id="llmProvider" class="form-control" onchange="onProviderChange()">
+                    <option value="ollama">Ollama（本地）</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="gemini">Gemini</option>
+                    <option value="deepseek">DeepSeek</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3>Ollama 配置</h3>
+        </div>
+        <div class="card-body" id="ollamaConfig">
+            <div class="form-group">
+                <label>API 地址</label>
+                <input type="text" id="ollamaBaseUrl" class="form-control" placeholder="http://localhost:11434">
+            </div>
+            <div class="form-group">
+                <label>模型名称</label>
+                <input type="text" id="ollamaModel" class="form-control" placeholder="qwen2.5:7b">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>温度</label>
+                    <input type="number" id="ollamaTemp" class="form-control" step="0.1" min="0" max="2" placeholder="0.7">
+                </div>
+                <div class="form-group">
+                    <label>最大 Token</label>
+                    <input type="number" id="ollamaMaxTokens" class="form-control" step="100" min="256" placeholder="4096">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" id="openaiConfig" style="display: none;">
+        <div class="card-header">
+            <h3>OpenAI 配置</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="openaiApiKey" class="form-control" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+                <label>API 地址</label>
+                <input type="text" id="openaiBaseUrl" class="form-control" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="form-group">
+                <label>模型</label>
+                <input type="text" id="openaiModel" class="form-control" placeholder="gpt-4o">
+            </div>
+        </div>
+    </div>
+
+    <div class="card" id="geminiConfig" style="display: none;">
+        <div class="card-header">
+            <h3>Gemini 配置</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="geminiApiKey" class="form-control" placeholder="AIza...">
+            </div>
+            <div class="form-group">
+                <label>模型</label>
+                <input type="text" id="geminiModel" class="form-control" placeholder="gemini-2.0-flash">
+            </div>
+        </div>
+    </div>
+
+    <div class="card" id="deepseekConfig" style="display: none;">
+        <div class="card-header">
+            <h3>DeepSeek 配置</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="deepseekApiKey" class="form-control" placeholder="sk-...">
+            </div>
+            <div class="form-group">
+                <label>API 地址</label>
+                <input type="text" id="deepseekBaseUrl" class="form-control" placeholder="https://api.deepseek.com/v1">
+            </div>
+            <div class="form-group">
+                <label>模型</label>
+                <input type="text" id="deepseekModel" class="form-control" placeholder="deepseek-chat">
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <button class="btn btn-primary" onclick="saveLLMConfig()">保存 LLM 配置</button>
+            <button class="btn btn-outline" onclick="testLLM()">测试连接</button>
+            <span id="llmTestResult" class="ml-2"></span>
+        </div>
+    </div>
+</div>
+
+<!-- Tools Config -->
+<div class="tab-content" id="tab-tools">
+    <div class="card">
+        <div class="card-header">
+            <h3>SearXNG 搜索服务</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="searxngEnabled"> 启用 SearXNG
+                </label>
+            </div>
+            <div class="form-group">
+                <label>服务地址</label>
+                <input type="text" id="searxngUrl" class="form-control" placeholder="http://localhost:8888">
+            </div>
+            <div class="form-group">
+                <label>最大结果数</label>
+                <input type="number" id="searxngMaxResults" class="form-control" value="10" min="1" max="50">
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3>图片搜索</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>提供商</label>
+                <select id="imageProvider" class="form-control">
+                    <option value="pexels">Pexels</option>
+                    <option value="unsplash">Unsplash</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Pexels API Key</label>
+                <input type="password" id="pexelsApiKey" class="form-control" placeholder="Pexels API Key">
+            </div>
+            <div class="form-group">
+                <label>Unsplash API Key</label>
+                <input type="password" id="unsplashApiKey" class="form-control" placeholder="Unsplash API Key (Access Key)">
+            </div>
+            <button class="btn btn-primary" onclick="saveToolsConfig()">保存工具配置</button>
+        </div>
+    </div>
+</div>
+
+<!-- Intents Config -->
+<div class="tab-content" id="tab-intents">
+    <div class="card">
+        <div class="card-header">
+            <h3>注册的意图</h3>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>名称</th>
+                        <th>描述</th>
+                        <th>状态</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody id="intentsTable">
+                    <tr>
+                        <td colspan="5" class="text-center">加载中...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3>注册新意图</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>意图 ID</label>
+                <input type="text" id="newIntentId" class="form-control" placeholder="e.g., translation">
+            </div>
+            <div class="form-group">
+                <label>名称</label>
+                <input type="text" id="newIntentName" class="form-control" placeholder="翻译">
+            </div>
+            <div class="form-group">
+                <label>描述</label>
+                <textarea id="newIntentDesc" class="form-control" rows="2" placeholder="根据用户要求进行翻译"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="registerIntent()">注册意图</button>
+        </div>
+    </div>
+</div>
+
+<!-- Server Config -->
+<div class="tab-content" id="tab-server">
+    <div class="card">
+        <div class="card-header">
+            <h3>服务设置</h3>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label>服务端口</label>
+                <input type="number" id="servicePort" class="form-control" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label>管理端口</label>
+                <input type="number" id="adminPort" class="form-control" min="1" max="65535">
+            </div>
+            <div class="form-group">
+                <label>绑定地址</label>
+                <input type="text" id="serverHost" class="form-control" placeholder="0.0.0.0">
+            </div>
+            <button class="btn btn-primary" onclick="saveServerConfig()">保存服务设置</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/config.js"></script>
+{% endblock %}

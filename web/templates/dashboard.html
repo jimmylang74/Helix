@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <h2>仪表盘</h2>
+    <p class="text-muted">AI Agent 混合驱动智能服务控制台</p>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">🔄</div>
+        <div class="stat-info">
+            <h3 id="totalRequests">0</h3>
+            <p>总请求数</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">✅</div>
+        <div class="stat-info">
+            <h3 id="successfulRequests">0</h3>
+            <p>成功请求</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">❌</div>
+        <div class="stat-info">
+            <h3 id="failedRequests">0</h3>
+            <p>失败请求</p>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon">📄</div>
+        <div class="stat-info">
+            <h3 id="generatedFiles">0</h3>
+            <p>生成文件</p>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3>快速测试</h3>
+    </div>
+    <div class="card-body">
+        <form id="testForm">
+            <div class="form-group">
+                <label for="requestType">请求类型</label>
+                <select id="requestType" class="form-control">
+                    <option value="auto">自动识别</option>
+                    <option value="research">智能搜索</option>
+                    <option value="ppt">PPT生成</option>
+                    <option value="coding">代码生成</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="requestInput">请求内容</label>
+                <textarea id="requestInput" class="form-control" rows="4"
+                    placeholder="请输入您的请求..."></textarea>
+            </div>
+            <button type="submit" class="btn btn-primary" id="submitBtn">
+                <span id="btnText">发送请求</span>
+                <span id="btnSpinner" class="spinner hidden">⟳</span>
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card" id="resultCard" style="display: none;">
+    <div class="card-header">
+        <h3>处理结果</h3>
+        <button class="btn btn-sm btn-outline" onclick="copyResult()">📋 复制</button>
+    </div>
+    <div class="card-body">
+        <div class="result-meta">
+            <span class="badge" id="resultStatus">处理中...</span>
+            <span class="badge badge-info" id="resultIntent"></span>
+            <span class="badge badge-secondary" id="resultId"></span>
+        </div>
+        <pre id="resultContent" class="result-box"></pre>
+        <div id="resultFiles" class="file-list"></div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3>系统信息</h3>
+    </div>
+    <div class="card-body">
+        <div class="info-grid" id="systemInfo">
+            <div class="info-item">
+                <label>LLM 提供商</label>
+                <span id="llmProvider">-</span>
+            </div>
+            <div class="info-item">
+                <label>LLM 模型</label>
+                <span id="llmModel">-</span>
+            </div>
+            <div class="info-item">
+                <label>服务端口</label>
+                <span id="servicePort">-</span>
+            </div>
+            <div class="info-item">
+                <label>管理端口</label>
+                <span id="adminPort">-</span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

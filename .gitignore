@@ -1,0 +1,6 @@
+.codegraph/
+debugout.log
+output/
+download/
+__pycache__/
+

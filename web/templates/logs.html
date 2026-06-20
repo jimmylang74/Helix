@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <h2>运行日志</h2>
+    <div class="header-actions">
+        <button class="btn btn-outline" onclick="refreshLogs()">🔄 刷新</button>
+        <button class="btn btn-outline" onclick="clearLogs()">🗑️ 清屏</button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="log-controls">
+            <label>显示行数：
+                <select id="logLines" onchange="refreshLogs()">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                </select>
+            </label>
+            <label>
+                <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> 自动刷新
+            </label>
+            <label>
+                <input type="checkbox" id="colorCode" checked onchange="toggleColorCode()"> 颜色标识
+            </label>
+        </div>
+        <div id="logContainer" class="log-container"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/logs.js"></script>
+{% endblock %}

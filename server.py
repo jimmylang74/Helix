@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.utils.logger import init_logger, log_info, log_error, log_orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
+from modules.agents.tool_base import tool_registry
 
 
 def create_service_app() -> Flask:
@@ -81,6 +82,10 @@ def main():
     init_logger("debugout.log", console=True)
     log_info(f"Starting AI Hybrid Agent Service...")
     log_info(f"Service port: {service_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
+
+    # Initialize plugin tool registry (auto-scans plugins/ directory)
+    tool_registry.initialize()
+    log_info(f"Plugin tools registered: {len(tool_registry.get_all())} tool(s)")
 
     # Create apps
     service_app = create_service_app()

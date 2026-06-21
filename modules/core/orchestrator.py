@@ -14,7 +14,7 @@ from modules.core.agent_state import (
 )
 from modules.core.context_manager import context_manager
 from modules.core.todo_manager import todo_manager
-from modules.agents.agent_tools import AgentTools
+from modules.agents.tool_base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
 from modules.prompts.system_prompts import (
@@ -36,7 +36,6 @@ class AgentOrchestrator:
 
     def __init__(self):
         self.llm = LLMClient()
-        self.tools = AgentTools()
         self.file_ops = FileOps()
         self._active_states: Dict[str, AgentState] = {}
 
@@ -222,48 +221,18 @@ class AgentOrchestrator:
             except Exception as e:
                 log_error(f"MCP initialization failed: {e}")
 
-        # Build tool definitions: base tools + MCP tools for this intent
-        tool_definitions = [
-            ToolDefinition(
-                name="web_search",
-                description="Search the web for information. Returns a list of URLs with titles and snippets.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The search query string"
-                        }
-                    },
-                    "required": ["query"]
-                }
-            ),
-            ToolDefinition(
-                name="image_search",
-                description="Search for images related to a query. Returns image URLs.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The image search query"
-                        },
-                        "max_results": {
-                            "type": "integer",
-                            "description": "Maximum number of images (default: 5)",
-                            "default": 5
-                        }
-                    },
-                    "required": ["query"]
-                }
-            ),
-        ]
-
-        # Add MCP tools for the current intent
+        tool_definitions = []
         intent = state.get("intent_type", "research")
+
+        for tool in tool_registry.get_enabled_tools():
+            tool_definitions.append(ToolDefinition(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.parameters,
+            ))
+
         mcp_tools = mcp_registry.get_tools_for_intent(intent)
         for mt in mcp_tools:
-            # Avoid duplicate tool names
             existing_names = {t.name for t in tool_definitions}
             if mt.name not in existing_names:
                 tool_definitions.append(ToolDefinition(
@@ -347,14 +316,12 @@ class AgentOrchestrator:
         try:
             if name == "web_search":
                 query = arguments.get("query", "")
-                # Try MCP first, fall back to direct AgentTools
                 try:
                     result_text = mcp_registry.call_tool("web_search", {"query": query})
                     results = json.loads(result_text) if result_text else []
                 except Exception:
-                    results = self.tools.web_search_func(query)
+                    results = tool_registry.call_tool("web_search", {"query": query})
 
-                # Store URLs
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"] = urls
 
@@ -362,10 +329,9 @@ class AgentOrchestrator:
                 context_manager.add_message(state, "assistant",
                     f"[web_search results for '{query}']\n{formatted}")
 
-                # If we got URLs, fetch them automatically
                 if urls:
                     log_agent_action(f"Auto-fetching {len(urls)} URLs...")
-                    fetched = self.tools.web_fetch_batch(urls)
+                    fetched = tool_registry.call_tool("web_fetch_batch", {"urls": urls})
                     state["fetched_content"].append(fetched)
                     state["collected_data"].append(fetched)
                     context_manager.add_message(state, "assistant",
@@ -374,35 +340,37 @@ class AgentOrchestrator:
             elif name == "image_search":
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
-                # Try MCP first, fall back to direct AgentTools
                 try:
                     result_text = mcp_registry.call_tool("image_search", {"query": query, "max_results": max_results})
                     results = json.loads(result_text) if result_text else []
                 except Exception:
-                    results = self.tools.image_search_func(query, max_results)
+                    results = tool_registry.call_tool("image_search", {"query": query, "max_results": max_results})
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"].extend(urls)
 
-                # Auto-download images for PPT
                 if state.get("intent_type") == "ppt" and urls:
                     log_agent_action(f"Auto-downloading {len(urls)} images...")
-                    saved = self.tools.image_download(urls)
+                    saved = tool_registry.call_tool("image_download", {"urls": urls})
                     state["generated_files"].extend(saved)
 
                 context_manager.add_message(state, "assistant",
                     f"[image_search results for '{query}']\n{json.dumps(results, ensure_ascii=False)}")
 
             else:
-                # Try MCP for unknown tools
                 try:
                     result_text = mcp_registry.call_tool(name, arguments)
                     context_manager.add_message(state, "assistant",
                         f"[{name} results]\n{result_text}")
                 except Exception:
-                    log_error(f"Unknown tool: {name}")
-                    context_manager.add_message(state, "assistant",
-                        f"[tool error] Unknown tool: {name}")
+                    try:
+                        result = tool_registry.call_tool(name, arguments)
+                        context_manager.add_message(state, "assistant",
+                            f"[{name} results]\n{json.dumps(result, ensure_ascii=False, default=str)}")
+                    except Exception:
+                        log_error(f"Unknown tool: {name}")
+                        context_manager.add_message(state, "assistant",
+                            f"[tool error] Unknown tool: {name}")
 
         except Exception as e:
             log_error(f"Tool execution failed: {name}: {e}")

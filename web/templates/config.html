@@ -8,6 +8,7 @@
 <div class="tabs">
     <button class="tab-btn active" data-tab="llm" data-i18n="config.tab.llm">LLM 配置</button>
     <button class="tab-btn" data-tab="mcp" data-i18n="config.tab.mcp">MCP 配置</button>
+    <button class="tab-btn" data-tab="plugins" data-i18n="config.tab.plugins">插件管理</button>
     <button class="tab-btn" data-tab="intents" data-i18n="config.tab.intents">意图管理</button>
     <button class="tab-btn" data-tab="server" data-i18n="config.tab.server">服务设置</button>
 </div>
@@ -241,6 +242,60 @@
                 <button class="btn btn-primary" onclick="saveCustomMCPServer()" data-i18n="config.mcp.save">保存</button>
                 <button class="btn btn-outline" onclick="testCustomMCP()" data-i18n="config.mcp.test">测试连接</button>
                 <span id="mcpCustomTestResult" class="ml-2"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Plugin Tools Management -->
+<div class="tab-content" id="tab-plugins">
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.plugins.title">插件工具管理</h3>
+            <span class="text-muted" id="pluginsTotalCount"></span>
+        </div>
+        <div class="card-body">
+            <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;">
+                <label data-i18n="config.plugins.filterCategory">按类别筛选：</label>
+                <select id="pluginCategoryFilter" class="form-control" style="width:auto;min-width:150px;" onchange="filterPlugins()">
+                    <option value="all" data-i18n="config.plugins.allCategories">全部类别</option>
+                </select>
+                <input type="text" id="pluginSearchInput" class="form-control" style="width:auto;min-width:200px;" placeholder="搜索工具名称..." data-i18n-placeholder="config.plugins.searchPlaceholder" oninput="filterPlugins()">
+            </div>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.plugins.name">工具名称</th>
+                        <th data-i18n="config.plugins.category">类别</th>
+                        <th data-i18n="config.plugins.description">描述</th>
+                        <th data-i18n="config.plugins.status">状态</th>
+                        <th data-i18n="config.plugins.actions">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="pluginsTable">
+                    <tr><td colspan="5" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Plugin Detail Modal -->
+    <div id="pluginDetailModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closePluginDetail()">
+        <div style="background:white;border-radius:8px;padding:24px;max-width:700px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+            <h3 id="pluginDetailTitle" style="margin-bottom:8px;"></h3>
+            <p id="pluginDetailDesc" class="text-muted" style="margin-bottom:16px;"></p>
+
+            <div style="margin-bottom:16px;">
+                <span class="badge" id="pluginDetailCategory"></span>
+                <span class="badge" id="pluginDetailStatus"></span>
+            </div>
+
+            <h4 style="margin-bottom:8px;" data-i18n="config.plugins.parameters">参数详情</h4>
+            <div id="pluginDetailParams" style="background:#f8f9fa;border-radius:6px;padding:16px;font-family:monospace;font-size:13px;white-space:pre-wrap;max-height:400px;overflow-y:auto;"></div>
+
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-outline" onclick="closePluginDetail()" data-i18n="config.plugins.close">关闭</button>
+                <button class="btn btn-primary" id="pluginDetailToggleBtn" onclick="togglePluginFromDetail()"></button>
             </div>
         </div>
     </div>

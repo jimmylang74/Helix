@@ -577,9 +577,9 @@ graph TB
     ST -->|subclass| BT
 
     BT -->|注册| TR
-    TR -->|get_enabled_tools()| ORCH
-    TR -->|get_all_as_list()| ADMIN
-    TR -->|call_tool(name, args)| ORCH
+    TR -->|"get_enabled_tools()"| ORCH
+    TR -->|"get_all_as_list()"| ADMIN
+    TR -->|"call_tool(name, args)"| ORCH
     TR -->|toggle / enable / disable| ADMIN
 
     style PluginDir fill:#e8f5e9,stroke:#2e7d32,color:#000

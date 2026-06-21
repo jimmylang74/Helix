@@ -4,4 +4,6 @@ output/
 download/
 __pycache__/
 ai_agent.json
+.env
+.git-credential-helper.sh
 

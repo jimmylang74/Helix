@@ -1,8 +1,8 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-    <h2>使用记录</h2>
-    <button class="btn btn-outline" onclick="refreshHistory()">🔄 刷新</button>
+    <h2 data-i18n="history.title">使用记录</h2>
+    <button class="btn btn-outline" onclick="refreshHistory()" data-i18n="history.refresh">🔄 刷新</button>
 </div>
 
 <div class="card">
@@ -10,16 +10,16 @@
         <table class="table">
             <thead>
                 <tr>
-                    <th>请求 ID</th>
-                    <th>类型</th>
-                    <th>请求内容</th>
-                    <th>状态</th>
-                    <th>时间</th>
+                    <th data-i18n="history.requestId">请求 ID</th>
+                    <th data-i18n="history.type">类型</th>
+                    <th data-i18n="history.requestContent">请求内容</th>
+                    <th data-i18n="history.status">状态</th>
+                    <th data-i18n="history.time">时间</th>
                 </tr>
             </thead>
             <tbody id="historyTable">
                 <tr>
-                    <td colspan="5" class="text-center text-muted">暂无记录</td>
+                    <td colspan="5" class="text-center text-muted" data-i18n="history.noRecords">暂无记录</td>
                 </tr>
             </tbody>
         </table>
@@ -27,12 +27,12 @@
 </div>
 
 <div class="card">
-    <div class="card-header">
-        <h3>输出文件</h3>
-    </div>
+        <div class="card-header">
+            <h3 data-i18n="history.fileListTitle">输出文件</h3>
+        </div>
     <div class="card-body">
         <div id="fileList" class="file-list">
-            <p class="text-muted">暂无生成文件</p>
+            <p class="text-muted" data-i18n="history.noFiles">暂无生成文件</p>
         </div>
     </div>
 </div>

@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-header">
-    <h2>运行日志</h2>
+    <h2 data-i18n="logs.title">运行日志</h2>
     <div class="header-actions">
-        <button class="btn btn-outline" onclick="refreshLogs()">🔄 刷新</button>
-        <button class="btn btn-outline" onclick="clearLogs()">🗑️ 清屏</button>
+        <button class="btn btn-outline" onclick="refreshLogs()" data-i18n="logs.refresh">🔄 刷新</button>
+        <button class="btn btn-outline" onclick="clearLogs()" data-i18n="logs.clear">🗑️ 清屏</button>
     </div>
 </div>
 
 <div class="card">
     <div class="card-body">
         <div class="log-controls">
-            <label>显示行数：
+            <label><span data-i18n="logs.showLines">显示行数：</span>
                 <select id="logLines" onchange="refreshLogs()">
                     <option value="50">50</option>
                     <option value="100" selected>100</option>
@@ -20,10 +20,10 @@
                 </select>
             </label>
             <label>
-                <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> 自动刷新
+                <input type="checkbox" id="autoRefresh" checked onchange="toggleAutoRefresh()"> <span data-i18n="logs.autoRefresh">自动刷新</span>
             </label>
             <label>
-                <input type="checkbox" id="colorCode" checked onchange="toggleColorCode()"> 颜色标识
+                <input type="checkbox" id="colorCode" checked onchange="toggleColorCode()"> <span data-i18n="logs.colorCode">颜色标识</span>
             </label>
         </div>
         <div id="logContainer" class="log-container"></div>

@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Agent Service - 控制台</title>
+    <title data-i18n="app.title">AI Agent Service - 控制台</title>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
     <nav class="sidebar">
         <div class="sidebar-header">
-            <h1>Helix（AI Agent）</h1>
-            <p class="subtitle">混合驱动智能服务</p>
+            <h1 data-i18n="app.brand">Helix（AI Agent）</h1>
+            <p class="subtitle" data-i18n="app.subtitle">混合驱动智能服务</p>
             <div class="sidebar-version">
                 <img src="https://img.shields.io/github/v/tag/jimmylang74/Helix?style=flat-square&label=Helix&color=blue"
                      alt="Helix Version"
@@ -19,22 +19,22 @@
         </div>
         <ul class="nav-list">
             <li><a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
-                <span class="nav-icon">📊</span> 仪表盘
+                <span class="nav-icon">📊</span> <span data-i18n="nav.dashboard">仪表盘</span>
             </a></li>
             <li><a href="/config" class="nav-link {% if request.path == '/config' %}active{% endif %}">
-                <span class="nav-icon">⚙️</span> 配置管理
+                <span class="nav-icon">⚙️</span> <span data-i18n="nav.config">配置管理</span>
             </a></li>
             <li><a href="/logs" class="nav-link {% if request.path == '/logs' %}active{% endif %}">
-                <span class="nav-icon">📋</span> 运行日志
+                <span class="nav-icon">📋</span> <span data-i18n="nav.logs">运行日志</span>
             </a></li>
             <li><a href="/history" class="nav-link {% if request.path == '/history' %}active{% endif %}">
-                <span class="nav-icon">📁</span> 使用记录
+                <span class="nav-icon">📁</span> <span data-i18n="nav.history">使用记录</span>
             </a></li>
         </ul>
         <div class="sidebar-footer">
             <div class="status-indicator" id="statusIndicator">
                 <span class="status-dot active"></span>
-                <span>系统运行中</span>
+                <span data-i18n="status.running">系统运行中</span>
             </div>
         </div>
     </nav>
@@ -44,6 +44,7 @@
     </main>
 
     <script src="/static/js/main.js"></script>
+    <script src="/static/js/i18n.js"></script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

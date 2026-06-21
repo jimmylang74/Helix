@@ -669,3 +669,18 @@ select.form-control {
     font-weight: 600;
     margin-left: auto;
 }
+
+/* Language Selector */
+#languageSelect {
+    max-width: 240px;
+}
+
+.form-group select#languageSelect {
+    cursor: pointer;
+}
+
+/* Sidebar version badge (keep visible on small screens) */
+.sidebar-version .version-badge {
+    max-width: 140px;
+    height: auto;
+}

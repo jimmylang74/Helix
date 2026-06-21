@@ -67,7 +67,8 @@ class ConfigManager:
                 "service_port": 11555,
                 "admin_port": 11556,
                 "host": "0.0.0.0",
-                "debug": True
+                "debug": True,
+                "language": "zh-CN"
             },
             "llm": {
                 "provider": "ollama",
@@ -113,18 +114,18 @@ class ConfigManager:
             "intents": {
                 "ppt": {
                     "enabled": True,
-                    "name": "PPT生成",
-                    "description": "根据用户提供的资料，智能生成PPT排版、背景设计和信息补全"
+                    "name": "PPT Generation",
+                    "description": "Generate PPT layouts, backgrounds and content based on user-provided materials"
                 },
                 "research": {
                     "enabled": True,
-                    "name": "智能搜索",
-                    "description": "根据用户的问题，搜索网络内容，筛选和清洗内容，进行最终回答"
+                    "name": "Smart Search",
+                    "description": "Search the web, filter and refine content to provide a final answer"
                 },
                 "coding": {
                     "enabled": True,
-                    "name": "代码生成",
-                    "description": "根据用户要求生成代码，并进行简单测试和验证"
+                    "name": "Code Generation",
+                    "description": "Generate code based on user requirements with basic testing and validation"
                 }
             },
             "mcp_servers": {

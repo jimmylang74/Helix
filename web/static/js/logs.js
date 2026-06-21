@@ -6,7 +6,8 @@
 let autoRefreshTimer = null;
 let colorCodeEnabled = true;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    if (typeof i18nReady !== 'undefined') await i18nReady;
     refreshLogs();
     startAutoRefresh();
 });
@@ -17,7 +18,7 @@ async function refreshLogs() {
 
     if (!result.success) {
         document.getElementById('logContainer').textContent =
-            `加载日志失败: ${result.error}`;
+            `${__('logs.loadFailed')}${result.error}`;
         return;
     }
 
@@ -25,7 +26,7 @@ async function refreshLogs() {
     const logs = result.logs || [];
 
     if (logs.length === 0) {
-        logContainer.innerHTML = '<div class="log-entry info">暂无日志</div>';
+        logContainer.innerHTML = '<div class="log-entry info">' + __('logs.noLogs') + '</div>';
         return;
     }
 

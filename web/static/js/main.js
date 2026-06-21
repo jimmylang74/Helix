@@ -32,7 +32,7 @@ function showToast(message, type = 'info') {
     toast.className = `toast toast-${type}`;
     toast.textContent = message;
     toast.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px;
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
         padding: 12px 24px; border-radius: 8px;
         color: white; font-size: 14px; z-index: 1000;
         animation: fadeIn 0.3s ease;

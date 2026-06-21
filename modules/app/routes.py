@@ -374,3 +374,16 @@ def create_admin_routes(app):
         import os
         output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "output")
         return send_from_directory(output_dir, filename)
+
+    # Add locale serving route
+    @app.route("/api/admin/locale/<lang>")
+    def serve_locale(lang):
+        import os, json
+        locale_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "web", "locales")
+        safe_lang = lang.replace("..", "").replace("/", "").replace("\\", "")
+        filepath = os.path.join(locale_dir, f"{safe_lang}.json")
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Locale not found"}), 404
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return jsonify(data)

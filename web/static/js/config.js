@@ -55,6 +55,8 @@ async function loadConfig() {
     document.getElementById('servicePort').value = server.service_port || 11555;
     document.getElementById('adminPort').value = server.admin_port || 11556;
     document.getElementById('serverHost').value = server.host || '0.0.0.0';
+    const langSelect = document.getElementById('languageSelect');
+    if (langSelect) langSelect.value = server.language || 'zh-CN';
 }
 
 function onProviderChange() {
@@ -102,25 +104,25 @@ async function saveLLMConfig() {
     const result = await apiCall('/admin/config', 'POST', {
         section: 'llm', values: getLLMConfig(),
     });
-    if (result.success) showToast('LLM 配置已保存', 'success');
-    else showToast('保存失败: ' + (result.error || '未知错误'), 'error');
+    if (result.success) showToast(__('config.llm.saveSuccess'), 'success');
+    else showToast(__('config.llm.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
 }
 
 async function testLLM() {
     const btn = event.target;
     btn.disabled = true;
-    btn.textContent = '测试中...';
+    btn.textContent = __('config.llm.testing');
     const resultEl = document.getElementById('llmTestResult');
     const result = await apiCall('/admin/llm/test', 'POST');
     if (result.success) {
-        resultEl.textContent = '✅ 连接成功: ' + (result.response || '').substring(0, 100);
+        resultEl.textContent = __('config.llm.testSuccess') + (result.response || '').substring(0, 100);
         resultEl.style.color = 'green';
     } else {
-        resultEl.textContent = '❌ 连接失败: ' + (result.error || '未知错误');
+        resultEl.textContent = __('config.llm.testFailed') + (result.error || __('config.llm.unknownError'));
         resultEl.style.color = 'red';
     }
     btn.disabled = false;
-    btn.textContent = '测试连接';
+    btn.textContent = __('config.llm.test');
 }
 
 // ============================================================
@@ -133,23 +135,23 @@ async function loadIntents() {
     const result = await apiCall('/admin/intents');
     const tbody = document.getElementById('intentsTable');
     if (!result.success || !result.intents) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">加载失败</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">' + __('config.intents.loadFailed') + '</td></tr>';
         return;
     }
     registeredIntents = result.intents;
     const entries = Object.entries(registeredIntents);
     if (entries.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">暂无注册的意图</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('config.intents.none') + '</td></tr>';
     } else {
         tbody.innerHTML = entries.map(([id, intent]) => `
             <tr>
                 <td><code>${id}</code></td>
                 <td>${intent.name || id}</td>
                 <td>${intent.description || '-'}</td>
-                <td><span class="badge ${intent.enabled ? 'badge-success' : 'badge-danger'}">${intent.enabled ? '启用' : '禁用'}</span></td>
+                <td><span class="badge ${intent.enabled ? 'badge-success' : 'badge-danger'}">${intent.enabled ? __('config.intents.enabled') : __('config.intents.disabled')}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-outline" onclick="toggleIntent('${id}')">${intent.enabled ? '禁用' : '启用'}</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteIntent('${id}')">删除</button>
+                    <button class="btn btn-sm btn-outline" onclick="toggleIntent('${id}')">${intent.enabled ? __('config.intents.disable') : __('config.intents.enable')}</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteIntent('${id}')">${__('config.intents.deleteLabel')}</button>
                 </td>
             </tr>
         `).join('');
@@ -164,7 +166,7 @@ function renderIntentCheckboxes() {
         const container = document.getElementById(containerId);
         if (!container) return;
         if (entries.length === 0) {
-            container.innerHTML = '<span class="text-muted">暂无意图分类</span>';
+            container.innerHTML = '<span class="text-muted">' + __('common.noData') + '</span>';
             return;
         }
         container.innerHTML = entries.map(([id, intent]) => `
@@ -220,9 +222,9 @@ function updateMultiselectLabel(containerId) {
     const checked = container.querySelectorAll('.intent-checkbox:checked');
     const total = container.querySelectorAll('.intent-checkbox');
     if (checked.length === total.length) {
-        btn.textContent = '全部意图 (' + total.length + ')';
+        btn.textContent = __('config.mcp.allIntents') + ' (' + total.length + ')';
     } else if (checked.length === 0) {
-        btn.textContent = btn.dataset.placeholder || '选择意图分类';
+        btn.textContent = btn.dataset.i18nPlaceholder ? __(btn.dataset.i18nPlaceholder) : (btn.dataset.placeholder || __('config.mcp.intentPlaceholder'));
     } else {
         const names = Array.from(checked).map(cb => {
             const label = cb.closest('label');
@@ -276,16 +278,16 @@ async function loadMCPServers() {
     const customNames = Object.keys(mcpServers).filter(n => n !== 'searxng' && n !== 'image_search');
     const tbody = document.getElementById('mcpCustomServersTable');
     if (customNames.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">暂无自定义 MCP 服务</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">' + __('config.mcp.noCustom') + '</td></tr>';
         return;
     }
     tbody.innerHTML = customNames.map(name => {
         const s = mcpServers[name];
         const st = status[name] || {};
-        const connected = st.connected ? '🟢 已连接' : '🔴 未连接';
+        const connected = st.connected ? __('config.mcp.connected') : __('config.mcp.disconnected');
         const toolsCount = st.tools_count || 0;
         const addr = s.type === 'server' ? (s.url || '-') : (s.command || '') + ' ' + (s.args || []).join(' ');
-        const intents = (s.intent_categories || []).join(', ') || '所有';
+        const intents = (s.intent_categories || []).join(', ') || __('config.mcp.all');
         return `<tr>
             <td><code>${name}</code></td>
             <td>${s.type === 'server' ? 'Server' : 'Local'}</td>
@@ -294,8 +296,8 @@ async function loadMCPServers() {
             <td>${toolsCount}</td>
             <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${intents}">${intents}</td>
             <td>
-                <button class="btn btn-sm btn-outline" onclick="editCustomMCPServer('${name}')">编辑</button>
-                <button class="btn btn-sm btn-danger" onclick="deleteCustomMCPServer('${name}')">删除</button>
+                <button class="btn btn-sm btn-outline" onclick="editCustomMCPServer('${name}')">${__('config.mcp.edit')}</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteCustomMCPServer('${name}')">${__('config.mcp.delete')}</button>
             </td>
         </tr>`;
     }).join('');
@@ -317,10 +319,10 @@ async function saveBuiltinMCPSearxng() {
     };
     const result = await apiCall('/admin/mcp/servers/searxng', 'POST', config);
     if (result.success) {
-        showToast('SearXNG MCP 配置已保存', 'success');
+        showToast(__('config.mcp.srcSaveSuccess'), 'success');
         loadMCPServers();
     } else {
-        showToast('保存失败: ' + (result.error || '未知错误'), 'error');
+        showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
 }
 
@@ -341,10 +343,10 @@ async function saveBuiltinMCPImageSearch() {
     };
     const result = await apiCall('/admin/mcp/servers/image_search', 'POST', config);
     if (result.success) {
-        showToast('图片搜索 MCP 配置已保存', 'success');
+        showToast(__('config.mcp.imgSaveSuccess'), 'success');
         loadMCPServers();
     } else {
-        showToast('保存失败: ' + (result.error || '未知错误'), 'error');
+        showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
 }
 
@@ -353,7 +355,7 @@ async function saveBuiltinMCPImageSearch() {
 async function testBuiltinMCP(name) {
     const btn = event.target;
     btn.disabled = true;
-    btn.textContent = '测试中...';
+    btn.textContent = __('config.mcp.testingLabel');
     const resultEl = document.getElementById(name === 'searxng' ? 'mcpSearxngTestResult' : 'mcpImageSearchTestResult');
 
     let config;
@@ -379,21 +381,21 @@ async function testBuiltinMCP(name) {
     const result = await apiCall('/admin/mcp/test', 'POST', { name, config });
     if (result.success && result.result && result.result.connected) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
-        resultEl.innerHTML = `✅ 连接成功 (工具: ${tools})`;
+        resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${__('config.mcp.tools')}: ${tools})`;
         resultEl.style.color = 'green';
     } else {
-        resultEl.innerHTML = '❌ 连接失败: ' + ((result.result && result.result.error) || result.error || '未知错误');
+        resultEl.innerHTML = __('config.mcp.testFailed') + ((result.result && result.result.error) || result.error || __('config.llm.unknownError'));
         resultEl.style.color = 'red';
     }
     btn.disabled = false;
-    btn.textContent = '测试连接';
+    btn.textContent = __('config.mcp.test');
 }
 
 // ── Custom MCP Server Modal ────────────────────────────────
 
 function showAddMCPServer() {
     currentEditServer = null;
-    document.getElementById('mcpModalTitle').textContent = '添加 MCP 服务';
+    document.getElementById('mcpModalTitle').textContent = __('config.mcp.addTitle');
     document.getElementById('mcpServerName').value = '';
     document.getElementById('mcpServerType').value = 'server';
     document.getElementById('mcpServerUrl').value = '';
@@ -421,7 +423,7 @@ function onMCPServerTypeChange() {
 
 function editCustomMCPServer(name) {
     currentEditServer = name;
-    document.getElementById('mcpModalTitle').textContent = `编辑 MCP 服务: ${name}`;
+    document.getElementById('mcpModalTitle').textContent = __('config.mcp.editTitle') + name;
     document.getElementById('mcpServerName').value = name;
     document.getElementById('mcpServerName').readOnly = true;
     document.getElementById('mcpCustomTestResult').textContent = '';
@@ -457,7 +459,7 @@ function editCustomMCPServer(name) {
 
 async function saveCustomMCPServer() {
     const name = document.getElementById('mcpServerName').value.trim();
-    if (!name) { showToast('请输入服务名称', 'error'); return; }
+    if (!name) { showToast(__('config.mcp.enterName'), 'error'); return; }
 
     const type = document.getElementById('mcpServerType').value;
     const config = {
@@ -484,22 +486,22 @@ async function saveCustomMCPServer() {
 
     const result = await apiCall(`/admin/mcp/servers/${name}`, 'POST', config);
     if (result.success) {
-        showToast(`MCP 服务 "${name}" 已保存`, 'success');
+        showToast(__('config.mcp.saved', {name}), 'success');
         closeMCPServerModal();
         loadMCPServers();
     } else {
-        showToast('保存失败: ' + (result.error || '未知错误'), 'error');
+        showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
 }
 
 async function deleteCustomMCPServer(name) {
-    if (!confirm(`确定要删除 MCP 服务 "${name}" 吗？`)) return;
+    if (!confirm(__('config.mcp.confirmDelete', {name}))) return;
     const result = await apiCall(`/admin/mcp/servers/${name}`, 'DELETE');
     if (result.success) {
-        showToast(`MCP 服务 "${name}" 已删除`, 'success');
+        showToast(__('config.mcp.deleted', {name}), 'success');
         loadMCPServers();
     } else {
-        showToast('删除失败', 'error');
+        showToast(__('config.mcp.deleteFailed'), 'error');
     }
 }
 
@@ -523,20 +525,20 @@ async function testCustomMCP() {
     }
 
     if ((type === 'server' && !config.url) || (type === 'local' && !config.command)) {
-        showToast('请填写连接信息', 'error');
+        showToast(__('config.mcp.fillInfo'), 'error');
         return;
     }
 
     const resultEl = document.getElementById('mcpCustomTestResult');
-    resultEl.textContent = '测试中...';
+    resultEl.textContent = __('config.mcp.testingLabel');
 
     const result = await apiCall('/admin/mcp/test', 'POST', { name, config });
     if (result.success && result.result && result.result.connected) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
-        resultEl.innerHTML = `✅ 连接成功 (${result.result.tools_count} 工具: ${tools})`;
+        resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${result.result.tools_count} tools: ${tools})`;
         resultEl.style.color = 'green';
     } else {
-        resultEl.innerHTML = '❌ 失败: ' + ((result.result && result.result.error) || result.error || '未知错误');
+        resultEl.innerHTML = __('config.mcp.testFailed') + ((result.result && result.result.error) || result.error || __('config.llm.unknownError'));
         resultEl.style.color = 'red';
     }
 }
@@ -557,47 +559,66 @@ async function toggleIntent(intentId) {
         });
     }
     loadIntents();
-    showToast('意图状态已更新', 'success');
+    showToast(__('config.intents.statusUpdated'), 'success');
 }
 
 async function deleteIntent(intentId) {
-    if (!confirm(`确定要删除意图 "${intentId}" 吗？`)) return;
+    if (!confirm(__('config.intents.confirmDelete', {id: intentId}))) return;
     const result = await apiCall(`/admin/intents/${intentId}`, 'DELETE');
-    if (result.success) { loadIntents(); showToast('意图已删除', 'success'); }
-    else { showToast('删除失败', 'error'); }
+    if (result.success) { loadIntents(); showToast(__('config.intents.deleted'), 'success'); }
+    else { showToast(__('config.intents.deleteFailed'), 'error'); }
 }
 
 async function registerIntent() {
     const id = document.getElementById('newIntentId').value.trim();
     const name = document.getElementById('newIntentName').value.trim();
     const desc = document.getElementById('newIntentDesc').value.trim();
-    if (!id || !name) { showToast('请填写意图 ID 和名称', 'error'); return; }
+    if (!id || !name) { showToast(__('config.intents.regRequired'), 'error'); return; }
     const intentsResult = await apiCall('/admin/intents');
     if (intentsResult.success && intentsResult.intents?.[id]) {
-        showToast('意图 ID 已存在', 'error'); return;
+        showToast(__('config.intents.idExists'), 'error'); return;
     }
     const result = await apiCall(`/admin/intents/${id}`, 'POST', { enabled: true, name, description: desc });
     if (result.success) {
-        showToast('意图注册成功', 'success');
+        showToast(__('config.intents.regSuccess'), 'success');
         document.getElementById('newIntentId').value = '';
         document.getElementById('newIntentName').value = '';
         document.getElementById('newIntentDesc').value = '';
         loadIntents();
-    } else { showToast('注册失败', 'error'); }
+    } else { showToast(__('config.intents.regFailed'), 'error'); }
 }
 
 // ============================================================
 // Server Config
 // ============================================================
 
+function onLanguageChange() {
+    const lang = document.getElementById('languageSelect').value;
+    if (typeof setLanguage === 'function') {
+        setLanguage(lang);
+    } else {
+        apiCall('/admin/config', 'POST', {
+            settings: { 'server.language': lang }
+        });
+    }
+}
+
 async function saveServerConfig() {
+    const selectedLang = document.getElementById('languageSelect').value || 'zh-CN';
     const serverConfig = {
         service_port: parseInt(document.getElementById('servicePort').value) || 11555,
         admin_port: parseInt(document.getElementById('adminPort').value) || 11556,
         host: document.getElementById('serverHost').value || '0.0.0.0',
         debug: true,
+        language: selectedLang,
     };
     const result = await apiCall('/admin/config', 'POST', { section: 'server', values: serverConfig });
-    if (result.success) showToast('服务设置已保存（部分设置需重启生效）', 'success');
-    else showToast('保存失败', 'error');
+    if (result.success) {
+        showToast(__('config.server.saveSuccess'), 'success');
+        if (typeof i18nLoadLocale === 'function') {
+            i18nLoadLocale(selectedLang);
+        }
+    } else {
+        showToast(__('config.server.saveFailed'), 'error');
+    }
 }

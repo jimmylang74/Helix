@@ -1,6 +1,6 @@
 """
 Configuration manager for AI Agent Service.
-Reads/writes ai_agent.json configuration file.
+Reads/writes Helix.json configuration file.
 """
 
 import os
@@ -9,7 +9,7 @@ import threading
 from typing import Any, Dict, Optional
 
 # Default config path
-DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "ai_agent.json")
+DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Helix.json")
 
 
 class ConfigManager:

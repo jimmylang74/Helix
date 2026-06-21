@@ -99,6 +99,8 @@ curl -X POST http://localhost:11555/api/agent/router \
 
 详细API文档见 [API.md](API.md)
 
+系统设计文档见 [doc/design.md](doc/design.md)（含架构图、时序图、MCP 与插件化设计）
+
 ## 配置文件 (`Helix.json`)
 
 | 配置项 | 说明 | 默认值 |
@@ -113,32 +115,73 @@ curl -X POST http://localhost:11555/api/agent/router \
 ## 目录结构
 
 ```
-├── server.py              # 主入口
-├── Helix.json              # 配置文件
-├── requirements.txt        # 依赖
-├── README.md               # 说明文档
-├── API.md                  # API文档
-├── debugout.log            # 日志输出
-├── test_agent.py           # 测试程序
-├── modules/
-│   ├── core/               # 核心编排
-│   │   ├── agent_state.py      # LangGraph状态定义
-│   │   ├── orchestrator.py     # 双循环编排器
-│   │   ├── context_manager.py  # 上下文管理
-│   │   └── todo_manager.py     # 任务管理
-│   ├── llm/                # LLM层
-│   │   └── llm_client.py       # 统一LLM客户端
-│   ├── agents/             # Agent层
-│   │   ├── intent_router.py    # 意图路由
-│   │   └── agent_tools.py      # Agent工具集
-│   ├── prompts/            # 提示词
-│   ├── config/             # 配置管理
-│   └── utils/              # 工具
-├── web/                    # 前端
-│   ├── templates/          # HTML模板
-│   └── static/             # JS/CSS
-├── download/               # 下载文件
-└── output/                 # 输出文件
+├── server.py                  # 主入口 (Flask 双端口: API + Admin)
+├── Helix.json                 # 配置文件 (LLM/MCP/意图/工具)
+├── requirements.txt           # Python 依赖
+├── README.md                  # 说明文档
+├── API.md                     # API 文档
+├── debugout.log               # 运行日志输出
+├── test_agent.py              # 测试程序
+├── doc/                       # 设计文档
+│   └── design.md              #   系统架构设计文档 (Mermaid)
+├── modules/                   # 核心模块
+│   ├── core/                  #   核心编排
+│   │   ├── agent_state.py     #     LangGraph 状态定义 (AgentState)
+│   │   ├── orchestrator.py    #     双循环编排器 (Todo Loop + Subtask Loop)
+│   │   ├── context_manager.py #     上下文管理 (对话历史/子任务上下文)
+│   │   └── todo_manager.py    #     任务清单管理 (进度追踪)
+│   ├── llm/                   #   LLM 层
+│   │   └── llm_client.py      #     统一 LLM 客户端 (Ollama/OpenAI/Gemini/DeepSeek)
+│   ├── agents/                #   Agent 层
+│   │   ├── intent_router.py   #     意图路由 (LLM分类 + 配置化注册)
+│   │   ├── agent_tools.py     #     Agent 工具集 (兼容层)
+│   │   └── tool_base.py       #     BaseTool 抽象基类 + ToolRegistry
+│   ├── mcp/                   #   MCP 协议层
+│   │   ├── mcp_client.py      #     MCP 客户端 (stdio/SSE 双传输)
+│   │   └── mcp_registry.py    #     MCP 注册中心 (生命周期/意图路由)
+│   ├── app/                   #   应用层
+│   │   └── routes.py          #     Flask 路由 (API + Admin + Web UI)
+│   ├── prompts/               #   提示词模板
+│   │   ├── system_prompts.py  #     系统级提示词 (编排/规划/总结)
+│   │   ├── ppt_prompts.py     #     PPT 生成提示词
+│   │   ├── search_prompts.py  #     搜索研究提示词
+│   │   └── coding_prompts.py  #     代码生成提示词
+│   ├── config/                #   配置管理
+│   │   └── config_manager.py  #     配置管理器 (单例/线程安全)
+│   └── utils/                 #   工具库
+│       ├── logger.py          #     日志系统 (彩色/双输出)
+│       └── file_ops.py        #     文件操作
+├── plugins/                   # 工具插件 (自动发现, 继承 BaseTool)
+│   ├── web_tools.py           #   Web 工具 (web_search, web_fetch_batch)
+│   ├── image_tools.py         #   图片工具 (image_search, image_download)
+│   ├── ppt_tools.py           #   PPT 工具 (create_ppt)
+│   ├── code_tools.py          #   代码工具 (save_code, run_code)
+│   └── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
+├── mcp/                       # MCP Server 实现 (stdio 传输)
+│   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
+│   └── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)
+├── web/                       # 前端 (Admin 管理控制台)
+│   ├── templates/             #   HTML 模板
+│   │   ├── base.html          #     基础布局
+│   │   ├── dashboard.html     #     仪表盘
+│   │   ├── config.html        #     配置管理
+│   │   ├── logs.html          #     日志查看
+│   │   └── history.html       #     请求历史
+│   ├── static/                #   静态资源
+│   │   ├── css/style.css      #     样式
+│   │   └── js/                #     JavaScript
+│   │       ├── main.js        #       主逻辑
+│   │       ├── dashboard.js   #       仪表盘
+│   │       ├── config.js      #       配置管理
+│   │       ├── logs.js        #       日志查看
+│   │       ├── history.js     #       请求历史
+│   │       └── i18n.js        #       国际化
+│   └── locales/               #   国际化语言文件
+│       ├── zh-CN.json         #     中文
+│       └── en.json            #     英文
+├── db/                        # 数据库 (预留)
+├── download/                  # 下载文件 (图片等)
+└── output/                    # 输出文件 (PPT/代码)
 ```
 
 ## 测试

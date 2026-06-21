@@ -158,6 +158,11 @@ body {
     overflow: hidden;
 }
 
+/* Allow dropdown menus to overflow card boundaries */
+#tab-mcp .card {
+    overflow: visible;
+}
+
 .card-header {
     padding: 16px 20px;
     border-bottom: 1px solid var(--border);
@@ -577,4 +582,90 @@ select.form-control {
 
 .card {
     animation: fadeIn 0.3s ease;
+}
+
+/* Multi-select Dropdown for Intent Categories */
+.multiselect-dropdown {
+    position: relative;
+    width: 100%;
+}
+
+.multiselect-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    cursor: pointer;
+    text-align: left;
+    background: var(--card-bg);
+}
+
+.multiselect-toggle::after {
+    content: '▾';
+    margin-left: 8px;
+    font-size: 12px;
+    opacity: 0.6;
+}
+
+.multiselect-toggle.open::after {
+    content: '▴';
+}
+
+.multiselect-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    z-index: 200;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    padding: 6px 0;
+    margin-top: 2px;
+}
+
+.multiselect-menu.open {
+    display: block;
+}
+
+.multiselect-menu label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-weight: 400;
+    font-size: 14px;
+    transition: background 0.15s;
+}
+
+.multiselect-menu label:hover {
+    background: var(--bg);
+}
+
+.multiselect-menu label input[type="checkbox"] {
+    margin: 0;
+    width: 16px;
+    height: 16px;
+    accent-color: var(--primary-light);
+}
+
+.multiselect-menu label:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+}
+
+.multiselect-badge {
+    display: inline-block;
+    background: var(--primary-light);
+    color: white;
+    border-radius: 10px;
+    padding: 0 8px;
+    font-size: 11px;
+    line-height: 18px;
+    font-weight: 600;
+    margin-left: auto;
 }

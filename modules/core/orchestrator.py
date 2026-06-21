@@ -15,6 +15,7 @@ from modules.core.agent_state import (
 from modules.core.context_manager import context_manager
 from modules.core.todo_manager import todo_manager
 from modules.agents.agent_tools import AgentTools
+from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
 from modules.prompts.system_prompts import (
     ORCHESTRATOR_SYSTEM_PROMPT, TODO_PLANNING_PROMPT,
@@ -213,7 +214,15 @@ class AgentOrchestrator:
         subtask_result = ""
         system_prompt = self._get_system_prompt(state["intent_type"])
 
-        # Define tools available for LLM decision making
+        # Initialize MCP registry if not yet done
+        if not self._mcp_initialized:
+            try:
+                mcp_registry.initialize()
+                self._mcp_initialized = True
+            except Exception as e:
+                log_error(f"MCP initialization failed: {e}")
+
+        # Build tool definitions: base tools + MCP tools for this intent
         tool_definitions = [
             ToolDefinition(
                 name="web_search",
@@ -249,6 +258,20 @@ class AgentOrchestrator:
                 }
             ),
         ]
+
+        # Add MCP tools for the current intent
+        intent = state.get("intent_type", "research")
+        mcp_tools = mcp_registry.get_tools_for_intent(intent)
+        for mt in mcp_tools:
+            # Avoid duplicate tool names
+            existing_names = {t.name for t in tool_definitions}
+            if mt.name not in existing_names:
+                tool_definitions.append(ToolDefinition(
+                    name=mt.name,
+                    description=mt.description,
+                    parameters=mt.input_schema,
+                ))
+                log_info(f"MCP tool added for intent '{intent}': {mt.name}")
 
         while not subtask_complete and loop_count < max_loops:
             loop_count += 1
@@ -324,7 +347,12 @@ class AgentOrchestrator:
         try:
             if name == "web_search":
                 query = arguments.get("query", "")
-                results = self.tools.web_search_func(query)
+                # Try MCP first, fall back to direct AgentTools
+                try:
+                    result_text = mcp_registry.call_tool("web_search", {"query": query})
+                    results = json.loads(result_text) if result_text else []
+                except Exception:
+                    results = self.tools.web_search_func(query)
 
                 # Store URLs
                 urls = [r["url"] for r in results if r.get("url")]
@@ -346,7 +374,12 @@ class AgentOrchestrator:
             elif name == "image_search":
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
-                results = self.tools.image_search_func(query, max_results)
+                # Try MCP first, fall back to direct AgentTools
+                try:
+                    result_text = mcp_registry.call_tool("image_search", {"query": query, "max_results": max_results})
+                    results = json.loads(result_text) if result_text else []
+                except Exception:
+                    results = self.tools.image_search_func(query, max_results)
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"].extend(urls)
@@ -361,7 +394,15 @@ class AgentOrchestrator:
                     f"[image_search results for '{query}']\n{json.dumps(results, ensure_ascii=False)}")
 
             else:
-                log_error(f"Unknown tool: {name}")
+                # Try MCP for unknown tools
+                try:
+                    result_text = mcp_registry.call_tool(name, arguments)
+                    context_manager.add_message(state, "assistant",
+                        f"[{name} results]\n{result_text}")
+                except Exception:
+                    log_error(f"Unknown tool: {name}")
+                    context_manager.add_message(state, "assistant",
+                        f"[tool error] Unknown tool: {name}")
 
         except Exception as e:
             log_error(f"Tool execution failed: {name}: {e}")

@@ -2,7 +2,8 @@
 Flask REST API routes for the AI Agent Service.
 /api/agent/router - Main agent endpoint
 /api/admin/config - Configuration management
-/api/admin/... - Admin endpoints
+/api/admin/mcp/* - MCP management endpoints
+/api/admin/... - Other admin endpoints
 """
 
 import json
@@ -13,6 +14,8 @@ from flask import Blueprint, request, jsonify, render_template, send_from_direct
 from modules.core.orchestrator import orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.agents.intent_router import intent_router
+from modules.mcp.mcp_registry import registry as mcp_registry
+from modules.mcp.mcp_client import create_mcp_client
 from modules.utils.logger import log_info, log_error
 
 # Blueprints
@@ -210,6 +213,137 @@ def test_llm():
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)})
+
+
+# ============================================================
+# MCP Management API Routes
+# ============================================================
+
+@admin_bp.route("/mcp/servers", methods=["GET"])
+def get_mcp_servers():
+    """Get all MCP server configurations and their status."""
+    config = ConfigManager()
+    mcp_servers = config.get("mcp_servers", {})
+    
+    # Ensure registry is initialized for accurate status
+    mcp_registry.initialize()
+    
+    # Get connection status from registry
+    status_info = {}
+    for name in mcp_servers:
+        client = mcp_registry.get_client(name)
+        status_info[name] = {
+            "connected": client.is_connected() if client else False,
+            "tools_count": len(client.get_tools()) if client and client.is_connected() else 0,
+        }
+    
+    return jsonify({
+        "success": True,
+        "servers": mcp_servers,
+        "status": status_info,
+    })
+
+
+@admin_bp.route("/mcp/servers/<name>", methods=["POST"])
+def save_mcp_server(name):
+    """Create or update an MCP server configuration."""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        config = ConfigManager()
+        mcp_servers = config.get("mcp_servers", {})
+        mcp_servers[name] = data
+        config.update_section("mcp_servers", mcp_servers)
+
+        # Reload registry to apply changes
+        try:
+            mcp_registry.reload()
+        except Exception as e:
+            log_error(f"MCP registry reload failed: {e}")
+
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/mcp/servers/<name>", methods=["DELETE"])
+def delete_mcp_server(name):
+    """Delete an MCP server configuration."""
+    try:
+        config = ConfigManager()
+        mcp_servers = config.get("mcp_servers", {})
+        if name in mcp_servers:
+            del mcp_servers[name]
+            config.update_section("mcp_servers", mcp_servers)
+
+        # Reload registry
+        try:
+            mcp_registry.reload()
+        except Exception as e:
+            log_error(f"MCP registry reload failed: {e}")
+
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/mcp/test", methods=["POST"])
+def test_mcp_connection():
+    """Test MCP connection with given config."""
+    try:
+        data = request.get_json(force=True)
+        if not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+
+        name = data.get("name", "test-server")
+        server_config = data.get("config", {})
+
+        if not server_config:
+            return jsonify({"success": False, "error": "No server config provided"}), 400
+
+        # Create temporary client and test
+        client = create_mcp_client(name, server_config)
+        result = client.test_connection()
+
+        return jsonify({
+            "success": result.get("connected", False),
+            "result": result,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/mcp/tools", methods=["GET"])
+def get_mcp_tools():
+    """Get all MCP tools, optionally filtered by intent."""
+    intent = request.args.get("intent", "")
+    
+    if intent:
+        tools = mcp_registry.get_tools_for_intent(intent)
+        return jsonify({
+            "success": True,
+            "intent": intent,
+            "tools": [t.to_tool_definition() for t in tools],
+            "tools_count": len(tools),
+        })
+    else:
+        all_tools = mcp_registry.get_all_tools()
+        return jsonify({
+            "success": True,
+            "servers": all_tools,
+        })
+
+
+@admin_bp.route("/mcp/reload", methods=["POST"])
+def reload_mcp():
+    """Reload all MCP connections."""
+    try:
+        mcp_registry.reload()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 
 # ============================================================

@@ -14,6 +14,7 @@ from flask import Blueprint, request, jsonify, render_template, send_from_direct
 from modules.core.orchestrator import orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.agents.intent_router import intent_router
+from modules.agents.tool_base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
 from modules.utils.logger import log_info, log_error
@@ -344,6 +345,54 @@ def reload_mcp():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ============================================================
+# Plugin Tool Management API Routes
+# ============================================================
+
+@admin_bp.route("/plugins", methods=["GET"])
+def get_plugins():
+    """Get all registered plugin tools with their metadata."""
+    tools = tool_registry.get_all_as_list()
+    categories = tool_registry.get_categories()
+    return jsonify({
+        "success": True,
+        "tools": tools,
+        "categories": sorted(categories),
+        "total": len(tools),
+    })
+
+
+@admin_bp.route("/plugins/<tool_name>/toggle", methods=["POST"])
+def toggle_plugin(tool_name):
+    """Enable or disable a plugin tool."""
+    try:
+        data = request.get_json(force=True) if request.data else {}
+        enabled = data.get("enabled")
+        if enabled is None:
+            tool = tool_registry.get(tool_name)
+            if tool:
+                enabled = not tool.enabled
+            else:
+                return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
+
+        success = tool_registry.set_enabled(tool_name, enabled)
+        if success:
+            tool_registry.save_enabled_state()
+            return jsonify({"success": True, "name": tool_name, "enabled": enabled})
+        return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/plugins/<tool_name>", methods=["GET"])
+def get_plugin_detail(tool_name):
+    """Get detailed info for a specific plugin tool."""
+    tool = tool_registry.get(tool_name)
+    if not tool:
+        return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
+    return jsonify({"success": True, "tool": tool.to_dict()})
 
 
 # ============================================================

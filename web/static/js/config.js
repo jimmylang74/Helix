@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupTabs();
     loadIntents();
     loadMCPServers();
+    loadPlugins();
 });
 
 function setupTabs() {
@@ -621,4 +622,119 @@ async function saveServerConfig() {
     } else {
         showToast(__('config.server.saveFailed'), 'error');
     }
+}
+
+// ============================================================
+// Plugin Tools Management
+// ============================================================
+
+let allPlugins = [];
+let currentPluginDetail = null;
+
+async function loadPlugins() {
+    const result = await apiCall('/admin/plugins');
+    const tbody = document.getElementById('pluginsTable');
+    if (!result.success || !result.tools) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center">' + __('config.plugins.loadFailed') + '</td></tr>';
+        return;
+    }
+    allPlugins = result.tools;
+    document.getElementById('pluginsTotalCount').textContent =
+        __('config.plugins.totalTools', { count: allPlugins.length });
+
+    const filterSelect = document.getElementById('pluginCategoryFilter');
+    const existingOptions = filterSelect.querySelector('option[value="all"]');
+    filterSelect.innerHTML = '';
+    filterSelect.appendChild(existingOptions);
+    (result.categories || []).forEach(cat => {
+        const opt = document.createElement('option');
+        opt.value = cat;
+        opt.textContent = cat;
+        filterSelect.appendChild(opt);
+    });
+
+    renderPluginsTable(allPlugins);
+}
+
+function renderPluginsTable(tools) {
+    const tbody = document.getElementById('pluginsTable');
+    if (!tools || tools.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('config.plugins.none') + '</td></tr>';
+        return;
+    }
+    tbody.innerHTML = tools.map(tool => `
+        <tr>
+            <td><code>${tool.name}</code></td>
+            <td><span class="badge badge-info">${tool.category}</span></td>
+            <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tool.description}">${tool.description}</td>
+            <td><span class="badge ${tool.enabled ? 'badge-success' : 'badge-danger'}">${tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled')}</span></td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="showPluginDetail('${tool.name}')">${__('config.plugins.details')}</button>
+                <button class="btn btn-sm ${tool.enabled ? 'btn-danger' : 'btn-primary'}" onclick="togglePlugin('${tool.name}', ${!tool.enabled})">${tool.enabled ? __('config.plugins.disable') : __('config.plugins.enable')}</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+function filterPlugins() {
+    const category = document.getElementById('pluginCategoryFilter').value;
+    const search = document.getElementById('pluginSearchInput').value.toLowerCase();
+    let filtered = allPlugins;
+    if (category !== 'all') {
+        filtered = filtered.filter(t => t.category === category);
+    }
+    if (search) {
+        filtered = filtered.filter(t =>
+            t.name.toLowerCase().includes(search) ||
+            t.description.toLowerCase().includes(search)
+        );
+    }
+    renderPluginsTable(filtered);
+}
+
+async function togglePlugin(name, enabled) {
+    const result = await apiCall(`/admin/plugins/${name}/toggle`, 'POST', { enabled });
+    if (result.success) {
+        showToast(__('config.plugins.toggleSuccess', { name }), 'success');
+        loadPlugins();
+    } else {
+        showToast(__('config.plugins.toggleFailed') + (result.error || ''), 'error');
+    }
+}
+
+function showPluginDetail(name) {
+    const tool = allPlugins.find(t => t.name === name);
+    if (!tool) return;
+    currentPluginDetail = tool;
+
+    document.getElementById('pluginDetailTitle').textContent = tool.name;
+    document.getElementById('pluginDetailDesc').textContent = tool.description;
+
+    const catBadge = document.getElementById('pluginDetailCategory');
+    catBadge.textContent = tool.category;
+    catBadge.className = 'badge badge-info';
+
+    const statusBadge = document.getElementById('pluginDetailStatus');
+    statusBadge.textContent = tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled');
+    statusBadge.className = 'badge ' + (tool.enabled ? 'badge-success' : 'badge-danger');
+
+    const paramsDiv = document.getElementById('pluginDetailParams');
+    paramsDiv.textContent = JSON.stringify(tool.parameters, null, 2);
+
+    const toggleBtn = document.getElementById('pluginDetailToggleBtn');
+    toggleBtn.textContent = tool.enabled ? __('config.plugins.disable') : __('config.plugins.enable');
+    toggleBtn.className = 'btn ' + (tool.enabled ? 'btn-danger' : 'btn-primary');
+
+    document.getElementById('pluginDetailModal').style.display = 'flex';
+}
+
+function closePluginDetail() {
+    document.getElementById('pluginDetailModal').style.display = 'none';
+    currentPluginDetail = null;
+}
+
+async function togglePluginFromDetail() {
+    if (!currentPluginDetail) return;
+    await togglePlugin(currentPluginDetail.name, !currentPluginDetail.enabled);
+    closePluginDetail();
 }

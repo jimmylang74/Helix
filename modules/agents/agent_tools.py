@@ -1,6 +1,7 @@
 """
 Agent Tools - Built-in capabilities for the AI Agent.
-Includes web_search, image_search, web_fetch_batch, image_download, create_ppt, etc.
+Includes web_fetch_batch, image_download, create_ppt, etc.
+web_search and image_search are now provided via MCP protocol.
 """
 
 import os
@@ -12,32 +13,45 @@ from urllib.parse import urlparse
 from datetime import datetime
 
 from modules.config.config_manager import ConfigManager
+from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.utils.logger import log_agent_action, log_error, log_info, log_tool_call
 
 
-class WebSearchMCP:
-    """Web search via SearXNG API."""
+class AgentTools:
+    """Collection of all agent capabilities."""
 
     def __init__(self):
         self.config = ConfigManager()
+        self._download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "download")
+        self._output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "output")
+        os.makedirs(self._download_dir, exist_ok=True)
+        os.makedirs(self._output_dir, exist_ok=True)
 
-    def search(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
-        """Search via SearXNG. Returns list of {title, url, content}."""
-        config = self.config.get("tools.searxng", {})
-        if not config.get("enabled"):
-            log_tool_call("SearXNG not enabled, returning mock results")
-            return self._mock_search(query, max_results)
+    def web_search_func(self, query: str) -> List[Dict[str, str]]:
+        """Execute web search via MCP (fallback to direct)."""
+        log_tool_call(f"web_search(query='{query}') via MCP")
+        try:
+            result_text = mcp_registry.call_tool("web_search", {"query": query})
+            if result_text:
+                results = json.loads(result_text)
+                if isinstance(results, list):
+                    return results
+            return []
+        except Exception:
+            # Fallback: direct SearXNG call if MCP unavailable
+            from modules.utils.logger import log_warning
+            log_warning(f"MCP web_search unavailable, using direct fallback")
+            return self._fallback_web_search(query)
 
-        base_url = config.get("base_url", "http://localhost:8888")
+    def _fallback_web_search(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
+        """Direct SearXNG call as fallback when MCP is not available."""
+        base_url = self.config.get("tools.searxng.base_url", "http://localhost:8888")
         try:
             resp = requests.post(
                 f"{base_url}/search",
                 data={
-                    "q": query,
-                    "format": "json",
-                    "language": "zh-CN",
-                    "categories": "general",
-                    "pageno": 1,
+                    "q": query, "format": "json", "language": "zh-CN",
+                    "categories": "general", "pageno": 1,
                 },
                 timeout=15,
                 headers={"Accept": "application/json"}
@@ -51,152 +65,73 @@ class WebSearchMCP:
                         "url": item.get("url", ""),
                         "content": item.get("content", ""),
                     })
-                log_tool_call(f"SearXNG search '{query}' -> {len(results)} results")
                 return results
-            else:
-                log_error(f"SearXNG returned {resp.status_code}")
-                return self._mock_search(query, max_results)
-        except requests.exceptions.ConnectionError:
-            log_warning("SearXNG connection failed, using mock")
-            return self._mock_search(query, max_results)
-        except Exception as e:
-            log_error(f"SearXNG error: {e}")
-            return self._mock_search(query, max_results)
-
-    def _mock_search(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
-        """Mock search when SearXNG is not configured."""
-        from modules.utils.logger import log_warning
-        log_warning(f"Using MOCK search for: {query}")
-        return [
-            {
-                "title": f"Mock Result: {query} - Overview",
-                "url": f"https://example.com/result?q={query.replace(' ', '+')}",
-                "content": f"This is a mock search result for '{query}'. SearXNG is not configured. "
-                           f"Please configure SearXNG in the admin panel for real search results."
-            }
-        ]
-
-
-class ImageSearchMCP:
-    """Image search via Pexels or Unsplash API."""
-
-    def __init__(self):
-        self.config = ConfigManager()
-
-    def search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
-        """Search for images. Returns list of {url, photographer, source}."""
-        config = self.config.get("tools.image_search", {})
-        provider = config.get("provider", "pexels")
-
-        if provider == "pexels":
-            return self._search_pexels(query, max_results)
-        elif provider == "unsplash":
-            return self._search_unsplash(query, max_results)
-        else:
-            return self._mock_images(query, max_results)
-
-    def _search_pexels(self, query: str, max_results: int) -> List[Dict[str, str]]:
-        """Search via Pexels API."""
-        api_key = self.config.get("tools.image_search.pexels.api_key", "")
-        if not api_key:
-            return self._mock_images(query, max_results)
-
-        try:
-            resp = requests.get(
-                "https://api.pexels.com/v1/search",
-                params={"query": query, "per_page": max_results},
-                headers={"Authorization": api_key},
-                timeout=10
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = []
-                for photo in data.get("photos", []):
-                    results.append({
-                        "url": photo.get("src", {}).get("original", ""),
-                        "small_url": photo.get("src", {}).get("medium", ""),
-                        "photographer": photo.get("photographer", ""),
-                        "source": "pexels",
-                        "alt": photo.get("alt", ""),
-                    })
-                log_tool_call(f"Pexels search '{query}' -> {len(results)} images")
-                return results
-            else:
-                log_error(f"Pexels API returned {resp.status_code}")
-                return self._mock_images(query, max_results)
-        except Exception as e:
-            log_error(f"Pexels error: {e}")
-            return self._mock_images(query, max_results)
-
-    def _search_unsplash(self, query: str, max_results: int) -> List[Dict[str, str]]:
-        """Search via Unsplash API."""
-        api_key = self.config.get("tools.image_search.unsplash.api_key", "")
-        if not api_key:
-            return self._mock_images(query, max_results)
-
-        try:
-            resp = requests.get(
-                "https://api.unsplash.com/search/photos",
-                params={"query": query, "per_page": max_results},
-                headers={"Authorization": f"Client-ID {api_key}"},
-                timeout=10
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = []
-                for photo in data.get("results", []):
-                    results.append({
-                        "url": photo.get("urls", {}).get("regular", ""),
-                        "small_url": photo.get("urls", {}).get("small", ""),
-                        "photographer": photo.get("user", {}).get("name", ""),
-                        "source": "unsplash",
-                        "alt": photo.get("alt_description", ""),
-                    })
-                log_tool_call(f"Unsplash search '{query}' -> {len(results)} images")
-                return results
-            else:
-                log_error(f"Unsplash API returned {resp.status_code}")
-                return self._mock_images(query, max_results)
-        except Exception as e:
-            log_error(f"Unsplash error: {e}")
-            return self._mock_images(query, max_results)
-
-    def _mock_images(self, query: str, max_results: int) -> List[Dict[str, str]]:
-        """Mock images when APIs are not configured."""
-        from modules.utils.logger import log_warning
-        log_warning(f"Using MOCK image search for: {query}")
-        return [
-            {
-                "url": f"https://via.placeholder.com/800x600.png?text={query.replace(' ', '+')}+1",
-                "small_url": f"https://via.placeholder.com/400x300.png?text={query.replace(' ', '+')}+1",
-                "photographer": "Mock",
-                "source": "mock",
-                "alt": query,
-            }
-        ]
-
-
-class AgentTools:
-    """Collection of all agent capabilities."""
-
-    def __init__(self):
-        self.config = ConfigManager()
-        self.web_search = WebSearchMCP()
-        self.image_search = ImageSearchMCP()
-        self._download_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "download")
-        self._output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "output")
-        os.makedirs(self._download_dir, exist_ok=True)
-        os.makedirs(self._output_dir, exist_ok=True)
-
-    def web_search_func(self, query: str) -> List[Dict[str, str]]:
-        """Execute web search via SearXNG."""
-        log_tool_call(f"web_search(query='{query}')")
-        return self.web_search.search(query)
+        except Exception:
+            pass
+        return [{
+            "title": f"Mock Result: {query} - Overview",
+            "url": f"https://example.com/result?q={query.replace(' ', '+')}",
+            "content": f"Mock search result for '{query}'. Configure MCP SearXNG server for real results."
+        }]
 
     def image_search_func(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
-        """Search for images."""
-        log_tool_call(f"image_search(query='{query}', max_results={max_results})")
-        return self.image_search.search(query, max_results)
+        """Search for images via MCP (fallback to direct)."""
+        log_tool_call(f"image_search(query='{query}', max_results={max_results}) via MCP")
+        try:
+            result_text = mcp_registry.call_tool("image_search", {"query": query, "max_results": max_results})
+            if result_text:
+                results = json.loads(result_text)
+                if isinstance(results, list):
+                    return results
+            return []
+        except Exception:
+            from modules.utils.logger import log_warning
+            log_warning(f"MCP image_search unavailable, using direct fallback")
+            return self._fallback_image_search(query, max_results)
+
+    def _fallback_image_search(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
+        """Direct image API call as fallback when MCP is not available."""
+        config = self.config.get("tools.image_search", {})
+        provider = config.get("provider", "pexels")
+        if provider == "pexels":
+            api_key = config.get("pexels.api_key", "") or config.get("pexels", {}).get("api_key", "")
+            if api_key:
+                try:
+                    resp = requests.get(
+                        "https://api.pexels.com/v1/search",
+                        params={"query": query, "per_page": max_results},
+                        headers={"Authorization": api_key}, timeout=10
+                    )
+                    if resp.status_code == 200:
+                        return [{"url": p.get("src", {}).get("original", ""),
+                                 "small_url": p.get("src", {}).get("medium", ""),
+                                 "photographer": p.get("photographer", ""),
+                                 "source": "pexels", "alt": p.get("alt", "")}
+                                for p in resp.json().get("photos", [])]
+                except Exception:
+                    pass
+        elif provider == "unsplash":
+            api_key = config.get("unsplash.api_key", "") or config.get("unsplash", {}).get("api_key", "")
+            if api_key:
+                try:
+                    resp = requests.get(
+                        "https://api.unsplash.com/search/photos",
+                        params={"query": query, "per_page": max_results},
+                        headers={"Authorization": f"Client-ID {api_key}"}, timeout=10
+                    )
+                    if resp.status_code == 200:
+                        return [{"url": p.get("urls", {}).get("regular", ""),
+                                 "small_url": p.get("urls", {}).get("small", ""),
+                                 "photographer": p.get("user", {}).get("name", ""),
+                                 "source": "unsplash", "alt": p.get("alt_description", "")}
+                                for p in resp.json().get("results", [])]
+                except Exception:
+                    pass
+        return [{
+            "url": f"https://via.placeholder.com/800x600.png?text={query.replace(' ', '+')}+1",
+            "small_url": f"https://via.placeholder.com/400x300.png?text={query.replace(' ', '+')}+1",
+            "photographer": "Mock", "source": "mock", "alt": query,
+        }]
 
     def web_fetch_batch(self, urls: List[str]) -> str:
         """Fetch content from multiple URLs and combine."""

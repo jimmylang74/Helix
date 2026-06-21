@@ -41,12 +41,22 @@ class ConfigManager:
             try:
                 with open(self._config_path, "r", encoding="utf-8") as f:
                     self._data = json.load(f)
+                # Merge any missing top-level keys from defaults (for upgrades)
+                defaults = self._defaults()
+                changed = False
+                for key, val in defaults.items():
+                    if key not in self._data:
+                        self._data[key] = val
+                        changed = True
+                if changed:
+                    self._save()
                 from modules.utils.logger import log_info
                 log_info(f"Config loaded from {self._config_path}")
             except Exception as e:
                 from modules.utils.logger import log_warning
                 log_warning(f"Failed to load config: {e}, using defaults")
                 self._data = self._defaults()
+                self._save()
         else:
             self._data = self._defaults()
             self._save()
@@ -115,6 +125,31 @@ class ConfigManager:
                     "enabled": True,
                     "name": "代码生成",
                     "description": "根据用户要求生成代码，并进行简单测试和验证"
+                }
+            },
+            "mcp_servers": {
+                "searxng": {
+                    "type": "local",
+                    "enabled": True,
+                    "command": "python3",
+                    "args": ["mcp/searxng_server.py"],
+                    "intent_categories": ["research"],
+                    "env": {
+                        "SEARXNG_BASE_URL": "http://localhost:8888",
+                        "SEARXNG_MAX_RESULTS": "10"
+                    }
+                },
+                "image_search": {
+                    "type": "local",
+                    "enabled": True,
+                    "command": "python3",
+                    "args": ["mcp/image_search_server.py"],
+                    "intent_categories": ["ppt", "research"],
+                    "env": {
+                        "IMAGE_PROVIDER": "pexels",
+                        "PEXELS_API_KEY": "",
+                        "UNSPLASH_API_KEY": ""
+                    }
                 }
             }
         }

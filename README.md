@@ -99,7 +99,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 
 详细API文档见 [API.md](API.md)
 
-## 配置文件 (`ai_agent.json`)
+## 配置文件 (`Helix.json`)
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
@@ -114,7 +114,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 
 ```
 ├── server.py              # 主入口
-├── ai_agent.json           # 配置文件
+├── Helix.json              # 配置文件
 ├── requirements.txt        # 依赖
 ├── README.md               # 说明文档
 ├── API.md                  # API文档

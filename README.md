@@ -1,4 +1,7 @@
 # AI Hybrid-Driven Agent Service
+![Version](https://img.shields.io/github/v/tag/jimmylang74/Helix)
+![Python](https://img.shields.io/badge/python-3.11+-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 混合驱动AI Agent服务，基于 LangChain + LangGraph + python-pptx + Ollama 构建。
 

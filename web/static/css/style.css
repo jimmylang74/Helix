@@ -545,6 +545,30 @@ select.form-control {
     }
 }
 
+/* Version Info */
+.version-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+}
+
+.version-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.version-badge {
+    height: 22px;
+    vertical-align: middle;
+}
+
+.sidebar-version {
+    margin-top: 8px;
+}
+
 /* Animations */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }

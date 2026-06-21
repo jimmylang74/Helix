@@ -3,4 +3,5 @@ debugout.log
 output/
 download/
 __pycache__/
+ai_agent.json
 

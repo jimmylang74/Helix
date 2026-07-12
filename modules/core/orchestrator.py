@@ -213,14 +213,6 @@ class AgentOrchestrator:
         subtask_result = ""
         system_prompt = self._get_system_prompt(state["intent_type"])
 
-        # Initialize MCP registry if not yet done
-        if not self._mcp_initialized:
-            try:
-                mcp_registry.initialize()
-                self._mcp_initialized = True
-            except Exception as e:
-                log_error(f"MCP initialization failed: {e}")
-
         tool_definitions = []
         intent = state.get("intent_type", "research")
 

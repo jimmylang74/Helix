@@ -30,6 +30,7 @@ from modules.utils.logger import init_logger, log_info, log_error, log_orchestra
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
 from modules.agents.tool_base import tool_registry
+from modules.mcp.mcp_registry import registry as mcp_registry
 
 
 def create_service_app() -> Flask:
@@ -87,6 +88,8 @@ def main():
     # Initialize plugin tool registry (auto-scans plugins/ directory)
     tool_registry.initialize()
     log_info(f"Plugin tools registered: {len(tool_registry.get_all())} tool(s)")
+
+    mcp_registry.initialize()
 
     # Create apps
     service_app = create_service_app()

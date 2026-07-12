@@ -64,16 +64,19 @@ async function loadLLMProviders() {
         sel.innerHTML = '<option value="ollama_native">Ollama</option>';
         return;
     }
-    llmProviderInfo = result.providers;
+    llmProviderInfo = {};
+    for (const info of result.providers) {
+        llmProviderInfo[info.provider] = info;
+    }
     const current = sel.value;
     sel.innerHTML = '<option value="">-- 选择提供商 --</option>';
-    for (const [key, info] of Object.entries(result.providers)) {
+    for (const info of result.providers) {
         const opt = document.createElement('option');
-        opt.value = key;
-        opt.textContent = `${info.name} (${key})`;
+        opt.value = info.provider;
+        opt.textContent = `${info.description} (${info.provider})`;
         sel.appendChild(opt);
     }
-    if (current && result.providers[current]) sel.value = current;
+    if (current && llmProviderInfo[current]) sel.value = current;
     onProviderChange();
 }
 

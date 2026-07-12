@@ -7,4 +7,4 @@ Helix.json
 .env
 .git-credential-helper.sh
 llm_engine.log
-
+.omo/

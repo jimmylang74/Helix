@@ -1,9 +1,9 @@
 # Helix AI Agent - 系统设计文档
 
-> **版本**: 1.0  
-> **最后更新**: 2026-06-21  
+> **版本**: 1.1  
+> **最后更新**: 2026-07-12  
 > **项目代号**: Helix  
-> **技术栈**: Python 3.12+ / Flask / LangChain / LangGraph / python-pptx / MCP Protocol
+> **技术栈**: Python 3.12+ / Flask / LangChain / LangGraph / python-pptx / ai_engine / MCP Protocol
 
 ---
 
@@ -34,7 +34,7 @@ Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决�
 | **双循环编排** | 外层 Todo 循环管理任务进度，内层 Subtask 循环驱动具体执行 |
 | **插件化工具** | 所有工具通过 BaseTool 抽象 + ToolRegistry 自动发现 |
 | **MCP 标准化** | 外部工具通过 MCP 协议接入，支持 stdio 和 SSE 两种传输模式 |
-| **多模型支持** | 统一 LLM 客户端，支持 Ollama / OpenAI / Gemini / DeepSeek |
+| **多模型支持** | 通过 [ai_engine](../ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ Provider |
 
 ---
 
@@ -69,11 +69,10 @@ graph TB
         D4["MCPClient<br/>MCP 协议客户端"]
     end
 
-    subgraph L5["🧠 模型层 (LLM Layer)"]
+    subgraph L5["🧠 模型层 (LLM via ai_engine)"]
         E1["LLMClient<br/>统一 LLM 接口"]
-        E2["Ollama"]
-        E3["OpenAI / DeepSeek"]
-        E4["Gemini"]
+        E2["ai_engine 子模块<br/>run_engine() + --output-format events"]
+        E3["Provider Registry<br/>Ollama / OpenAI / Anthropic<br/>Gemini / DeepSeek / Groq<br/>Together / Mistral / Custom"]
     end
 
     subgraph L6["⚙️ 基础设施层 (Infrastructure)"]
@@ -97,8 +96,7 @@ graph TB
     D3 --> D4
     C1 --> E1
     E1 --> E2
-    E1 --> E3
-    E1 --> E4
+    E2 --> E3
     D2 --> F3
     D4 --> F1
     E1 --> F1
@@ -118,11 +116,11 @@ graph TB
 
 | 层级 | 模块 | 职责 |
 |------|------|------|
-| **接入层** | `server.py`, `routes.py` | HTTP 端点暴露、请求解析、响应封装、Admin UI |
+| **接入层** | `Helix.py`, `routes.py` | HTTP 端点暴露、请求解析、响应封装、Admin UI |
 | **路由层** | `intent_router.py` | LLM 驱动的意图分类，配置化的意图注册与启停 |
 | **编排层** | `orchestrator.py`, `todo_manager.py`, `context_manager.py`, `agent_state.py` | 双循环编排、任务状态追踪、上下文构建 |
 | **工具层** | `tool_base.py`, `plugins/*`, `mcp_client.py`, `mcp_registry.py` | 插件化工具管理、MCP 协议通信 |
-| **模型层** | `llm_client.py` | 多 LLM Provider 统一接口、JSON 模式、Tool Calling |
+| **模型层** | `llm_client.py` + `ai_engine/` | 通过 ai_engine 子模块统一接入所有 LLM Provider，事件驱动输出格式，verbose 日志采集 |
 | **基础设施层** | `config_manager.py`, `logger.py`, `file_ops.py` | 配置读写、日志、文件 IO |
 
 ---
@@ -313,14 +311,8 @@ sequenceDiagram
             Orch->>Ctx: build_subtask_context(state)
             Ctx-->>Orch: subtask context string
             Orch->>LLM: with_tools(context + decision prompt,<br/>tool_definitions, system_prompt)
-
-            alt Provider = Ollama
-                Note over LLM: 注入工具描述到 system_prompt<br/>要求 JSON 格式响应
-                LLM-->>Orch: JSON {thinking, tool_calls?, response?}
-            else Provider = OpenAI/DeepSeek
-                Note over LLM: 使用原生 function calling
-                LLM-->>Orch: response + tool_calls[]
-            end
+            Note over LLM: ai_engine 统一处理所有 Provider<br/>JSON-based tool calling protocol
+            LLM-->>Orch: JSON {thinking, tool_calls?, response?}
         end
 
         Orch->>Orch: _parse_llm_response(content)
@@ -389,6 +381,7 @@ sequenceDiagram
 | 机制 | 说明 |
 |------|------|
 | **LLM 驱动决策** | 每轮循环由 LLM 决定：调用工具 / 直接响应 / 标记完成 |
+| **ai_engine 统一接入** | 所有 Provider 通过 ai_engine 子模块统一处理，JSON-based tool calling 协议 |
 | **工具优先级** | MCP 工具优先调用，失败时 fallback 到 Plugin 工具 |
 | **自动链式执行** | `web_search` 自动触发 `web_fetch_batch`；`image_search` + PPT 意图自动触发 `image_download` |
 | **最大循环限制** | `max_subtask_loops = 20`，防止 LLM 陷入无限决策循环 |
@@ -592,7 +585,7 @@ graph TB
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Server as server.py
+    participant Server as Helix.py
     participant TR as ToolRegistry
     participant FS as plugins/ 目录
     participant Module as Plugin Module
@@ -813,7 +806,7 @@ stateDiagram-v2
 graph TB
     subgraph Config["Helix.json"]
         S["server<br/>端口/地址/调试"]
-        L["llm<br/>provider/模型参数"]
+        L["llm<br/>provider/model/endpoint<br/>api_key/verbose/log_file"]
         T["tools<br/>SearXNG/图片搜索"]
         I["intents<br/>ppt/research/coding"]
         M["mcp_servers<br/>MCP Server 配置"]
@@ -846,10 +839,30 @@ graph TB
 
 | 配置变更 | 影响 | 热更新方式 |
 |----------|------|------------|
-| LLM 参数 | LLMClient | `orchestrator.refresh_llm()` |
+| LLM 参数 (provider/model/endpoint) | LLMClient | `orchestrator.refresh_llm()` → `LLMClient.refresh()` |
+| LLM verbose / log_file | ai_engine 日志 | 下次 LLM 调用生效 |
 | MCP Server | MCPRegistry | `mcp_registry.reload()` |
 | 工具启停 | ToolRegistry | `tool_registry.save_enabled_state()` |
 | 意图配置 | IntentRouter | 实时读取，无需刷新 |
+
+### 9.3 LLM 配置格式（ai_engine 集成后）
+
+LLM 配置已从按 Provider 分组的嵌套结构统一为扁平格式，由 ai_engine 子模块处理 Provider 差异：
+
+```json
+{
+  "llm": {
+    "provider": "ollama_native",
+    "model": "qwen2.5:7b",
+    "endpoint": "http://localhost:11434",
+    "api_key": "",
+    "verbose": true,
+    "log_file": "llm_engine.log"
+  }
+}
+```
+
+Web 管理控制台的 LLM 配置页面通过 `/api/admin/llm/providers` 动态获取可用 Provider 列表（调用 `ai_engine --get-provider`），用户在下拉菜单中选择即可，无需手动填写 provider key。
 
 ---
 
@@ -859,7 +872,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph Process["server.py 进程"]
+    subgraph Process["Helix.py 进程"]
         SVC["Service App<br/>(Flask, 主线程)<br/>:11555"]
         ADM["Admin App<br/>(Flask, 子线程)<br/>:11556"]
     end
@@ -900,6 +913,8 @@ graph LR
 | 信息 | 白色 | `log_info()` | 一般信息 |
 
 日志同时输出到控制台和 `debugout.log` 文件，Admin UI 提供 Web 日志查看器。
+
+此外，当 `llm.verbose` 启用时，ai_engine 引擎的交互日志输出到 `llm_engine.log`（由 `llm.log_file` 配置），可通过 Admin UI 的 LLM 配置页面查看。
 
 ---
 

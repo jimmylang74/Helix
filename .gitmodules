@@ -1,0 +1,3 @@
+[submodule "ai_engine"]
+	path = ai_engine
+	url = https://github.com/jimmylang74/ai_engine.git

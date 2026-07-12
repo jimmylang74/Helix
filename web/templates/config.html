@@ -21,58 +21,36 @@
             <div class="form-group">
                 <label data-i18n="config.llm.selectProvider">选择提供商</label>
                 <select id="llmProvider" class="form-control" onchange="onProviderChange()">
-                    <option value="ollama" data-i18n="config.llm.ollama">Ollama（本地）</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="deepseek">DeepSeek</option>
+                    <option value="" data-i18n="config.llm.loading">加载中...</option>
                 </select>
+                <small id="llmProviderDesc" class="text-muted" style="margin-top:4px;display:block;"></small>
             </div>
         </div>
     </div>
     <div class="card">
-        <div class="card-header"><h3 data-i18n="config.llm.ollamaConfig">Ollama 配置</h3></div>
-        <div class="card-body" id="ollamaConfig">
-            <div class="form-group">
-                <label data-i18n="config.llm.apiUrl">API 地址</label>
-                <input type="text" id="ollamaBaseUrl" class="form-control" placeholder="http://localhost:11434">
-            </div>
+        <div class="card-header"><h3 data-i18n="config.llm.settings">连接设置</h3></div>
+        <div class="card-body">
             <div class="form-group">
                 <label data-i18n="config.llm.modelName">模型名称</label>
-                <input type="text" id="ollamaModel" class="form-control" placeholder="qwen2.5:7b">
+                <input type="text" id="llmModel" class="form-control" placeholder="qwen2.5:7b">
+            </div>
+            <div class="form-group">
+                <label data-i18n="config.llm.apiUrl">API 地址</label>
+                <input type="text" id="llmEndpoint" class="form-control" placeholder="http://localhost:11434">
+            </div>
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="password" id="llmApiKey" class="form-control" placeholder="(可选)">
             </div>
             <div class="form-row">
-                <div class="form-group">
-                    <label data-i18n="config.llm.temperature">温度</label>
-                    <input type="number" id="ollamaTemp" class="form-control" step="0.1" min="0" max="2" placeholder="0.7">
+                <div class="form-group" style="flex:1;">
+                    <label><input type="checkbox" id="llmVerbose" checked> <span data-i18n="config.llm.verbose">启用详细日志 (verbose)</span></label>
                 </div>
-                <div class="form-group">
-                    <label data-i18n="config.llm.maxTokens">最大 Token</label>
-                    <input type="number" id="ollamaMaxTokens" class="form-control" step="100" min="256" placeholder="4096">
+                <div class="form-group" style="flex:2;">
+                    <label data-i18n="config.llm.logFile">日志文件</label>
+                    <input type="text" id="llmLogFile" class="form-control" placeholder="llm_engine.log">
                 </div>
             </div>
-        </div>
-    </div>
-    <div class="card" id="openaiConfig" style="display: none;">
-        <div class="card-header"><h3 data-i18n="config.llm.openaiConfig">OpenAI 配置</h3></div>
-        <div class="card-body">
-            <div class="form-group"><label>API Key</label><input type="password" id="openaiApiKey" class="form-control" placeholder="sk-..."></div>
-            <div class="form-group"><label data-i18n="config.llm.apiUrl">API 地址</label><input type="text" id="openaiBaseUrl" class="form-control" placeholder="https://api.openai.com/v1"></div>
-            <div class="form-group"><label data-i18n="config.llm.modelLabel">模型</label><input type="text" id="openaiModel" class="form-control" placeholder="gpt-4o"></div>
-        </div>
-    </div>
-    <div class="card" id="geminiConfig" style="display: none;">
-        <div class="card-header"><h3 data-i18n="config.llm.geminiConfig">Gemini 配置</h3></div>
-        <div class="card-body">
-            <div class="form-group"><label>API Key</label><input type="password" id="geminiApiKey" class="form-control" placeholder="AIza..."></div>
-            <div class="form-group"><label data-i18n="config.llm.modelLabel">模型</label><input type="text" id="geminiModel" class="form-control" placeholder="gemini-2.0-flash"></div>
-        </div>
-    </div>
-    <div class="card" id="deepseekConfig" style="display: none;">
-        <div class="card-header"><h3 data-i18n="config.llm.deepseekConfig">DeepSeek 配置</h3></div>
-        <div class="card-body">
-            <div class="form-group"><label>API Key</label><input type="password" id="deepseekApiKey" class="form-control" placeholder="sk-..."></div>
-            <div class="form-group"><label data-i18n="config.llm.apiUrl">API 地址</label><input type="text" id="deepseekBaseUrl" class="form-control" placeholder="https://api.deepseek.com/v1"></div>
-            <div class="form-group"><label data-i18n="config.llm.modelLabel">模型</label><input type="text" id="deepseekModel" class="form-control" placeholder="deepseek-chat"></div>
         </div>
     </div>
     <div class="card">
@@ -80,6 +58,19 @@
             <button class="btn btn-primary" onclick="saveLLMConfig()" data-i18n="config.llm.save">保存 LLM 配置</button>
             <button class="btn btn-outline" onclick="testLLM()" data-i18n="config.llm.test">测试连接</button>
             <span id="llmTestResult" class="ml-2"></span>
+        </div>
+    </div>
+
+    <!-- LLM Interaction Log Viewer -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.llm.logTitle">LLM 交互日志</h3>
+            <button class="btn btn-sm btn-outline" onclick="refreshLLMLogs()" data-i18n="config.llm.refreshLog">刷新</button>
+        </div>
+        <div class="card-body">
+            <div id="llmLogViewer" style="background:#1a1a2e;color:#e0e0e0;border-radius:6px;padding:12px;font-family:monospace;font-size:12px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;">
+                <span class="text-muted" data-i18n="config.llm.noLogs">暂无日志</span>
+            </div>
         </div>
     </div>
 </div>

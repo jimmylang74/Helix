@@ -71,33 +71,12 @@ class ConfigManager:
                 "language": "zh-CN"
             },
             "llm": {
-                "provider": "ollama",
-                "ollama": {
-                    "base_url": "http://localhost:11434",
-                    "model": "qwen2.5:7b",
-                    "temperature": 0.7,
-                    "max_tokens": 4096
-                },
-                "openai": {
-                    "api_key": "",
-                    "base_url": "https://api.openai.com/v1",
-                    "model": "gpt-4o",
-                    "temperature": 0.7,
-                    "max_tokens": 4096
-                },
-                "gemini": {
-                    "api_key": "",
-                    "model": "gemini-2.0-flash",
-                    "temperature": 0.7,
-                    "max_tokens": 4096
-                },
-                "deepseek": {
-                    "api_key": "",
-                    "base_url": "https://api.deepseek.com/v1",
-                    "model": "deepseek-chat",
-                    "temperature": 0.7,
-                    "max_tokens": 4096
-                }
+                "provider": "ollama_native",
+                "model": "qwen2.5:7b",
+                "endpoint": "http://localhost:11434",
+                "api_key": "",
+                "verbose": True,
+                "log_file": "llm_engine.log"
             },
             "tools": {
                 "searxng": {
@@ -205,12 +184,14 @@ class ConfigManager:
             self._save()
 
     def get_llm_config(self) -> Dict[str, Any]:
-        """Get current LLM provider configuration."""
-        provider = self.get("llm.provider", "ollama")
-        config = self.get(f"llm.{provider}", {})
+        """Get current LLM configuration (flat ai_engine-style)."""
         return {
-            "provider": provider,
-            **config
+            "provider": self.get("llm.provider", "ollama_native"),
+            "model": self.get("llm.model", "qwen2.5:7b"),
+            "endpoint": self.get("llm.endpoint", "http://localhost:11434"),
+            "api_key": self.get("llm.api_key", ""),
+            "verbose": self.get("llm.verbose", True),
+            "log_file": self.get("llm.log_file", "llm_engine.log"),
         }
 
     def get_service_port(self) -> int:

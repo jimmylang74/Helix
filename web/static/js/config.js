@@ -4,8 +4,11 @@
  */
 
 let currentEditServer = null;
+let llmProviderInfo = {};
+let llmLogPollTimer = null;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadLLMProviders();
     loadConfig();
     setupTabs();
     loadIntents();
@@ -32,25 +35,13 @@ async function loadConfig() {
     const llm = config.llm || {};
     const server = config.server || {};
 
-    // LLM Provider
-    document.getElementById('llmProvider').value = llm.provider || 'ollama';
+    document.getElementById('llmProvider').value = llm.provider || '';
+    document.getElementById('llmModel').value = llm.model || '';
+    document.getElementById('llmEndpoint').value = llm.endpoint || '';
+    document.getElementById('llmApiKey').value = llm.api_key || '';
+    document.getElementById('llmVerbose').checked = llm.verbose !== false;
+    document.getElementById('llmLogFile').value = llm.log_file || 'llm_engine.log';
     onProviderChange();
-    const ollama = llm.ollama || {};
-    document.getElementById('ollamaBaseUrl').value = ollama.base_url || '';
-    document.getElementById('ollamaModel').value = ollama.model || '';
-    document.getElementById('ollamaTemp').value = ollama.temperature || 0.7;
-    document.getElementById('ollamaMaxTokens').value = ollama.max_tokens || 4096;
-    const openai = llm.openai || {};
-    document.getElementById('openaiApiKey').value = openai.api_key || '';
-    document.getElementById('openaiBaseUrl').value = openai.base_url || '';
-    document.getElementById('openaiModel').value = openai.model || '';
-    const gemini = llm.gemini || {};
-    document.getElementById('geminiApiKey').value = gemini.api_key || '';
-    document.getElementById('geminiModel').value = gemini.model || '';
-    const deepseek = llm.deepseek || {};
-    document.getElementById('deepseekApiKey').value = deepseek.api_key || '';
-    document.getElementById('deepseekBaseUrl').value = deepseek.base_url || '';
-    document.getElementById('deepseekModel').value = deepseek.model || '';
 
     // Server
     document.getElementById('servicePort').value = server.service_port || 11555;
@@ -62,10 +53,28 @@ async function loadConfig() {
 
 function onProviderChange() {
     const provider = document.getElementById('llmProvider').value;
-    document.getElementById('ollamaConfig').style.display = provider === 'ollama' ? 'block' : 'none';
-    document.getElementById('openaiConfig').style.display = provider === 'openai' ? 'block' : 'none';
-    document.getElementById('geminiConfig').style.display = provider === 'gemini' ? 'block' : 'none';
-    document.getElementById('deepseekConfig').style.display = provider === 'deepseek' ? 'block' : 'none';
+    const info = llmProviderInfo[provider];
+    document.getElementById('llmProviderDesc').textContent = info ? info.description : '';
+}
+
+async function loadLLMProviders() {
+    const result = await apiCall('/admin/llm/providers');
+    const sel = document.getElementById('llmProvider');
+    if (!result.success || !result.providers) {
+        sel.innerHTML = '<option value="ollama_native">Ollama</option>';
+        return;
+    }
+    llmProviderInfo = result.providers;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">-- 选择提供商 --</option>';
+    for (const [key, info] of Object.entries(result.providers)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = `${info.name} (${key})`;
+        sel.appendChild(opt);
+    }
+    if (current && result.providers[current]) sel.value = current;
+    onProviderChange();
 }
 
 // ============================================================
@@ -75,29 +84,11 @@ function onProviderChange() {
 function getLLMConfig() {
     return {
         provider: document.getElementById('llmProvider').value,
-        ollama: {
-            base_url: document.getElementById('ollamaBaseUrl').value,
-            model: document.getElementById('ollamaModel').value,
-            temperature: parseFloat(document.getElementById('ollamaTemp').value) || 0.7,
-            max_tokens: parseInt(document.getElementById('ollamaMaxTokens').value) || 4096,
-        },
-        openai: {
-            api_key: document.getElementById('openaiApiKey').value,
-            base_url: document.getElementById('openaiBaseUrl').value,
-            model: document.getElementById('openaiModel').value,
-            temperature: 0.7, max_tokens: 4096,
-        },
-        gemini: {
-            api_key: document.getElementById('geminiApiKey').value,
-            model: document.getElementById('geminiModel').value,
-            temperature: 0.7, max_tokens: 4096,
-        },
-        deepseek: {
-            api_key: document.getElementById('deepseekApiKey').value,
-            base_url: document.getElementById('deepseekBaseUrl').value,
-            model: document.getElementById('deepseekModel').value,
-            temperature: 0.7, max_tokens: 4096,
-        },
+        model: document.getElementById('llmModel').value,
+        endpoint: document.getElementById('llmEndpoint').value,
+        api_key: document.getElementById('llmApiKey').value,
+        verbose: document.getElementById('llmVerbose').checked,
+        log_file: document.getElementById('llmLogFile').value,
     };
 }
 
@@ -124,6 +115,26 @@ async function testLLM() {
     }
     btn.disabled = false;
     btn.textContent = __('config.llm.test');
+}
+
+async function refreshLLMLogs() {
+    const viewer = document.getElementById('llmLogViewer');
+    const result = await apiCall('/admin/llm/logs?lines=300');
+    if (!result.success || !result.logs || result.logs.length === 0) {
+        viewer.innerHTML = '<span class="text-muted">' + __('config.llm.noLogs') + '</span>';
+        return;
+    }
+    viewer.textContent = result.logs.join('');
+    viewer.scrollTop = viewer.scrollHeight;
+}
+
+function startLLMLogPoll() {
+    stopLLMLogPoll();
+    llmLogPollTimer = setInterval(refreshLLMLogs, 10000);
+}
+
+function stopLLMLogPoll() {
+    if (llmLogPollTimer) { clearInterval(llmLogPollTimer); llmLogPollTimer = null; }
 }
 
 // ============================================================

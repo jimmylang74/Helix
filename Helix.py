@@ -11,10 +11,10 @@ Architecture:
 - Built-in tools: web_search, image_search, PPT generation, coding
 
 Usage:
-    python3 server.py                    # Run with default config
-    python3 server.py --port 11555       # Custom service port
-    python3 server.py --admin-port 11556 # Custom admin port
-    python3 server.py --debug            # Debug mode
+    python3 Helix.py                    # Run with default config
+    python3 Helix.py --port 11555       # Custom service port
+    python3 Helix.py --admin-port 11556 # Custom admin port
+    python3 Helix.py --debug            # Debug mode
 """
 
 import os
@@ -48,6 +48,7 @@ def create_admin_app() -> Flask:
         static_url_path="/static"
     )
     app.register_blueprint(admin_bp)
+    app.register_blueprint(api_bp)
     create_admin_routes(app)
 
     # Add CORS headers

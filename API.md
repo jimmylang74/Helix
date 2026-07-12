@@ -98,16 +98,12 @@ GET /api/admin/config
             "debug": true
         },
         "llm": {
-            "provider": "ollama",
-            "ollama": {
-                "base_url": "http://localhost:11434",
-                "model": "qwen2.5:7b",
-                "temperature": 0.7,
-                "max_tokens": 4096
-            },
-            "openai": { ... },
-            "gemini": { ... },
-            "deepseek": { ... }
+            "provider": "ollama_native",
+            "model": "qwen2.5:7b",
+            "endpoint": "http://localhost:11434",
+            "api_key": "",
+            "verbose": true,
+            "log_file": "llm_engine.log"
         },
         "tools": { ... },
         "intents": { ... }
@@ -126,13 +122,12 @@ POST /api/admin/config
 {
     "section": "llm",
     "values": {
-        "provider": "ollama",
-        "ollama": {
-            "base_url": "http://localhost:11434",
-            "model": "qwen2.5:7b",
-            "temperature": 0.7,
-            "max_tokens": 4096
-        }
+        "provider": "ollama_native",
+        "model": "qwen2.5:7b",
+        "endpoint": "http://localhost:11434",
+        "api_key": "",
+        "verbose": true,
+        "log_file": "llm_engine.log"
     }
 }
 ```
@@ -141,7 +136,7 @@ POST /api/admin/config
 ```json
 {
     "settings": {
-        "llm.ollama.model": "llama3.2:3b",
+        "llm.model": "llama3.2:3b",
         "tools.searxng.enabled": true
     }
 }
@@ -158,11 +153,60 @@ POST /api/admin/llm/test
 {
     "success": true,
     "response": "OK. I am working correctly.",
-    "provider": "ollama"
+    "provider": "ollama_native"
 }
 ```
 
-### 2.4 获取日志
+### 2.4 获取可用 LLM Provider 列表
+
+```
+GET /api/admin/llm/providers
+```
+
+从 `ai_engine --get-provider` 获取当前支持的所有 Provider 信息。
+
+**Response**:
+```json
+{
+    "success": true,
+    "providers": {
+        "ollama_native": {
+            "name": "Ollama Chat API  (/api/chat)",
+            "description": "Ollama Chat API  (/api/chat)",
+            "default_endpoint": "http://localhost:11434"
+        },
+        "openai": {
+            "name": "OpenAI API",
+            "description": "OpenAI API",
+            "default_endpoint": "https://api.openai.com/v1"
+        },
+        "...": "..."
+    }
+}
+```
+
+### 2.5 获取 LLM 交互日志
+
+```
+GET /api/admin/llm/logs?lines=200
+```
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| lines | int | 200 | 返回最近的行数 |
+
+日志文件由 `Helix.json` 中 `llm.log_file` 配置，需在 LLM 配置中启用 `verbose: true`。
+
+**Response**:
+```json
+{
+    "success": true,
+    "logs": ["[2026-07-12] [INFO] provider=ollama_native model=qwen2.5:7b\n", "..."],
+    "total_lines": 512
+}
+```
+
+### 2.6 获取日志
 
 ```
 GET /api/admin/logs?lines=200
@@ -183,7 +227,7 @@ GET /api/admin/logs?lines=200
 }
 ```
 
-### 2.5 意图管理
+### 2.7 意图管理
 
 #### 获取所有意图
 ```
@@ -254,12 +298,18 @@ curl http://localhost:11556/api/admin/config
 # 更新LLM配置
 curl -X POST http://localhost:11556/api/admin/config \
   -H "Content-Type: application/json" \
-  -d '{"section": "llm", "values": {"provider": "openai", "openai": {"api_key": "sk-xxx", "model": "gpt-4o"}}}'
+  -d '{"section": "llm", "values": {"provider": "openai", "model": "gpt-4o", "endpoint": "https://api.openai.com/v1", "api_key": "sk-xxx"}}'
 
 # 测试LLM连接
 curl -X POST http://localhost:11556/api/admin/llm/test
 
-# 获取日志
+# 获取可用 Provider 列表
+curl http://localhost:11556/api/admin/llm/providers
+
+# 获取 LLM 交互日志
+curl "http://localhost:11556/api/admin/llm/logs?lines=100"
+
+# 获取系统日志
 curl "http://localhost:11556/api/admin/logs?lines=100"
 ```
 

@@ -14,12 +14,10 @@ async function loadSystemInfo() {
     if (result.success) {
         const config = result.config;
         const llm = config.llm || {};
-        const provider = llm.provider || 'ollama';
-        const providerConfig = llm[provider] || {};
         const server = config.server || {};
 
-        document.getElementById('llmProvider').textContent = provider;
-        document.getElementById('llmModel').textContent = providerConfig.model || '-';
+        document.getElementById('llmProvider').textContent = llm.provider || '-';
+        document.getElementById('llmModel').textContent = llm.model || '-';
         document.getElementById('servicePort').textContent = server.service_port || 11555;
         document.getElementById('adminPort').textContent = server.admin_port || 11556;
     }

@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-混合驱动AI Agent服务，基于 LangChain + LangGraph + python-pptx + Ollama 构建。
+混合驱动AI Agent服务，基于 LangChain + LangGraph + python-pptx + ai_engine 构建。
 
 ## 架构
 
@@ -30,8 +30,9 @@
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
-│              模型层 (LLM)                             │
-│    Ollama │ OpenAI │ Gemini │ DeepSeek              │
+│              模型层 (LLM via ai_engine)              │
+│  Ollama │ OpenAI │ Anthropic │ Gemini │ DeepSeek   │
+│  Groq   │ Together │ Mistral │ Custom OpenAI       │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -40,16 +41,16 @@
 - **双循环架构**: 总体任务循环(Todo Loop) + 子任务循环(Subtask Loop)
 - **LLM驱动决策**: LLM负责意图识别、任务规划、工具调用判断、数据分析、结果总结
 - **三种预置Agent**: PPT生成、智能搜索、代码生成
-- **多LLM支持**: Ollama(默认)、OpenAI、Gemini、DeepSeek 可配置切换
+- **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash)
-- **Web管理控制台**: 可视化配置管理、日志查看
+- **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看
 
 ## 快速开始
 
 ### 环境要求
 
 - Python 3.12+
-- Ollama (或其他LLM后端)
+- Ollama / OpenAI / Anthropic / Gemini / DeepSeek (或任意 ai_engine 支持的 Provider)
 
 ### 安装依赖
 
@@ -61,13 +62,13 @@ pip install -r requirements.txt
 
 ```bash
 # 默认配置启动
-python3 server.py
+python3 Helix.py
 
 # 自定义端口
-python3 server.py --port 11555 --admin-port 11556
+python3 Helix.py --port 11555 --admin-port 11556
 
 # 调试模式
-python3 server.py --debug
+python3 Helix.py --debug
 ```
 
 ### 访问服务
@@ -107,21 +108,32 @@ curl -X POST http://localhost:11555/api/agent/router \
 |--------|------|--------|
 | server.service_port | 服务端口 | 11555 |
 | server.admin_port | 管理端口 | 11556 |
-| llm.provider | LLM提供商 | ollama |
-| llm.ollama.model | Ollama模型 | qwen2.5:7b |
+| llm.provider | LLM提供商 (ai_engine provider key) | ollama_native |
+| llm.model | 模型名称 | qwen2.5:7b |
+| llm.endpoint | API 地址 | http://localhost:11434 |
+| llm.api_key | API 密钥 (可选) | (空) |
+| llm.verbose | 启用详细日志 | true |
+| llm.log_file | LLM 交互日志文件 | llm_engine.log |
 | tools.searxng.enabled | 启用SearXNG | false |
 | tools.image_search.provider | 图片搜索 | pexels |
+
+可通过 Web 管理控制台的 LLM 配置页面动态切换 Provider 和填写连接参数，无需手动编辑 JSON。
 
 ## 目录结构
 
 ```
-├── server.py                  # 主入口 (Flask 双端口: API + Admin)
+├── Helix.py                  # 主入口 (Flask 双端口: API + Admin)
 ├── Helix.json                 # 配置文件 (LLM/MCP/意图/工具)
 ├── requirements.txt           # Python 依赖
 ├── README.md                  # 说明文档
 ├── API.md                     # API 文档
 ├── debugout.log               # 运行日志输出
+├── llm_engine.log             # LLM 引擎交互日志 (ai_engine --verbose --log)
 ├── test_agent.py              # 测试程序
+├── ai_engine/                 # LLM 引擎子模块 (统一多 Provider 接入)
+│   ├── ai_engine.py           #   引擎主入口 (run_engine / --get-provider / --output-format events)
+│   ├── API-AI-ENGINE.md       #   引擎 API 文档
+│   └── example_import.py      #   import 模式使用示例
 ├── doc/                       # 设计文档
 │   └── design.md              #   系统架构设计文档 (Mermaid)
 ├── modules/                   # 核心模块
@@ -131,7 +143,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 │   │   ├── context_manager.py #     上下文管理 (对话历史/子任务上下文)
 │   │   └── todo_manager.py    #     任务清单管理 (进度追踪)
 │   ├── llm/                   #   LLM 层
-│   │   └── llm_client.py      #     统一 LLM 客户端 (Ollama/OpenAI/Gemini/DeepSeek)
+│   │   └── llm_client.py      #     统一 LLM 客户端 (通过 ai_engine 接入所有 Provider)
 │   ├── agents/                #   Agent 层
 │   │   ├── intent_router.py   #     意图路由 (LLM分类 + 配置化注册)
 │   │   ├── agent_tools.py     #     Agent 工具集 (兼容层)
@@ -187,7 +199,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 ## 测试
 
 ```bash
-# 运行测试程序 (需要先启动server.py)
+# 运行测试程序 (需要先启动Helix.py)
 python3 test_agent.py
 ```
 

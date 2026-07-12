@@ -7,6 +7,8 @@ Flask REST API routes for the AI Agent Service.
 """
 
 import json
+import os
+import sys
 import uuid
 from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template, send_from_directory
@@ -199,7 +201,7 @@ def get_history():
 
 @admin_bp.route("/llm/test", methods=["POST"])
 def test_llm():
-    """Test LLM connection."""
+    """Test LLM connection via ai_engine."""
     try:
         from modules.llm.llm_client import LLMClient
         client = LLMClient()
@@ -216,9 +218,54 @@ def test_llm():
         return jsonify({"success": False, "error": str(e)})
 
 
-# ============================================================
-# MCP Management API Routes
-# ============================================================
+@admin_bp.route("/llm/providers", methods=["GET"])
+def get_llm_providers():
+    """Get available LLM providers from ai_engine --get-provider."""
+    try:
+        import subprocess
+        ai_engine_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "ai_engine", "ai_engine.py"
+        )
+        result = subprocess.run(
+            [sys.executable, ai_engine_path, "--get-provider"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            providers = json.loads(result.stdout)
+            return jsonify({"success": True, "providers": providers})
+        else:
+            return jsonify({"success": False, "error": result.stderr}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/llm/logs", methods=["GET"])
+def get_llm_logs():
+    """Get LLM engine interaction logs (from ai_engine --verbose --log)."""
+    try:
+        config = ConfigManager()
+        log_file = config.get("llm.log_file", "llm_engine.log")
+        lines = int(request.args.get("lines", 200))
+
+        if not os.path.isabs(log_file):
+            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))))
+            log_file = os.path.join(project_root, log_file)
+
+        if not os.path.exists(log_file):
+            return jsonify({"success": True, "logs": [], "total_lines": 0})
+
+        with open(log_file, "r", encoding="utf-8") as f:
+            all_lines = f.readlines()
+
+        return jsonify({
+            "success": True,
+            "logs": all_lines[-lines:],
+            "total_lines": len(all_lines),
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @admin_bp.route("/mcp/servers", methods=["GET"])
 def get_mcp_servers():

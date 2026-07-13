@@ -1,7 +1,7 @@
 # Helix AI Agent - 系统设计文档
 
-> **版本**: 1.1  
-> **最后更新**: 2026-07-12  
+> **版本**: 1.2  
+> **最后更新**: 2026-07-13  
 > **项目代号**: Helix  
 > **技术栈**: Python 3.12+ / Flask / LangChain / LangGraph / python-pptx / ai_engine / MCP Protocol
 
@@ -12,8 +12,8 @@
 1. [系统概述](#1-系统概述)
 2. [架构层设计](#2-架构层设计)
 3. [主流程时序图](#3-主流程时序图)
-4. [双循环架构 - Todo循环时序图](#4-双循环架构---todo循环时序图)
-5. [双循环架构 - 子任务循环时序图](#5-双循环架构---子任务循环时序图)
+4. [三循环架构 - Todo循环时序图](#4-三循环架构---todo循环时序图)
+5. [三循环架构 - 子任务编排详解](#5-三循环架构---子任务编排详解)
 6. [MCP支持设计](#6-mcp支持设计)
 7. [Tool插件化设计](#7-tool插件化设计)
 8. [数据模型与状态管理](#8-数据模型与状态管理)
@@ -24,14 +24,14 @@
 
 ## 1. 系统概述
 
-Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决策，工具负责执行**。系统采用双循环架构（Dual-Loop Architecture），通过 LLM 进行意图识别、任务规划、工具调用判断、数据分析和结果总结，同时支持 MCP（Model Context Protocol）协议实现外部工具的标准化接入。
+Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决策，工具负责执行**。系统采用三循环架构（Triple-Loop Architecture），通过 LLM 进行意图识别、任务分解、工具调用判断、数据分析和结果总结，同时支持 MCP（Model Context Protocol）协议实现外部工具的标准化接入。
 
 ### 1.1 核心设计原则
 
 | 原则 | 说明 |
 |------|------|
 | **LLM 驱动决策** | LLM 是系统的"大脑"，负责任务分解、工具选择、结果分析 |
-| **双循环编排** | 外层 Todo 循环管理任务进度，内层 Subtask 循环驱动具体执行 |
+| **三循环编排** | 外层 Todo 循环管理任务进度，中层 Subtask 循环负责分解与独立执行，内层工具循环驱动具体执行 |
 | **插件化工具** | 所有工具通过 BaseTool 抽象 + ToolRegistry 自动发现 |
 | **MCP 标准化** | 外部工具通过 MCP 协议接入，支持 stdio 和 SSE 两种传输模式 |
 | **多模型支持** | 通过 [ai_engine](../ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ Provider |
@@ -56,7 +56,7 @@ graph TB
     end
 
     subgraph L3["🔄 编排层 (Orchestration Layer)"]
-        C1["AgentOrchestrator<br/>双循环编排器"]
+        C1["AgentOrchestrator<br/>三循环编排器"]
         C2["TodoManager<br/>任务进度管理"]
         C3["ContextManager<br/>上下文管理"]
         C4["AgentState<br/>LangGraph 状态机"]
@@ -118,7 +118,7 @@ graph TB
 |------|------|------|
 | **接入层** | `Helix.py`, `routes.py` | HTTP 端点暴露、请求解析、响应封装、Admin UI |
 | **路由层** | `intent_router.py` | LLM 驱动的意图分类，配置化的意图注册与启停 |
-| **编排层** | `orchestrator.py`, `todo_manager.py`, `context_manager.py`, `agent_state.py` | 双循环编排、任务状态追踪、上下文构建 |
+| **编排层** | `orchestrator.py`, `todo_manager.py`, `context_manager.py`, `agent_state.py` | 三循环编排（Todo→Subtask分解→工具执行）、任务状态追踪、分层上下文管理 |
 | **工具层** | `tool_base.py`, `plugins/*`, `mcp_client.py`, `mcp_registry.py` | 插件化工具管理、MCP 协议通信 |
 | **模型层** | `llm_client.py` + `ai_engine/` | 通过 ai_engine 子模块统一接入所有 LLM Provider，事件驱动输出格式，verbose 日志采集 |
 | **基础设施层** | `config_manager.py`, `logger.py`, `file_ops.py` | 配置读写、日志、文件 IO |
@@ -159,27 +159,38 @@ sequenceDiagram
         Note over Orch,Tools: Phase 2: Todo 循环 (Loop 1)
         loop 遍历每个 Todo 项
             Orch->>Orch: get_current_todo()
-            Note over Orch: Todo[i]: "具体任务描述"
+            Orch->>Ctx: get_previous_todo_summary()
+            Ctx-->>Orch: prev_todo_summary
 
             rect rgb(232, 245, 233)
-                Note over Orch,Tools: Subtask 循环 (Loop 2)
-                loop LLM 决策循环 (max 20次)
-                    Orch->>Ctx: build_subtask_context()
-                    Ctx-->>Orch: subtask context
-                    Orch->>LLM: with_tools(context, tool_definitions)
-                    LLM-->>Orch: {tool_calls?, response?, subtask_complete?}
+                Note over Orch,Tools: Subtask 编排 (Loop 2: 分解 → 独立执行 → 摘要)
+                Orch->>Ctx: reset_subtask_contexts()
+                Orch->>Ctx: reset_conversation()
+                Orch->>LLM: decide_json(SUBTASK_DECOMPOSE_PROMPT)
+                LLM-->>Orch: {subtasks[]}
 
-                    alt 有 tool_calls
-                        Orch->>Tools: 执行工具调用
-                        Tools-->>Orch: 工具执行结果
-                        Orch->>Ctx: add_message(result)
-                    else 直接响应
-                        Orch->>Orch: 记录 subtask_result
+                loop 遍历每个 Subtask
+                    Orch->>Ctx: get_previous_subtask_summary()
+                    Ctx-->>Orch: prev_subtask_summary
+                    Note over Orch: Loop 3: 工具执行循环 (max 5次)
+                    loop LLM 决策 + 工具执行
+                        Orch->>LLM: with_tools(context, tool_definitions,<br/>context_messages=history[-10:])
+                        LLM-->>Orch: {tool_calls?, response?}
+                        alt 有 tool_calls
+                            Orch->>Tools: 执行工具调用
+                            Tools-->>Orch: 结果
+                        end
                     end
+                    Orch->>LLM: decide_json(SUBTASK_SUMMARY_PROMPT)
+                    LLM-->>Orch: {summary}
+                    Orch->>Ctx: save_subtask_summary(subtask, summary)
                 end
             end
 
-            Orch->>Orch: todo_manager.advance_todo(result)
+            Orch->>LLM: decide_json(TODO_SUMMARY_PROMPT)
+            LLM-->>Orch: {summary}
+            Orch->>Ctx: save_todo_summary(todo, summary)
+            Orch->>Orch: todo_manager.advance_todo(summary)
         end
     end
 
@@ -197,9 +208,9 @@ sequenceDiagram
 
 ---
 
-## 4. 双循环架构 - Todo循环时序图
+## 4. 三循环架构 - Todo循环时序图
 
-Todo 循环（Loop 1）是外层循环，负责遍历任务清单中的每一项，对每一项调用子任务循环（Loop 2）完成具体工作。
+Todo 循环（Loop 1）是外层循环，负责遍历任务清单中的每一项，对每一项调用子任务编排（Loop 2）完成具体工作。v3.1.2 重构后，每个 todo 完成后会生成摘要并传递给下一个 todo。
 
 ```mermaid
 sequenceDiagram
@@ -272,9 +283,15 @@ sequenceDiagram
 
 ---
 
-## 5. 双循环架构 - 子任务循环时序图
+## 5. 三循环架构 - 子任务编排详解
 
-子任务循环（Loop 2）是内层循环，由 LLM 驱动决策，决定是调用工具还是直接响应，直到子任务完成或达到最大循环次数。
+v3.1.2 重构后，子任务执行从盲循环改为**分解→独立执行→摘要**的三重循环架构：
+
+- **Loop 1 (Todo Loop)**: 遍历任务清单，每个 todo 独立执行
+- **Loop 2 (Subtask Loop)**: 将 todo 分解为 subtasks，逐个独立执行，每个 subtask 生成摘要
+- **Loop 3 (Iteration Loop)**: 单个 subtask 内的工具调用循环（max 5次）
+
+### 5.1 子任务编排流程
 
 ```mermaid
 sequenceDiagram
@@ -286,106 +303,100 @@ sequenceDiagram
     participant MCP as MCPRegistry<br/>(MCP Tools)
     participant State as AgentState
 
+    Note over Orch: ──── Phase 2a: 分解阶段 ────
     Orch->>State: subtask_status = "running"
-    Orch->>State: subtask_loop_count = 0
-
-    Note over Orch: 初始化阶段
+    Orch->>Ctx: reset_subtask_contexts(state)
+    Orch->>Ctx: reset_conversation(state)
 
     rect rgb(255, 243, 224)
-        Note over Orch,MCP: 工具定义收集
-        Orch->>Orch: 获取 system_prompt (按 intent_type)
-        Orch->>TR: get_enabled_tools()
-        TR-->>Orch: List[BaseTool]
-        Orch->>Orch: 转换为 ToolDefinition[]
-        Orch->>MCP: get_tools_for_intent(intent_type)
-        MCP-->>Orch: List[MCPTool]
-        Orch->>Orch: 合并去重 tool_definitions
+        Note over Orch,LLM: Todo 分解为 Subtasks
+        Orch->>Ctx: get_previous_todo_summary(state)
+        Ctx-->>Orch: prev_todo_summary (可选)
+        Orch->>LLM: decide_json(SUBTASK_DECOMPOSE_PROMPT)
+        LLM-->>Orch: {subtasks: ["步骤1", "步骤2", ...]}
+        Orch->>Orch: subtasks = response.subtasks
     end
 
-    loop while !subtask_complete && loop_count < max_subtask_loops (20)
-        Orch->>State: subtask_loop_count++
-        Log->>Log: log_orchestrator("Subtask Loop iteration N/20")
+    loop 遍历每个 Subtask (idx = 1..N)
+        Note over Orch: ──── Phase 2b: 独立执行 ────
 
-        rect rgb(227, 242, 253)
-            Note over Orch,LLM: LLM 决策阶段
-            Orch->>Ctx: build_subtask_context(state)
-            Ctx-->>Orch: subtask context string
-            Orch->>LLM: with_tools(context + decision prompt,<br/>tool_definitions, system_prompt)
-            Note over LLM: ai_engine 统一处理所有 Provider<br/>JSON-based tool calling protocol
-            LLM-->>Orch: JSON {thinking, tool_calls?, response?}
-        end
+        Orch->>Ctx: get_previous_subtask_summary(state)
+        Ctx-->>Orch: prev_subtask_summary (可选)
+        Orch->>Ctx: reset_conversation(state)
 
-        Orch->>Orch: _parse_llm_response(content)
+        rect rgb(232, 245, 233)
+            Note over Orch,MCP: Loop 3: 工具执行循环 (max 5次)
+            loop LLM 决策 + 工具执行
+                Orch->>Ctx: get_conversation(state)
+                Ctx-->>Orch: conversation history
+                Orch->>LLM: with_tools(prompt,<br/>tool_definitions,<br/>context_messages=history[-10:])
+                Note over LLM: LLM 可见前次子任务摘要 +<br/>当前会话历史
+                LLM-->>Orch: JSON {thinking, tool_calls?, response?}
 
-        alt 包含 tool_calls
-            rect rgb(232, 245, 233)
-                Note over Orch,MCP: 工具执行阶段
-                loop 遍历每个 tool_call
-                    Orch->>Orch: _execute_tool_call(state, tc)
+                Orch->>Orch: _parse_llm_response()
+                Orch->>Ctx: add_message("assistant", llm_response)
 
-                    alt tool = "web_search"
-                        Orch->>MCP: call_tool("web_search", {query})
-                        alt MCP 成功
-                            MCP-->>Orch: JSON results
-                        else MCP 失败
-                            Orch->>TR: call_tool("web_search", {query})
-                            TR-->>Orch: fallback results
+                alt 有 tool_calls
+                    loop 遍历每个 tool_call
+                        Orch->>Orch: _execute_tool_call(state, tc)
+                        alt tool = "web_search"
+                            Orch->>MCP: call_tool("web_search", {query})
+                            MCP-->>Orch: search results
+                            Orch->>TR: call_tool("web_fetch_batch", {urls})
+                            TR-->>Orch: fetched content
+                            Orch->>State: collected_data.append(content)
+                        else 其他工具
+                            Orch->>MCP: call_tool(name, args)
+                            alt MCP 成功
+                                MCP-->>Orch: result
+                            else MCP 失败
+                                Orch->>TR: call_tool(name, args) [fallback]
+                                TR-->>Orch: result
+                            end
                         end
-                        Orch->>TR: call_tool("web_fetch_batch", {urls})
-                        TR-->>Orch: fetched content
-                        Orch->>State: collected_data.append(content)
-
-                    else tool = "image_search"
-                        Orch->>MCP: call_tool("image_search", {query})
-                        MCP-->>Orch: image URLs
-                        alt intent = "ppt"
-                            Orch->>TR: call_tool("image_download", {urls})
-                            TR-->>Orch: saved file paths
-                            Orch->>State: generated_files.extend(paths)
-                        end
-
-                    else 其他工具
-                        Orch->>MCP: call_tool(name, args)
-                        alt MCP 成功
-                            MCP-->>Orch: result text
-                        else MCP 失败
-                            Orch->>TR: call_tool(name, args)
-                            TR-->>Orch: result
-                        end
+                        Orch->>Ctx: add_message("assistant", result)
                     end
-
-                    Orch->>Ctx: add_message("assistant", result)
+                else 无 tool_calls (直接响应)
+                    Orch->>Orch: subtask_result = response.response
+                    Note over Orch: 退出 Loop 3
                 end
             end
-
-        else 无 tool_calls (直接响应)
-            Orch->>Orch: subtask_result = response_data.response
-            Log->>Log: log_llm_decision("LLM direct response")
         end
 
-        alt subtask_complete || all_complete
-            Log->>Log: log_orchestrator("Subtask completed")
-            Note over Orch: subtask_complete = True, 退出循环
+        Note over Orch: ──── Phase 2c: 子任务摘要 ────
+        rect rgb(243, 229, 245)
+            Orch->>LLM: decide_json(SUBTASK_SUMMARY_PROMPT)
+            LLM-->>Orch: {summary: "子任务完成摘要"}
+            Orch->>Ctx: save_subtask_summary(subtask, summary)
         end
-
-        Orch->>Ctx: add_message("assistant", llm_response.content)
     end
 
-    Orch->>State: subtask_history.append(entry)
-    Orch->>State: subtask_status = "completed" | "failed"
-    Orch-->>Orch: return subtask_result
+    Note over Orch: ──── Phase 2d: Todo 摘要 ────
+    rect rgb(243, 229, 245)
+        Orch->>Ctx: get_all_subtask_summaries(state)
+        Ctx-->>Orch: all subtask summaries
+        Orch->>LLM: decide_json(TODO_SUMMARY_PROMPT)
+        LLM-->>Orch: {summary: "Todo 完成摘要"}
+        Orch->>Ctx: save_todo_summary(todo, summary)
+    end
+
+    Orch->>State: subtask_status = "completed"
+    Orch-->>Orch: return all_summaries
 ```
 
-### 5.1 子任务循环关键机制
+### 5.2 三重循环关键机制
 
 | 机制 | 说明 |
 |------|------|
-| **LLM 驱动决策** | 每轮循环由 LLM 决定：调用工具 / 直接响应 / 标记完成 |
-| **ai_engine 统一接入** | 所有 Provider 通过 ai_engine 子模块统一处理，JSON-based tool calling 协议 |
+| **Todo 分解** | LLM 将每个 todo 分解为具体的 subtasks（使用 `SUBTASK_DECOMPOSE_PROMPT`） |
+| **独立执行** | 每个 subtask 独立执行，不共享 LLM 上下文，避免上下文污染 |
+| **前次摘要传递** | 每个 subtask 执行前获取前一个 subtask 的摘要作为输入上下文 |
+| **对话历史传递** | 工具执行循环中通过 `context_messages=history[-10:]` 传递最近10条对话，解决 LLM 失忆问题 |
+| **逐层摘要生成** | subtask → `SUBTASK_SUMMARY_PROMPT` → todo → `TODO_SUMMARY_PROMPT` |
+| **分层上下文存储** | `ContextManager` 存储三层上下文：`todo_contexts[]`、`subtask_contexts[]`、`conversation[]` |
+| **工具执行限制** | 单个 subtask 内最多5轮工具调用（Loop 3），防止无限循环 |
 | **工具优先级** | MCP 工具优先调用，失败时 fallback 到 Plugin 工具 |
 | **自动链式执行** | `web_search` 自动触发 `web_fetch_batch`；`image_search` + PPT 意图自动触发 `image_download` |
-| **最大循环限制** | `max_subtask_loops = 20`，防止 LLM 陷入无限决策循环 |
-| **上下文累积** | 每轮结果通过 `ContextManager` 追加到对话历史，下一轮 LLM 可见 |
 
 ---
 
@@ -758,11 +769,19 @@ stateDiagram-v2
     Planning --> TodoLoop: 意图识别 + Todo 规划完成
 
     TodoLoop --> SubtaskLoop: 取当前 Todo
-    SubtaskLoop --> ToolExecution: LLM 决策: 调用工具
-    SubtaskLoop --> DirectResponse: LLM 决策: 直接响应
-    ToolExecution --> SubtaskLoop: 工具结果返回
-    DirectResponse --> TodoLoop: 子任务完成, 推进 Todo
-    SubtaskLoop --> TodoLoop: 子任务完成 (max loops)
+    SubtaskLoop --> SubtaskDecompose: 分解 Todo 为 Subtasks
+    SubtaskDecompose --> SubtaskExecute: subtasks[] 生成完成
+
+    SubtaskExecute --> ToolExecution: LLM 决策: 调用工具
+    SubtaskExecute --> DirectResponse: LLM 决策: 直接响应
+    ToolExecution --> SubtaskExecute: 工具结果返回
+    DirectResponse --> SubtaskSummary: 子任务完成
+    SubtaskExecute --> SubtaskSummary: max loops exceeded
+
+    SubtaskSummary --> SubtaskExecute: 还有更多 subtasks
+    SubtaskSummary --> TodoSummary: 所有 subtasks 完成
+
+    TodoSummary --> TodoLoop: 推进下一个 Todo
 
     TodoLoop --> Summarizing: 所有 Todo 完成
     Summarizing --> Done: 总结生成完成
@@ -770,7 +789,7 @@ stateDiagram-v2
     Done --> [*]: 返回结果
 
     TodoLoop --> Error: max_todo_loops exceeded
-    SubtaskLoop --> Error: max_subtask_loops exceeded
+    SubtaskExecute --> Error: max_subtask_loops exceeded
     Error --> [*]: 返回错误
 ```
 
@@ -793,6 +812,31 @@ stateDiagram-v2
 | `final_result` | str | 最终结果 |
 | `orchestrator_phase` | str | planning / todo_loop / subtask_loop / summarizing / done |
 | `loop_level` | str | simple / complex |
+
+### 8.3 分层上下文存储 (ContextManager)
+
+v3.1.2 重构后，`ContextManager` 采用三层存储结构，避免上下文污染：
+
+```python
+{
+    "request_id": {
+        "todo_contexts": [          # 每个已完成 todo 的摘要
+            {"todo": "任务描述", "summary": "执行结果摘要"}
+        ],
+        "subtask_contexts": [       # 当前 todo 下每个子任务的摘要
+            {"subtask": "子任务描述", "summary": "执行结果摘要"}
+        ],
+        "conversation": [           # 当前子任务的迭代历史（工具调用/LLM响应）
+            {"role": "assistant", "content": "...", "phase": "subtask_loop"}
+        ]
+    }
+}
+```
+
+**上下文层级**：
+- `todo_contexts[]` — 跨 Todo 传递：每个 todo 完成后生成摘要，作为下一个 todo 的输入上下文
+- `subtask_contexts[]` — 跨 Subtask 传递：每个 subtask 完成后生成摘要，作为下一个 subtask 的输入上下文
+- `conversation[]` — Subtask 内部传递：工具执行循环中的 LLM 对话历史（最近10条通过 `context_messages` 传给 LLM）
 
 ---
 

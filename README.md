@@ -24,7 +24,11 @@
 │     │  Loop 1: Todo List (总体任务循环)    │         │
 │     │     ┌─────────────────────────┐    │         │
 │     │     │ Loop 2: Subtask (子任务)  │    │         │
-│     │     │     LLM决策 → Tool执行   │    │         │
+│     │     │  分解 → 独立执行 → 摘要   │    │         │
+│     │     │  ┌───────────────────┐  │    │         │
+│     │     │  │ Loop 3: 工具执行   │  │    │         │
+│     │     │  │  LLM决策 → Tool   │  │    │         │
+│     │     │  └───────────────────┘  │    │         │
 │     │     └─────────────────────────┘    │         │
 │     └─────────────────────────────────────┘         │
 └──────────────────────┬──────────────────────────────┘
@@ -38,8 +42,9 @@
 
 ## 核心特性
 
-- **双循环架构**: 总体任务循环(Todo Loop) + 子任务循环(Subtask Loop)
-- **LLM驱动决策**: LLM负责意图识别、任务规划、工具调用判断、数据分析、结果总结
+- **三循环架构**: 总体任务循环(Todo Loop) → 子任务分解(Subtask Loop) → 工具执行(Iteration Loop)
+- **分层上下文管理**: Todo摘要 → Subtask摘要 → 对话历史，逐层传递避免上下文污染
+- **LLM驱动决策**: LLM负责意图识别、任务分解、工具调用判断、数据分析、结果总结
 - **三种预置Agent**: PPT生成、智能搜索、代码生成
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash)
@@ -139,8 +144,8 @@ curl -X POST http://localhost:11555/api/agent/router \
 ├── modules/                   # 核心模块
 │   ├── core/                  #   核心编排
 │   │   ├── agent_state.py     #     LangGraph 状态定义 (AgentState)
-│   │   ├── orchestrator.py    #     双循环编排器 (Todo Loop + Subtask Loop)
-│   │   ├── context_manager.py #     上下文管理 (对话历史/子任务上下文)
+│   │   ├── orchestrator.py    #     三循环编排器 (Todo→Subtask分解→工具执行)
+│   │   ├── context_manager.py #     分层上下文管理 (todo/subtask/conversation)
 │   │   └── todo_manager.py    #     任务清单管理 (进度追踪)
 │   ├── llm/                   #   LLM 层
 │   │   └── llm_client.py      #     统一 LLM 客户端 (通过 ai_engine 接入所有 Provider)

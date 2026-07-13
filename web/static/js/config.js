@@ -176,7 +176,7 @@ async function loadIntents() {
 
 function renderIntentCheckboxes() {
     const entries = Object.entries(registeredIntents);
-    const containers = ['mcpSearxngIntents', 'mcpImageSearchIntents', 'mcpServerIntentCheckboxes'];
+    const containers = ['pluginDetailIntentCheckboxes'];
     containers.forEach(containerId => {
         const container = document.getElementById(containerId);
         if (!container) return;
@@ -186,7 +186,7 @@ function renderIntentCheckboxes() {
         }
         container.innerHTML = entries.map(([id, intent]) => `
             <label>
-                <input type="checkbox" class="intent-checkbox" data-container="${containerId}" value="${id}" checked onchange="updateMultiselectLabel('${containerId}')">
+                <input type="checkbox" class="intent-checkbox" data-container="${containerId}" value="${id}" onchange="updateMultiselectLabel('${containerId}')">
                 ${intent.name || id}
             </label>
         `).join('');
@@ -273,27 +273,11 @@ async function loadMCPServers() {
     document.getElementById('mcpImageSearchPexelsKey').value = (img.env && img.env.PEXELS_API_KEY) || '';
     document.getElementById('mcpImageSearchUnsplashKey').value = (img.env && img.env.UNSPLASH_API_KEY) || '';
 
-    // Set intent checkboxes for built-in servers
-    setTimeout(() => {
-        if (searxng.intent_categories) {
-            document.querySelectorAll('#mcpSearxngIntents .intent-checkbox').forEach(cb => {
-                cb.checked = searxng.intent_categories.includes(cb.value);
-            });
-        }
-        if (img.intent_categories) {
-            document.querySelectorAll('#mcpImageSearchIntents .intent-checkbox').forEach(cb => {
-                cb.checked = img.intent_categories.includes(cb.value);
-            });
-        }
-        updateMultiselectLabel('mcpSearxngIntents');
-        updateMultiselectLabel('mcpImageSearchIntents');
-    }, 100);
-
     // Custom servers table
     const customNames = Object.keys(mcpServers).filter(n => n !== 'searxng' && n !== 'image_search');
     const tbody = document.getElementById('mcpCustomServersTable');
     if (customNames.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">' + __('config.mcp.noCustom') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.mcp.noCustom') + '</td></tr>';
         return;
     }
     tbody.innerHTML = customNames.map(name => {
@@ -302,14 +286,12 @@ async function loadMCPServers() {
         const connected = st.connected ? __('config.mcp.connected') : __('config.mcp.disconnected');
         const toolsCount = st.tools_count || 0;
         const addr = s.type === 'server' ? (s.url || '-') : (s.command || '') + ' ' + (s.args || []).join(' ');
-        const intents = (s.intent_categories || []).join(', ') || __('config.mcp.all');
         return `<tr>
             <td><code>${name}</code></td>
             <td>${s.type === 'server' ? 'Server' : 'Local'}</td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${addr}">${addr}</td>
             <td>${connected}</td>
             <td>${toolsCount}</td>
-            <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${intents}">${intents}</td>
             <td>
                 <button class="btn btn-sm btn-outline" onclick="editCustomMCPServer('${name}')">${__('config.mcp.edit')}</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteCustomMCPServer('${name}')">${__('config.mcp.delete')}</button>
@@ -326,7 +308,6 @@ async function saveBuiltinMCPSearxng() {
         enabled: document.getElementById('mcpSearxngEnabled').checked,
         command: 'python3',
         args: ['mcp/searxng_server.py'],
-        intent_categories: getSelectedIntents('mcpSearxngIntents'),
         env: {
             SEARXNG_BASE_URL: document.getElementById('mcpSearxngUrl').value || 'http://localhost:8888',
             SEARXNG_MAX_RESULTS: String(parseInt(document.getElementById('mcpSearxngMaxResults').value) || 10),
@@ -349,7 +330,6 @@ async function saveBuiltinMCPImageSearch() {
         enabled: document.getElementById('mcpImageSearchEnabled').checked,
         command: 'python3',
         args: ['mcp/image_search_server.py'],
-        intent_categories: getSelectedIntents('mcpImageSearchIntents'),
         env: {
             IMAGE_PROVIDER: document.getElementById('mcpImageSearchProvider').value,
             PEXELS_API_KEY: document.getElementById('mcpImageSearchPexelsKey').value,
@@ -419,8 +399,6 @@ function showAddMCPServer() {
     document.getElementById('mcpServerEnv').value = '';
     document.getElementById('mcpServerEnabled').checked = true;
     onMCPServerTypeChange();
-    document.querySelectorAll('#mcpServerIntentCheckboxes .intent-checkbox').forEach(cb => cb.checked = true);
-    updateMultiselectLabel('mcpServerIntentCheckboxes');
     document.getElementById('mcpCustomTestResult').textContent = '';
     document.getElementById('mcpServerModal').style.display = 'flex';
 }
@@ -461,14 +439,6 @@ function editCustomMCPServer(name) {
         const env = s.env || {};
         document.getElementById('mcpServerEnv').value = Object.entries(env).map(([k, v]) => `${k}=${v}`).join('\n');
 
-        // Intent checkboxes
-        setTimeout(() => {
-            const cats = s.intent_categories || [];
-            document.querySelectorAll('#mcpServerIntentCheckboxes .intent-checkbox').forEach(cb => {
-                cb.checked = cats.length === 0 || cats.includes(cb.value);
-            });
-            updateMultiselectLabel('mcpServerIntentCheckboxes');
-        }, 100);
     });
 }
 
@@ -480,7 +450,6 @@ async function saveCustomMCPServer() {
     const config = {
         type: type,
         enabled: document.getElementById('mcpServerEnabled').checked,
-        intent_categories: getSelectedIntents('mcpServerIntentCheckboxes'),
     };
 
     if (type === 'server') {
@@ -523,7 +492,7 @@ async function deleteCustomMCPServer(name) {
 async function testCustomMCP() {
     const name = document.getElementById('mcpServerName').value.trim() || 'test-server';
     const type = document.getElementById('mcpServerType').value;
-    const config = { type, enabled: true, intent_categories: [] };
+    const config = { type, enabled: true };
 
     if (type === 'server') {
         config.url = document.getElementById('mcpServerUrl').value;
@@ -649,21 +618,21 @@ async function loadPlugins() {
     const result = await apiCall('/admin/plugins');
     const tbody = document.getElementById('pluginsTable');
     if (!result.success || !result.tools) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center">' + __('config.plugins.loadFailed') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">' + __('config.plugins.loadFailed') + '</td></tr>';
         return;
     }
     allPlugins = result.tools;
     document.getElementById('pluginsTotalCount').textContent =
         __('config.plugins.totalTools', { count: allPlugins.length });
 
-    const filterSelect = document.getElementById('pluginCategoryFilter');
+    const filterSelect = document.getElementById('pluginIntentFilter');
     const existingOptions = filterSelect.querySelector('option[value="all"]');
     filterSelect.innerHTML = '';
     filterSelect.appendChild(existingOptions);
-    (result.categories || []).forEach(cat => {
+    (result.intents || []).forEach(intent => {
         const opt = document.createElement('option');
-        opt.value = cat;
-        opt.textContent = cat;
+        opt.value = intent;
+        opt.textContent = intent;
         filterSelect.appendChild(opt);
     });
 
@@ -673,29 +642,37 @@ async function loadPlugins() {
 function renderPluginsTable(tools) {
     const tbody = document.getElementById('pluginsTable');
     if (!tools || tools.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('config.plugins.none') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.plugins.none') + '</td></tr>';
         return;
     }
-    tbody.innerHTML = tools.map(tool => `
+    tbody.innerHTML = tools.map(tool => {
+        const intents = (tool.intents || []).join(', ') || __('config.plugins.noIntents');
+        const source = tool.source || '内部插件';
+        return `
         <tr>
             <td><code>${tool.name}</code></td>
-            <td><span class="badge badge-info">${tool.category}</span></td>
+            <td><span class="badge badge-info">${intents}</span></td>
             <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tool.description}">${tool.description}</td>
+            <td><span class="badge badge-secondary">${source}</span></td>
             <td><span class="badge ${tool.enabled ? 'badge-success' : 'badge-danger'}">${tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled')}</span></td>
             <td>
                 <button class="btn btn-sm btn-outline" onclick="showPluginDetail('${tool.name}')">${__('config.plugins.details')}</button>
                 <button class="btn btn-sm ${tool.enabled ? 'btn-danger' : 'btn-primary'}" onclick="togglePlugin('${tool.name}', ${!tool.enabled})">${tool.enabled ? __('config.plugins.disable') : __('config.plugins.enable')}</button>
             </td>
         </tr>
-    `).join('');
+    `}).join('');
 }
 
 function filterPlugins() {
-    const category = document.getElementById('pluginCategoryFilter').value;
+    const intent = document.getElementById('pluginIntentFilter').value;
+    const source = document.getElementById('pluginSourceFilter').value;
     const search = document.getElementById('pluginSearchInput').value.toLowerCase();
     let filtered = allPlugins;
-    if (category !== 'all') {
-        filtered = filtered.filter(t => t.category === category);
+    if (intent !== 'all') {
+        filtered = filtered.filter(t => (t.intents || []).includes(intent));
+    }
+    if (source !== 'all') {
+        filtered = filtered.filter(t => t.source === source);
     }
     if (search) {
         filtered = filtered.filter(t =>
@@ -724,13 +701,20 @@ function showPluginDetail(name) {
     document.getElementById('pluginDetailTitle').textContent = tool.name;
     document.getElementById('pluginDetailDesc').textContent = tool.description;
 
-    const catBadge = document.getElementById('pluginDetailCategory');
-    catBadge.textContent = tool.category;
-    catBadge.className = 'badge badge-info';
+    const sourceBadge = document.getElementById('pluginDetailSource');
+    sourceBadge.textContent = tool.source || '内部插件';
+    sourceBadge.className = 'badge badge-secondary';
 
     const statusBadge = document.getElementById('pluginDetailStatus');
     statusBadge.textContent = tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled');
     statusBadge.className = 'badge ' + (tool.enabled ? 'badge-success' : 'badge-danger');
+
+    // Set intent checkboxes in detail modal
+    const toolIntents = tool.intents || [];
+    document.querySelectorAll('#pluginDetailIntentCheckboxes .intent-checkbox').forEach(cb => {
+        cb.checked = toolIntents.includes(cb.value);
+    });
+    updateMultiselectLabel('pluginDetailIntentCheckboxes');
 
     const paramsDiv = document.getElementById('pluginDetailParams');
     paramsDiv.textContent = JSON.stringify(tool.parameters, null, 2);
@@ -751,4 +735,17 @@ async function togglePluginFromDetail() {
     if (!currentPluginDetail) return;
     await togglePlugin(currentPluginDetail.name, !currentPluginDetail.enabled);
     closePluginDetail();
+}
+
+async function savePluginIntents() {
+    if (!currentPluginDetail) return;
+    const selected = getSelectedIntents('pluginDetailIntentCheckboxes');
+    const result = await apiCall(`/admin/plugins/${currentPluginDetail.name}/intents`, 'POST', { intents: selected });
+    if (result.success) {
+        showToast(__('config.plugins.intentsSaved', { name: currentPluginDetail.name }), 'success');
+        currentPluginDetail.intents = selected;
+        loadPlugins();
+    } else {
+        showToast(__('config.plugins.intentsSaveFailed') + (result.error || ''), 'error');
+    }
 }

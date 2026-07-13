@@ -97,13 +97,6 @@
                     <label data-i18n="config.mcp.maxResults">最大结果数</label>
                     <input type="number" id="mcpSearxngMaxResults" class="form-control" value="10" min="1" max="50">
                 </div>
-                <div class="form-group">
-                    <label data-i18n="config.mcp.intentCategories">意图分类</label>
-                    <div class="multiselect-dropdown" id="mcpSearxngDropdown">
-                        <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.mcp.intentPlaceholder" data-placeholder="Select intent categories" data-i18n="config.mcp.intentPlaceholder">Select intent categories</button>
-                        <div class="multiselect-menu" id="mcpSearxngIntents"></div>
-                    </div>
-                </div>
                 <div style="display:flex;gap:8px;margin-top:8px;">
                     <button class="btn btn-primary" onclick="saveBuiltinMCPSearxng()" data-i18n="config.mcp.save">保存</button>
                     <button class="btn btn-outline" onclick="testBuiltinMCP('searxng')" data-i18n="config.mcp.test">测试连接</button>
@@ -132,13 +125,6 @@
                     <label data-i18n="config.mcp.unsplashKey">Unsplash API Key</label>
                     <input type="password" id="mcpImageSearchUnsplashKey" class="form-control" placeholder="Unsplash API Key (Access Key)">
                 </div>
-                <div class="form-group">
-                    <label data-i18n="config.mcp.intentCategories">意图分类</label>
-                    <div class="multiselect-dropdown" id="mcpImageSearchDropdown">
-                        <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.mcp.intentPlaceholder" data-placeholder="Select intent categories" data-i18n="config.mcp.intentPlaceholder">Select intent categories</button>
-                        <div class="multiselect-menu" id="mcpImageSearchIntents"></div>
-                    </div>
-                </div>
                 <div style="display:flex;gap:8px;margin-top:8px;">
                     <button class="btn btn-primary" onclick="saveBuiltinMCPImageSearch()" data-i18n="config.mcp.save">保存</button>
                     <button class="btn btn-outline" onclick="testBuiltinMCP('image_search')" data-i18n="config.mcp.test">测试连接</button>
@@ -163,12 +149,11 @@
                         <th data-i18n="config.mcp.address">地址/命令</th>
                         <th data-i18n="config.mcp.status">状态</th>
                         <th data-i18n="config.mcp.tools">工具数</th>
-                        <th data-i18n="config.mcp.intents">意图</th>
                         <th data-i18n="config.mcp.actions">操作</th>
                     </tr>
                 </thead>
                 <tbody id="mcpCustomServersTable">
-                    <tr><td colspan="7" class="text-center" data-i18n="config.mcp.loading">加载中...</td></tr>
+                    <tr><td colspan="6" class="text-center" data-i18n="config.mcp.loading">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -220,14 +205,6 @@
                 <label><input type="checkbox" id="mcpServerEnabled" checked> <span data-i18n="config.mcp.enableService">启用此服务</span></label>
             </div>
 
-            <div class="form-group">
-                <label data-i18n="config.mcp.intentCategories">意图分类（可多选）</label>
-                <div class="multiselect-dropdown" id="mcpServerDropdown">
-                    <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.mcp.intentPlaceholder" data-placeholder="Select intent categories" data-i18n="config.mcp.intentPlaceholder">Select intent categories</button>
-                    <div class="multiselect-menu" id="mcpServerIntentCheckboxes"></div>
-                </div>
-            </div>
-
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
                 <button class="btn btn-outline" onclick="closeMCPServerModal()" data-i18n="config.mcp.cancel">取消</button>
                 <button class="btn btn-primary" onclick="saveCustomMCPServer()" data-i18n="config.mcp.save">保存</button>
@@ -247,9 +224,16 @@
         </div>
         <div class="card-body">
             <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;">
-                <label data-i18n="config.plugins.filterCategory">按类别筛选：</label>
-                <select id="pluginCategoryFilter" class="form-control" style="width:auto;min-width:150px;" onchange="filterPlugins()">
-                    <option value="all" data-i18n="config.plugins.allCategories">全部类别</option>
+                <label data-i18n="config.plugins.filterIntent">按意图筛选：</label>
+                <select id="pluginIntentFilter" class="form-control" style="width:auto;min-width:150px;" onchange="filterPlugins()">
+                    <option value="all" data-i18n="config.plugins.allIntents">全部意图</option>
+                </select>
+                <label data-i18n="config.plugins.filterSource">按来源筛选：</label>
+                <select id="pluginSourceFilter" class="form-control" style="width:auto;min-width:150px;" onchange="filterPlugins()">
+                    <option value="all" data-i18n="config.plugins.allSources">全部来源</option>
+                    <option value="MCP">MCP</option>
+                    <option value="内部插件" data-i18n="config.plugins.sourceInternal">内部插件</option>
+                    <option value="外部插件" data-i18n="config.plugins.sourceExternal">外部插件</option>
                 </select>
                 <input type="text" id="pluginSearchInput" class="form-control" style="width:auto;min-width:200px;" placeholder="搜索工具名称..." data-i18n-placeholder="config.plugins.searchPlaceholder" oninput="filterPlugins()">
             </div>
@@ -257,14 +241,15 @@
                 <thead>
                     <tr>
                         <th data-i18n="config.plugins.name">工具名称</th>
-                        <th data-i18n="config.plugins.category">类别</th>
+                        <th data-i18n="config.plugins.intent">意图</th>
                         <th data-i18n="config.plugins.description">描述</th>
+                        <th data-i18n="config.plugins.source">来源</th>
                         <th data-i18n="config.plugins.status">状态</th>
                         <th data-i18n="config.plugins.actions">操作</th>
                     </tr>
                 </thead>
                 <tbody id="pluginsTable">
-                    <tr><td colspan="5" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                    <tr><td colspan="6" class="text-center" data-i18n="common.loading">加载中...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -277,8 +262,17 @@
             <p id="pluginDetailDesc" class="text-muted" style="margin-bottom:16px;"></p>
 
             <div style="margin-bottom:16px;">
-                <span class="badge" id="pluginDetailCategory"></span>
+                <span class="badge badge-info" id="pluginDetailSource"></span>
                 <span class="badge" id="pluginDetailStatus"></span>
+            </div>
+
+            <div style="margin-bottom:16px;">
+                <label data-i18n="config.plugins.intent" style="font-weight:600;margin-bottom:4px;display:block;">意图</label>
+                <div class="multiselect-dropdown" id="pluginDetailIntentDropdown">
+                    <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.plugins.selectIntents" data-placeholder="选择意图">选择意图</button>
+                    <div class="multiselect-menu" id="pluginDetailIntentCheckboxes"></div>
+                </div>
+                <button class="btn btn-sm btn-primary" style="margin-top:8px;" onclick="savePluginIntents()" data-i18n="config.plugins.saveIntents">保存意图</button>
             </div>
 
             <h4 style="margin-bottom:8px;" data-i18n="config.plugins.parameters">参数详情</h4>

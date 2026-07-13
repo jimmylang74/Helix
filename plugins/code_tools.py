@@ -16,7 +16,7 @@ class SaveCodeTool(BaseTool):
 
     name = "save_code"
     description = "Save generated code to a file in the output directory. Returns the saved file path."
-    category = "code"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -57,7 +57,7 @@ class RunCodeTool(BaseTool):
 
     name = "run_code"
     description = "Execute a Python code file and return stdout/stderr output."
-    category = "code"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {

@@ -408,11 +408,11 @@ def reload_mcp():
 def get_plugins():
     """Get all registered plugin tools with their metadata."""
     tools = tool_registry.get_all_as_list()
-    categories = tool_registry.get_categories()
+    intents = tool_registry.get_intents()
     return jsonify({
         "success": True,
         "tools": tools,
-        "categories": sorted(categories),
+        "intents": sorted(intents),
         "total": len(tools),
     })
 
@@ -435,6 +435,23 @@ def toggle_plugin(tool_name):
             tool_registry.save_enabled_state()
             return jsonify({"success": True, "name": tool_name, "enabled": enabled})
         return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@admin_bp.route("/plugins/<tool_name>/intents", methods=["POST"])
+def save_plugin_intents(tool_name):
+    """Save intent assignments for a plugin tool."""
+    try:
+        data = request.get_json(force=True)
+        intents = data.get("intents", [])
+        tool = tool_registry.get(tool_name)
+        if not tool:
+            return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
+
+        tool.intents = list(intents)
+        tool_registry.save_enabled_state()
+        return jsonify({"success": True, "name": tool_name, "intents": tool.intents})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 

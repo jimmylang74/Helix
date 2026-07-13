@@ -12,13 +12,15 @@ from modules.utils.logger import log_tool_call, log_error, log_info
 class MCPToolAdapter(BaseTool):
     """Adapter that wraps an MCP tool as a BaseTool for unified registry management."""
 
-    category = "mcp"
+    source = "MCP"
 
-    def __init__(self, tool_name: str, description: str, input_schema: dict[str, Any]):
+    def __init__(self, tool_name: str, description: str, input_schema: dict[str, Any],
+                 intents: list[str] | None = None):
         super().__init__()
         self.name = tool_name
         self.description = description
         self.parameters = input_schema
+        self.intents = intents or []
 
     def execute(self, **kwargs) -> Any:
         log_tool_call(f"MCP adapter: {self.name}({kwargs})")
@@ -34,22 +36,31 @@ def register_mcp_tools(tool_registry):
     """Scan all connected MCP servers and register their tools as MCPToolAdapters in tool_registry.
 
     Removes previously registered MCP adapters first (for reload scenarios).
+    Loads intent assignments from saved tool config in Helix.json.
     """
     for name in list(tool_registry._tools):
         tool = tool_registry._tools[name]
         if isinstance(tool, MCPToolAdapter):
             tool_registry.unregister(name)
 
+    from modules.config.config_manager import ConfigManager
+    config = ConfigManager()
+    saved_tools = config.get("plugins", {})
+
     mcp_tools = mcp_registry.get_all_tools()
     count = 0
     for server_name, tools in mcp_tools.items():
         for t in tools:
             if t["name"] not in tool_registry._tools:
+                saved_cfg = saved_tools.get(t["name"], {})
                 adapter = MCPToolAdapter(
                     tool_name=t["name"],
                     description=t["description"],
                     input_schema=t["input_schema"],
+                    intents=saved_cfg.get("intents", []),
                 )
+                if "enabled" in saved_cfg:
+                    adapter.enabled = saved_cfg["enabled"]
                 tool_registry.register(adapter)
                 count += 1
                 log_info(f"MCP adapter registered: {t['name']} (from {server_name})")

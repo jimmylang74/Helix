@@ -15,7 +15,7 @@ class WebFetchBatchTool(BaseTool):
 
     name = "web_fetch_batch"
     description = "Fetch and extract text content from multiple URLs. Returns combined text."
-    category = "web"
+    intents = ["research"]
     parameters = {
         "type": "object",
         "properties": {

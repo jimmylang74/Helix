@@ -711,8 +711,9 @@ function showPluginDetail(name) {
 
     // Set intent checkboxes in detail modal
     const toolIntents = tool.intents || [];
+    const selectAll = toolIntents.length === 0;
     document.querySelectorAll('#pluginDetailIntentCheckboxes .intent-checkbox').forEach(cb => {
-        cb.checked = toolIntents.includes(cb.value);
+        cb.checked = selectAll || toolIntents.includes(cb.value);
     });
     updateMultiselectLabel('pluginDetailIntentCheckboxes');
 
@@ -744,6 +745,10 @@ async function savePluginIntents() {
     if (result.success) {
         showToast(__('config.plugins.intentsSaved', { name: currentPluginDetail.name }), 'success');
         currentPluginDetail.intents = selected;
+        const idx = allPlugins.findIndex(t => t.name === currentPluginDetail.name);
+        if (idx !== -1) {
+            allPlugins[idx].intents = selected;
+        }
         loadPlugins();
     } else {
         showToast(__('config.plugins.intentsSaveFailed') + (result.error || ''), 'error');

@@ -172,7 +172,8 @@ curl -X POST http://localhost:11555/api/agent/router \
 │   ├── image_tools.py         #   图片工具 (image_search, image_download)
 │   ├── ppt_tools.py           #   PPT 工具 (create_ppt)
 │   ├── code_tools.py          #   代码工具 (save_code, run_code)
-│   └── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
+│   ├── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
+│   └── user/                  #   外部插件 (用户自定义, 来源标记为 "外部插件")
 ├── mcp/                       # MCP Server 实现 (stdio 传输)
 │   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
 │   └── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)

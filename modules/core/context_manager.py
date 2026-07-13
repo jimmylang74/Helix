@@ -1,43 +1,140 @@
 """
-Context Manager - Manages conversation history and task context.
+Context Manager - Manages hierarchical conversation history and task context.
+
+Context hierarchy:
+  request_context     # Global: user request, intent, overall progress
+  todo_contexts[]     # Each todo's summary (completed todos' results)
+  subtask_contexts[]  # Current todo's subtask summaries (completed subtasks' results)
+  conversation[]      # Current subtask's iteration history (tool calls, LLM responses)
 """
 
 import json
 from typing import Any, Dict, List, Optional
 from modules.core.agent_state import AgentState, state_to_context, get_todo_progress
-from modules.utils.logger import log_agent_action, log_state
+from modules.utils.logger import log_state
 
 
 class ContextManager:
-    """Manages agent context including conversation history and state tracking."""
+    """Manages hierarchical agent context with layered storage."""
 
     def __init__(self):
-        self._conversations: Dict[str, List[Dict[str, str]]] = {}
+        self._states: Dict[str, Dict[str, Any]] = {}
+
+    def _get_state(self, request_id: str) -> Dict[str, Any]:
+        if request_id not in self._states:
+            self._states[request_id] = {
+                "todo_contexts": [],
+                "subtask_contexts": [],
+                "conversation": [],
+            }
+        return self._states[request_id]
 
     def initialize(self, state: AgentState):
         """Initialize context for a new request."""
         request_id = state.get("request_id", "unknown")
-        self._conversations[request_id] = []
+        self._states[request_id] = {
+            "todo_contexts": [],
+            "subtask_contexts": [],
+            "conversation": [],
+        }
         log_state(f"Context initialized for request {request_id}")
 
+    def clear(self, request_id: str):
+        """Clear all context for a request."""
+        if request_id in self._states:
+            del self._states[request_id]
+            log_state(f"Context cleared for request {request_id}")
+
+    # ── Conversation (current subtask's iterations) ────────────────
+
     def add_message(self, state: AgentState, role: str, content: str):
-        """Add a message to the conversation history."""
+        """Add a message to current subtask's conversation history."""
         request_id = state.get("request_id", "unknown")
-        if request_id not in self._conversations:
-            self._conversations[request_id] = []
-        self._conversations[request_id].append({
+        s = self._get_state(request_id)
+        s["conversation"].append({
             "role": role,
             "content": content,
             "phase": state.get("orchestrator_phase", "unknown"),
         })
-        # Keep history manageable (last 50 messages)
-        if len(self._conversations[request_id]) > 50:
-            self._conversations[request_id] = self._conversations[request_id][-50:]
+        if len(s["conversation"]) > 50:
+            s["conversation"] = s["conversation"][-50:]
 
     def get_conversation(self, state: AgentState) -> List[Dict[str, str]]:
-        """Get conversation history for the current request."""
+        """Get current subtask's conversation history."""
         request_id = state.get("request_id", "unknown")
-        return self._conversations.get(request_id, [])
+        return self._get_state(request_id).get("conversation", [])
+
+    def reset_conversation(self, state: AgentState):
+        """Clear current subtask's conversation (for new subtask)."""
+        request_id = state.get("request_id", "unknown")
+        self._get_state(request_id)["conversation"] = []
+
+    # ── Subtask Contexts (within current todo) ─────────────────────
+
+    def save_subtask_summary(self, state: AgentState, subtask: str, summary: str):
+        """Save a completed subtask's summary."""
+        request_id = state.get("request_id", "unknown")
+        s = self._get_state(request_id)
+        s["subtask_contexts"].append({
+            "subtask": subtask,
+            "summary": summary,
+        })
+
+    def get_previous_subtask_summary(self, state: AgentState) -> str:
+        """Get the most recent subtask's summary (for next subtask's input)."""
+        request_id = state.get("request_id", "unknown")
+        contexts = self._get_state(request_id).get("subtask_contexts", [])
+        if contexts:
+            return contexts[-1].get("summary", "")
+        return ""
+
+    def get_all_subtask_summaries(self, state: AgentState) -> str:
+        """Get all completed subtask summaries (for todo summary)."""
+        request_id = state.get("request_id", "unknown")
+        contexts = self._get_state(request_id).get("subtask_contexts", [])
+        if not contexts:
+            return "(no subtask results)"
+        parts = []
+        for i, ctx in enumerate(contexts, 1):
+            parts.append(f"### Subtask {i}: {ctx['subtask']}\n{ctx['summary']}")
+        return "\n\n".join(parts)
+
+    def reset_subtask_contexts(self, state: AgentState):
+        """Clear subtask contexts (for new todo)."""
+        request_id = state.get("request_id", "unknown")
+        self._get_state(request_id)["subtask_contexts"] = []
+
+    # ── Todo Contexts (across todos) ───────────────────────────────
+
+    def save_todo_summary(self, state: AgentState, todo: str, summary: str):
+        """Save a completed todo's summary."""
+        request_id = state.get("request_id", "unknown")
+        s = self._get_state(request_id)
+        s["todo_contexts"].append({
+            "todo": todo,
+            "summary": summary,
+        })
+
+    def get_previous_todo_summary(self, state: AgentState) -> str:
+        """Get the most recent completed todo's summary (for next todo's input)."""
+        request_id = state.get("request_id", "unknown")
+        contexts = self._get_state(request_id).get("todo_contexts", [])
+        if contexts:
+            return contexts[-1].get("summary", "")
+        return ""
+
+    def get_all_todo_summaries(self, state: AgentState) -> str:
+        """Get all completed todo summaries (for final summarization)."""
+        request_id = state.get("request_id", "unknown")
+        contexts = self._get_state(request_id).get("todo_contexts", [])
+        if not contexts:
+            return "(no todo results)"
+        parts = []
+        for i, ctx in enumerate(contexts, 1):
+            parts.append(f"### Todo {i}: {ctx['todo']}\n{ctx['summary']}")
+        return "\n\n".join(parts)
+
+    # ── Legacy compatibility ───────────────────────────────────────
 
     def build_llm_context(self, state: AgentState, include_history: bool = True) -> str:
         """Build full context string for LLM."""
@@ -54,39 +151,6 @@ class ContextManager:
 
         return "\n".join(parts)
 
-    def build_subtask_context(self, state: AgentState) -> str:
-        """Build focused context for the current subtask."""
-        parts = [
-            f"## User Request\n{state.get('user_request', '')}",
-            f"\n## Todo Progress\n{get_todo_progress(state)}",
-            f"\n## Current Subtask\n{state.get('current_subtask', '')}",
-            f"\n## Subtask Status: {state.get('subtask_status', 'idle')}",
-            f"\n## Current Loop Count: {state.get('subtask_loop_count', 0)}",
-        ]
 
-        # Last few subtask history entries
-        history = state.get("subtask_history", [])
-        recent = history[-5:] if history else []
-        if recent:
-            parts.append("\n## Recent Subtask History")
-            for h in recent:
-                parts.append(f"- {h.get('subtask', '')}: {h.get('status', '')}")
-
-        # Collected data summary
-        data = state.get("collected_data", [])
-        if data:
-            parts.append(f"\n## Collected Data ({len(data)} items)")
-            for d in data[-3:]:
-                parts.append(f"\n{d[:1000]}")
-
-        return "\n".join(parts)
-
-    def clear(self, request_id: str):
-        """Clear context for a request."""
-        if request_id in self._conversations:
-            del self._conversations[request_id]
-            log_state(f"Context cleared for request {request_id}")
-
-
-# Global context manager instance
+# Global context manager
 context_manager = ContextManager()

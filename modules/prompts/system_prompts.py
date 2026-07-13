@@ -67,39 +67,100 @@ User request: {user_request}
 Respond in pure JSON with fields: thinking, todos (list), intent_type (ppt|research|coding)
 """
 
-SUBTASK_DECISION_PROMPT = """# Subtask Decision
+SUBTASK_DECOMPOSE_PROMPT = """# Subtask Decomposition
 
-You are working on a specific subtask. Here's the current state:
+Break down the following todo item into a numbered list of concrete, executable subtasks.
+
+## User Request
+{user_request}
+
+## Todo Item to Decompose
+{todo_item}
+
+## Rules
+- Each subtask should be a single action (one tool call or one analysis step)
+- Order subtasks logically (search before analysis, etc.)
+- For simple greetings or direct questions, use a single subtask like "Respond directly"
+- Keep subtasks concise (one line each)
+
+Respond in pure JSON:
+{{
+  "thinking": "<your reasoning>",
+  "subtasks": ["subtask 1", "subtask 2", ...]
+}}
+"""
+
+SUBTASK_DECISION_PROMPT = """# Subtask Execution
+
+You are executing a specific subtask within a larger task.
 
 ## Overall Task
 {user_request}
 
-## Todo List Progress
-{todo_progress}
-
-## Current Subtask
+## Current Subtask ({subtask_index}/{subtask_count})
 {subtask}
 
 ## Collected Data So Far
 {collected_data}
 
-## Context
-{subtask_context}
-
-Decide what to do next:
+## Rules
 1. If you need more information → call `web_search`
 2. If you need images → call `image_search`
-3. If you have enough data → analyze and provide response
-4. If subtask is complete → mark complete
+3. If you have enough data or can answer directly → use the `response` field
+4. Always set `subtask_complete: true` when providing a direct response (no tools needed)
 
 Respond in JSON:
-{
+{{
   "thinking": "<your reasoning>",
-  "tool_calls": [{"name": "tool_name", "arguments": {...}}],
+  "tool_calls": [{{"name": "tool_name", "arguments": {{...}}}}],
   "response": "<your analysis or answer if no tools needed>",
-  "subtask_complete": false,
-  "needs_further_search": false
-}
+  "subtask_complete": false
+}}
+"""
+
+SUBTASK_SUMMARY_PROMPT = """# Subtask Summary
+
+Summarize the work done in this subtask into a concise paragraph.
+
+## Subtask
+{subtask}
+
+## Work Performed
+{work_performed}
+
+## Rules
+- Focus on key findings, results, and conclusions
+- Keep it concise (2-4 sentences)
+- This summary will be used as input for the next subtask
+- Include any data points or facts discovered
+
+Respond in pure JSON:
+{{
+  "thinking": "<your reasoning>",
+  "summary": "<concise summary of this subtask's work and findings>"
+}}
+"""
+
+TODO_SUMMARY_PROMPT = """# Todo Summary
+
+Summarize the overall results of this todo item.
+
+## Todo
+{todo}
+
+## Subtask Results
+{subtask_results}
+
+## Rules
+- Combine all subtask summaries into one coherent summary
+- Focus on the overall outcome, not individual steps
+- This summary will be used as context for the next todo
+
+Respond in pure JSON:
+{{
+  "thinking": "<your reasoning>",
+  "summary": "<concise summary of this todo's overall results>"
+}}
 """
 
 SUMMARIZATION_PROMPT = """# Task Summarization

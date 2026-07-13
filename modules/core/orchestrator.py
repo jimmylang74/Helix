@@ -19,7 +19,8 @@ from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
 from modules.prompts.system_prompts import (
     ORCHESTRATOR_SYSTEM_PROMPT, TODO_PLANNING_PROMPT,
-    SUBTASK_DECISION_PROMPT, SUMMARIZATION_PROMPT, AGENT_SYSTEM_PROMPT
+    SUBTASK_DECOMPOSE_PROMPT, SUBTASK_DECISION_PROMPT, SUBTASK_SUMMARY_PROMPT,
+    TODO_SUMMARY_PROMPT, SUMMARIZATION_PROMPT, AGENT_SYSTEM_PROMPT
 )
 from modules.prompts.ppt_prompts import PPT_SYSTEM_PROMPT, PPT_TODO_PROMPT, PPT_FULL_DESIGN_PROMPT
 from modules.prompts.search_prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_TODO_PROMPT, CONTENT_ANALYSIS_PROMPT, FINAL_ANSWER_PROMPT
@@ -184,37 +185,191 @@ class AgentOrchestrator:
             log_orchestrator(f"\n{'='*50}")
             log_orchestrator(f"Todo [{state['current_todo_idx'] + 1}/{len(state['todo_list'])}]: {current_todo}")
 
-            # Execute subtask loop for this todo
-            result = self._subtask_loop(state, current_todo)
+            previous_todo_summary = context_manager.get_previous_todo_summary(state)
+            if previous_todo_summary:
+                log_orchestrator(f"  Previous todo summary available ({len(previous_todo_summary)} chars)")
 
-            # Mark todo as completed
-            all_done = todo_manager.advance_todo(state, result)
+            result = self._subtask_loop(state, current_todo, previous_todo_summary)
+
+            todo_summary = self._generate_todo_summary(state, current_todo, result)
+            context_manager.save_todo_summary(state, current_todo, todo_summary)
+
+            all_done = todo_manager.advance_todo(state, todo_summary)
             log_orchestrator(f"Todo completed. Progress:\n{todo_manager.get_progress(state)}")
 
         log_orchestrator("Todo Loop completed.")
 
-    def _subtask_loop(self, state: AgentState, todo_item: str) -> str:
-        """Loop 2: Execute a single todo's subtask loop with LLM-driven decisions."""
+    def _subtask_loop(self, state: AgentState, todo_item: str, previous_todo_summary: str = "") -> str:
+        """Execute a todo by decomposing it into subtasks, then running each independently."""
         state["orchestrator_phase"] = "subtask_loop"
         state["current_subtask"] = todo_item
         state["subtask_status"] = "running"
-        state["subtask_loop_count"] = 0
 
-        subtask_history_entry = {
-            "subtask": todo_item,
-            "status": "running",
-            "loop_count": 0,
-            "tool_calls": [],
-        }
-
-        loop_count = 0
-        max_loops = state.get("max_subtask_loops", 20)
-        subtask_complete = False
-        subtask_result = ""
         system_prompt = self._get_system_prompt(state["intent_type"])
+        tool_definitions = self._build_tool_definitions(state.get("intent_type", "research"))
 
+        context_manager.reset_subtask_contexts(state)
+        context_manager.reset_conversation(state)
+
+        subtasks = self._decompose_todo(state, todo_item, previous_todo_summary, system_prompt)
+        log_orchestrator(f"  Decomposed into {len(subtasks)} subtask(s)")
+
+        for idx, subtask in enumerate(subtasks, 1):
+            state["subtask_loop_count"] = idx
+            log_orchestrator(f"  Subtask [{idx}/{len(subtasks)}]: {subtask}")
+
+            previous_subtask_summary = context_manager.get_previous_subtask_summary(state)
+
+            result = self._execute_single_subtask(
+                state, subtask, idx, len(subtasks),
+                previous_subtask_summary, tool_definitions, system_prompt
+            )
+
+            subtask_summary = self._generate_subtask_summary(state, subtask, result, tool_definitions, system_prompt)
+            context_manager.save_subtask_summary(state, subtask, subtask_summary)
+
+        all_summaries = context_manager.get_all_subtask_summaries(state)
+        state["subtask_status"] = "completed"
+
+        history = state.get("subtask_history", [])
+        history.append({
+            "subtask": todo_item,
+            "status": "completed",
+            "loop_count": len(subtasks),
+            "tool_calls": [],
+            "result": all_summaries,
+        })
+        state["subtask_history"] = history
+
+        return all_summaries or todo_item
+
+    def _decompose_todo(self, state: AgentState, todo_item: str, previous_todo_summary: str, system_prompt: str) -> List[str]:
+        """Ask LLM to break a todo into concrete subtasks."""
+        context_parts = []
+        if previous_todo_summary:
+            context_parts.append(f"## Previous Todo Result\n{previous_todo_summary}\n")
+
+        prompt = SUBTASK_DECOMPOSE_PROMPT.format(
+            user_request=state.get("user_request", ""),
+            todo_item=todo_item,
+        )
+        if context_parts:
+            prompt = "\n\n".join(context_parts) + "\n\n" + prompt
+
+        log_agent_to_llm("Decomposing todo into subtasks...")
+        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
+
+        subtasks = response.get("subtasks", [])
+        if not subtasks:
+            subtasks = [todo_item]
+
+        context_manager.add_message(state, "assistant", json.dumps(response, ensure_ascii=False))
+        return subtasks
+
+    def _execute_single_subtask(
+        self,
+        state: AgentState,
+        subtask: str,
+        subtask_index: int,
+        subtask_count: int,
+        previous_subtask_summary: str,
+        tool_definitions: List[ToolDefinition],
+        system_prompt: str,
+    ) -> str:
+        """Execute one subtask with tool-calling support. Returns the subtask result."""
+        subtask_result = ""
+        max_iterations = 5
+
+        context_manager.reset_conversation(state)
+
+        for iteration in range(1, max_iterations + 1):
+            collected = state.get("collected_data", [])
+            collected_summary = "\n".join(d[:500] for d in collected[-3:]) if collected else "(none)"
+
+            context_parts = []
+            if previous_subtask_summary:
+                context_parts.append(f"## Previous Subtask Result\n{previous_subtask_summary}\n")
+
+            prompt = SUBTASK_DECISION_PROMPT.format(
+                user_request=state.get("user_request", ""),
+                subtask_index=subtask_index,
+                subtask_count=subtask_count,
+                subtask=subtask,
+                collected_data=collected_summary,
+            )
+            if context_parts:
+                prompt = "\n\n".join(context_parts) + "\n\n" + prompt
+
+            history = context_manager.get_conversation(state)
+
+            log_agent_to_llm(f"Subtask {subtask_index} iter {iteration}: decision...")
+            llm_response = self.llm.with_tools(
+                prompt=prompt,
+                tools=tool_definitions,
+                system_prompt=system_prompt,
+                context_messages=history[-10:] if history else None,
+            )
+
+            response_data = self._parse_llm_response(llm_response.content)
+            context_manager.add_message(state, "assistant", llm_response.content)
+
+            tool_calls = response_data.get("tool_calls", [])
+            if tool_calls:
+                for tc in tool_calls:
+                    self._execute_tool_call(state, tc)
+                continue
+
+            subtask_result = response_data.get("response", "")
+            log_llm_decision(f"Subtask {subtask_index} result: {subtask_result[:200]}")
+            break
+
+        return subtask_result
+
+    def _generate_subtask_summary(
+        self,
+        state: AgentState,
+        subtask: str,
+        result: str,
+        tool_definitions: List[ToolDefinition],
+        system_prompt: str,
+    ) -> str:
+        """Generate a concise summary of a completed subtask."""
+        if not result:
+            return ""
+
+        prompt = SUBTASK_SUMMARY_PROMPT.format(
+            subtask=subtask,
+            work_performed=result[:2000],
+        )
+
+        log_agent_to_llm(f"Generating summary for subtask: {subtask[:50]}...")
+        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
+
+        summary = response.get("summary", result[:500])
+        log_llm_decision(f"Subtask summary: {summary[:150]}...")
+        return summary
+
+    def _generate_todo_summary(self, state: AgentState, todo: str, subtask_results: str) -> str:
+        """Generate a summary of a completed todo from its subtask results."""
+        if not subtask_results:
+            return ""
+
+        prompt = TODO_SUMMARY_PROMPT.format(
+            todo=todo,
+            subtask_results=subtask_results[:3000],
+        )
+
+        system_prompt = self._get_system_prompt(state["intent_type"])
+        log_agent_to_llm(f"Generating summary for todo: {todo[:50]}...")
+        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
+
+        summary = response.get("summary", subtask_results[:500])
+        log_llm_decision(f"Todo summary: {summary[:150]}...")
+        return summary
+
+    def _build_tool_definitions(self, intent: str) -> List[ToolDefinition]:
+        """Collect all available tool definitions for the given intent."""
         tool_definitions = []
-        intent = state.get("intent_type", "research")
 
         for tool in tool_registry.get_enabled_tools():
             tool_definitions.append(ToolDefinition(
@@ -224,8 +379,8 @@ class AgentOrchestrator:
             ))
 
         mcp_tools = mcp_registry.get_tools_for_intent(intent)
+        existing_names = {t.name for t in tool_definitions}
         for mt in mcp_tools:
-            existing_names = {t.name for t in tool_definitions}
             if mt.name not in existing_names:
                 tool_definitions.append(ToolDefinition(
                     name=mt.name,
@@ -234,55 +389,7 @@ class AgentOrchestrator:
                 ))
                 log_info(f"MCP tool added for intent '{intent}': {mt.name}")
 
-        while not subtask_complete and loop_count < max_loops:
-            loop_count += 1
-            state["subtask_loop_count"] = loop_count
-            log_orchestrator(f"  Subtask Loop iteration {loop_count}/{max_loops}")
-
-            # Build context for LLM decision
-            context = context_manager.build_subtask_context(state)
-
-            # Get LLM decision
-            log_agent_to_llm(f"Subtask loop {loop_count}: Asking LLM for decision...")
-            llm_response = self.llm.with_tools(
-                prompt=context + "\n\n" + f"## Decision Required\nSubtask: {todo_item}\nWhat should I do next?",
-                tools=tool_definitions,
-                system_prompt=system_prompt
-            )
-
-            # Parse response
-            response_data = self._parse_llm_response(llm_response.content)
-
-            # Process tool calls if any
-            tool_calls = response_data.get("tool_calls", [])
-            if tool_calls:
-                for tc in tool_calls:
-                    self._execute_tool_call(state, tc)
-                    subtask_history_entry["tool_calls"].append(tc)
-            else:
-                # No tool calls - LLM is providing direct response
-                subtask_result = response_data.get("response", "")
-                log_llm_decision(f"LLM direct response: {subtask_result[:200]}")
-
-            # Check completion flags
-            if response_data.get("subtask_complete") or response_data.get("all_complete"):
-                log_orchestrator(f"✅ Subtask completed by LLM decision")
-                subtask_complete = True
-
-            # Add to history
-            context_manager.add_message(state, "assistant", llm_response.content)
-
-        # Update subtask history
-        subtask_history_entry["status"] = "completed" if subtask_complete else "max_loops"
-        subtask_history_entry["loop_count"] = loop_count
-        subtask_history_entry["result"] = subtask_result
-
-        history = state.get("subtask_history", [])
-        history.append(subtask_history_entry)
-        state["subtask_history"] = history
-        state["subtask_status"] = "completed" if subtask_complete else "failed"
-
-        return subtask_result or todo_item
+        return tool_definitions
 
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
         """Parse LLM JSON response."""

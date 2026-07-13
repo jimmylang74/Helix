@@ -21,15 +21,21 @@ class BaseTool(ABC):
     Subclasses must implement:
       - name (str): Unique tool identifier
       - description (str): Human-readable description
-      - category (str): Tool category (e.g., 'web', 'image', 'ppt', 'code', 'shell')
+      - intents (list): Intent IDs this tool supports (e.g., ['ppt', 'research'])
       - parameters (dict): JSON Schema for tool parameters
       - execute(**kwargs): The tool's main logic
+
+    Source is determined automatically:
+      - 'MCP': tools from MCP servers (MCPToolAdapter)
+      - '内部插件': tools from plugins/ directory (excluding mcp_tools.py)
+      - '外部插件': tools from plugins/user/ directory
     """
 
     name: str = ""
     description: str = ""
-    category: str = ""
+    intents: list = []
     parameters: Dict[str, Any] = {}
+    source: str = "内部插件"  # overridden by subclasses / registry
 
     def __init__(self):
         self._enabled = True
@@ -52,7 +58,8 @@ class BaseTool(ABC):
         return {
             "name": self.name,
             "description": self.description,
-            "category": self.category,
+            "intents": list(self.intents),
+            "source": self.source,
             "parameters": self.parameters,
             "enabled": self.enabled,
         }
@@ -96,6 +103,7 @@ class ToolRegistry:
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "plugins"
         )
+        self._user_plugins_dir = os.path.join(self._plugins_dir, "user")
 
     def register(self, tool: BaseTool):
         """Register a tool instance."""
@@ -103,7 +111,7 @@ class ToolRegistry:
             if tool.name in self._tools:
                 log_warning(f"ToolRegistry: tool '{tool.name}' already registered, overwriting")
             self._tools[tool.name] = tool
-            log_info(f"ToolRegistry: registered '{tool.name}' (category={tool.category})")
+            log_info(f"ToolRegistry: registered '{tool.name}' (source={tool.source}, intents={tool.intents})")
 
     def unregister(self, name: str):
         """Remove a tool by name."""
@@ -125,20 +133,23 @@ class ToolRegistry:
         with self._tools_lock:
             return [tool.to_dict() for tool in self._tools.values()]
 
-    def get_by_category(self, category: str) -> List[BaseTool]:
-        """Get all tools in a category."""
+    def get_by_intent(self, intent: str) -> List[BaseTool]:
+        """Get all tools that support a given intent."""
         with self._tools_lock:
-            return [t for t in self._tools.values() if t.category == category]
+            return [t for t in self._tools.values() if intent in t.intents]
 
     def get_enabled_tools(self) -> List[BaseTool]:
         """Get all enabled tools."""
         with self._tools_lock:
             return [t for t in self._tools.values() if t.enabled]
 
-    def get_categories(self) -> List[str]:
-        """Get all unique categories."""
+    def get_intents(self) -> List[str]:
+        """Get all unique intent IDs across registered tools."""
         with self._tools_lock:
-            return list(set(t.category for t in self._tools.values()))
+            intents = set()
+            for t in self._tools.values():
+                intents.update(t.intents)
+            return list(intents)
 
     def set_enabled(self, name: str, enabled: bool) -> bool:
         """Enable or disable a tool. Returns True if tool was found."""
@@ -162,6 +173,8 @@ class ToolRegistry:
         """
         Scan the plugins/ directory and import all tool modules.
         Each module should define tool classes that subclass BaseTool.
+        Also scans plugins/user/ for external user-defined plugins.
+        Skips mcp_tools.py (MCP tools are registered separately).
         """
         if not os.path.isdir(self._plugins_dir):
             log_warning(f"ToolRegistry: plugins directory not found: {self._plugins_dir}")
@@ -172,10 +185,27 @@ class ToolRegistry:
         if project_root not in __import__("sys").path:
             __import__("sys").path.insert(0, project_root)
 
-        for filename in sorted(os.listdir(self._plugins_dir)):
+        self._scan_plugin_dir(self._plugins_dir, source="内部插件")
+
+        if os.path.isdir(self._user_plugins_dir):
+            if self._user_plugins_dir not in __import__("sys").path:
+                __import__("sys").path.insert(0, self._user_plugins_dir)
+            self._scan_plugin_dir(self._user_plugins_dir, source="外部插件")
+
+    def _scan_plugin_dir(self, plugin_dir: str, source: str):
+        """Scan a plugin directory and register discovered tools."""
+        for filename in sorted(os.listdir(plugin_dir)):
             if filename.startswith("_") or not filename.endswith(".py"):
                 continue
-            module_name = f"plugins.{filename[:-3]}"
+            # Skip mcp_tools.py in the main plugins dir (registered separately)
+            if source == "内部插件" and filename == "mcp_tools.py":
+                continue
+
+            if source == "外部插件":
+                module_name = f"plugins.user.{filename[:-3]}"
+            else:
+                module_name = f"plugins.{filename[:-3]}"
+
             try:
                 module = importlib.import_module(module_name)
                 # Find all BaseTool subclasses in the module
@@ -187,15 +217,16 @@ class ToolRegistry:
                             and getattr(attr, "name", "")):
                         try:
                             instance = attr()
+                            instance.source = source
                             self.register(instance)
                         except Exception as e:
                             log_error(f"ToolRegistry: failed to instantiate {attr_name}: {e}")
-                log_info(f"ToolRegistry: loaded plugin module '{module_name}'")
+                log_info(f"ToolRegistry: loaded plugin module '{module_name}' (source={source})")
             except Exception as e:
                 log_error(f"ToolRegistry: failed to import '{module_name}': {e}")
 
     def load_enabled_state(self):
-        """Load enable/disable state from config."""
+        """Load enable/disable state and intents from Helix.json."""
         try:
             from modules.config.config_manager import ConfigManager
             config = ConfigManager()
@@ -204,12 +235,15 @@ class ToolRegistry:
                 for name, tool in self._tools.items():
                     tool_cfg = tools_config.get(name, {})
                     tool.enabled = tool_cfg.get("enabled", True)
-            log_info("ToolRegistry: loaded enabled/disabled state from config")
+                    saved_intents = tool_cfg.get("intents")
+                    if saved_intents is not None:
+                        tool.intents = saved_intents
+            log_info("ToolRegistry: loaded tool config from Helix.json")
         except Exception as e:
-            log_warning(f"ToolRegistry: failed to load enabled state: {e}")
+            log_warning(f"ToolRegistry: failed to load tool config: {e}")
 
     def save_enabled_state(self):
-        """Persist current enable/disable state to config."""
+        """Persist tool config (enabled + intents) to Helix.json."""
         try:
             from modules.config.config_manager import ConfigManager
             config = ConfigManager()
@@ -219,9 +253,11 @@ class ToolRegistry:
                     if name not in tools_config:
                         tools_config[name] = {}
                     tools_config[name]["enabled"] = tool.enabled
+                    tools_config[name]["intents"] = list(tool.intents)
+                    tools_config[name]["source"] = tool.source
             config.update_section("plugins", tools_config)
         except Exception as e:
-            log_error(f"ToolRegistry: failed to save enabled state: {e}")
+            log_error(f"ToolRegistry: failed to save tool config: {e}")
 
     def initialize(self):
         """Full initialization: discover plugins + load state."""

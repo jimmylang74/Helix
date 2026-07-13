@@ -16,7 +16,7 @@ class ImageDownloadTool(BaseTool):
 
     name = "image_download"
     description = "Download images from URLs to the local download/ directory. Returns saved file paths."
-    category = "image"
+    intents = ["ppt", "research"]
     parameters = {
         "type": "object",
         "properties": {

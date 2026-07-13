@@ -14,7 +14,7 @@ class BashTool(BaseTool):
 
     name = "bash"
     description = "Execute a shell (bash) command and return stdout/stderr. Use with caution."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -42,7 +42,7 @@ class ListFilesTool(BaseTool):
 
     name = "ls"
     description = "List files and directories at the given path."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -65,7 +65,7 @@ class GrepTool(BaseTool):
 
     name = "grep"
     description = "Search for a text pattern in files. Returns matching lines with file paths."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -97,7 +97,7 @@ class ReadFileTool(BaseTool):
 
     name = "read_file"
     description = "Read and return the contents of a file."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -119,7 +119,7 @@ class WriteFileTool(BaseTool):
 
     name = "write_file"
     description = "Write text content to a file. Creates parent directories if needed."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {
@@ -145,7 +145,7 @@ class DeleteFileTool(BaseTool):
 
     name = "delete_file"
     description = "Delete a file or directory."
-    category = "shell"
+    intents = ["coding"]
     parameters = {
         "type": "object",
         "properties": {

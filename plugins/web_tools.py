@@ -8,13 +8,12 @@ import requests
 from typing import Any, Dict, List
 
 from modules.agents.tool_base import BaseTool
-from modules.config.config_manager import ConfigManager
 from modules.mcp.mcp_registry import registry as mcp_registry
-from modules.utils.logger import log_tool_call, log_agent_action, log_error, log_warning
+from modules.utils.logger import log_tool_call, log_agent_action, log_error
 
 
 class WebSearchTool(BaseTool):
-    """Search the web via MCP (SearXNG) with direct fallback."""
+    """Search the web via MCP (SearXNG)."""
 
     name = "web_search"
     description = "Search the web for information. Returns a list of URLs with titles and snippets."
@@ -39,40 +38,9 @@ class WebSearchTool(BaseTool):
                 if isinstance(results, list):
                     return results
             return []
-        except Exception:
-            log_warning("MCP web_search unavailable, using direct fallback")
-            return self._fallback(query)
-
-    def _fallback(self, query: str, max_results: int = 10) -> List[Dict[str, str]]:
-        config = ConfigManager()
-        base_url = config.get("tools.searxng.base_url", "http://localhost:8888")
-        try:
-            resp = requests.post(
-                f"{base_url}/search",
-                data={
-                    "q": query, "format": "json", "language": "zh-CN",
-                    "categories": "general", "pageno": 1,
-                },
-                timeout=15,
-                headers={"Accept": "application/json"}
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results = []
-                for item in data.get("results", [])[:max_results]:
-                    results.append({
-                        "title": item.get("title", ""),
-                        "url": item.get("url", ""),
-                        "content": item.get("content", ""),
-                    })
-                return results
-        except Exception:
-            pass
-        return [{
-            "title": f"Mock Result: {query} - Overview",
-            "url": f"https://example.com/result?q={query.replace(' ', '+')}",
-            "content": f"Mock search result for '{query}'. Configure MCP SearXNG server for real results."
-        }]
+        except Exception as e:
+            log_error(f"MCP web_search failed: {e}")
+            return []
 
 
 class WebFetchBatchTool(BaseTool):

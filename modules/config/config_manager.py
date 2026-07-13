@@ -78,18 +78,6 @@ class ConfigManager:
                 "verbose": True,
                 "log_file": "llm_engine.log"
             },
-            "tools": {
-                "searxng": {
-                    "enabled": False,
-                    "base_url": "http://localhost:8888",
-                    "max_results": 10
-                },
-                "image_search": {
-                    "provider": "pexels",
-                    "pexels": {"api_key": ""},
-                    "unsplash": {"api_key": ""}
-                }
-            },
             "intents": {
                 "ppt": {
                     "enabled": True,

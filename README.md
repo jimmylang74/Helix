@@ -119,8 +119,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 | llm.api_key | API 密钥 (可选) | (空) |
 | llm.verbose | 启用详细日志 | true |
 | llm.log_file | LLM 交互日志文件 | llm_engine.log |
-| tools.searxng.enabled | 启用SearXNG | false |
-| tools.image_search.provider | 图片搜索 | pexels |
+
 
 可通过 Web 管理控制台的 LLM 配置页面动态切换 Provider 和填写连接参数，无需手动编辑 JSON。
 

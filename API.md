@@ -136,8 +136,7 @@ POST /api/admin/config
 ```json
 {
     "settings": {
-        "llm.model": "llama3.2:3b",
-        "tools.searxng.enabled": true
+        "llm.model": "llama3.2:3b"
     }
 }
 ```

@@ -224,14 +224,13 @@ def test_07_tool_execution():
     """Test tool execution capabilities."""
     print_header("Test 07: Tool Execution")
 
-    from modules.agents.agent_tools import AgentTools
-
-    tools = AgentTools()
+    from modules.agents.tool_base import tool_registry
+    tool_registry.initialize()
 
     # Test web_fetch_batch
     print("  Testing web_fetch_batch...")
     try:
-        content = tools.web_fetch_batch(["https://httpbin.org/get"])
+        content = tool_registry.call_tool("web_fetch_batch", {"urls": ["https://httpbin.org/get"]})
         fetch_ok = len(content) > 0
         print_result("web_fetch_batch()", fetch_ok, f"{len(content)} chars fetched")
     except Exception as e:
@@ -262,9 +261,8 @@ def test_08_ppt_creation():
     """Test PPT creation capability."""
     print_header("Test 08: PPT Generation")
 
-    from modules.agents.agent_tools import AgentTools
-
-    tools = AgentTools()
+    from modules.agents.tool_base import tool_registry
+    tool_registry.initialize()
 
     ppt_config = {
         "color_scheme": "modern_blue",
@@ -296,7 +294,7 @@ def test_08_ppt_creation():
     }
 
     try:
-        filepath = tools.create_ppt(ppt_config)
+        filepath = tool_registry.call_tool("create_ppt", ppt_config)
         ppt_ok = os.path.exists(filepath)
         print_result("create_ppt()", ppt_ok, f"Saved: {filepath}")
         return ppt_ok
@@ -309,14 +307,13 @@ def test_09_image_download():
     """Test image download capability."""
     print_header("Test 09: Image Download")
 
-    from modules.agents.agent_tools import AgentTools
-
-    tools = AgentTools()
+    from modules.agents.tool_base import tool_registry
+    tool_registry.initialize()
 
     try:
-        saved = tools.image_download([
-            "https://via.placeholder.com/100x100.png?text=Test"
-        ])
+        saved = tool_registry.call_tool("image_download", {
+            "urls": ["https://via.placeholder.com/100x100.png?text=Test"]
+        })
         dl_ok = len(saved) > 0 and os.path.exists(saved[0])
         print_result("image_download()", dl_ok,
                      f"Saved: {saved}" if dl_ok else "Failed")

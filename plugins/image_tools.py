@@ -9,13 +9,12 @@ from typing import Any, Dict, List
 from datetime import datetime
 
 from modules.agents.tool_base import BaseTool
-from modules.config.config_manager import ConfigManager
 from modules.mcp.mcp_registry import registry as mcp_registry
-from modules.utils.logger import log_tool_call, log_agent_action, log_error, log_warning
+from modules.utils.logger import log_tool_call, log_agent_action, log_error
 
 
 class ImageSearchTool(BaseTool):
-    """Search for images via MCP (Pexels/Unsplash) with direct fallback."""
+    """Search for images via MCP (Pexels/Unsplash)."""
 
     name = "image_search"
     description = "Search for images related to a query. Returns image URLs and metadata."
@@ -45,53 +44,9 @@ class ImageSearchTool(BaseTool):
                 if isinstance(results, list):
                     return results
             return []
-        except Exception:
-            log_warning("MCP image_search unavailable, using direct fallback")
-            return self._fallback(query, max_results)
-
-    def _fallback(self, query: str, max_results: int = 5) -> List[Dict[str, str]]:
-        config = ConfigManager()
-        img_config = config.get("tools.image_search", {})
-        provider = img_config.get("provider", "pexels")
-        if provider == "pexels":
-            api_key = img_config.get("pexels.api_key", "") or img_config.get("pexels", {}).get("api_key", "")
-            if api_key:
-                try:
-                    resp = requests.get(
-                        "https://api.pexels.com/v1/search",
-                        params={"query": query, "per_page": max_results},
-                        headers={"Authorization": api_key}, timeout=10
-                    )
-                    if resp.status_code == 200:
-                        return [{"url": p.get("src", {}).get("original", ""),
-                                 "small_url": p.get("src", {}).get("medium", ""),
-                                 "photographer": p.get("photographer", ""),
-                                 "source": "pexels", "alt": p.get("alt", "")}
-                                for p in resp.json().get("photos", [])]
-                except Exception:
-                    pass
-        elif provider == "unsplash":
-            api_key = img_config.get("unsplash.api_key", "") or img_config.get("unsplash", {}).get("api_key", "")
-            if api_key:
-                try:
-                    resp = requests.get(
-                        "https://api.unsplash.com/search/photos",
-                        params={"query": query, "per_page": max_results},
-                        headers={"Authorization": f"Client-ID {api_key}"}, timeout=10
-                    )
-                    if resp.status_code == 200:
-                        return [{"url": p.get("urls", {}).get("regular", ""),
-                                 "small_url": p.get("urls", {}).get("small", ""),
-                                 "photographer": p.get("user", {}).get("name", ""),
-                                 "source": "unsplash", "alt": p.get("alt_description", "")}
-                                for p in resp.json().get("results", [])]
-                except Exception:
-                    pass
-        return [{
-            "url": f"https://via.placeholder.com/800x600.png?text={query.replace(' ', '+')}+1",
-            "small_url": f"https://via.placeholder.com/400x300.png?text={query.replace(' ', '+')}+1",
-            "photographer": "Mock", "source": "mock", "alt": query,
-        }]
+        except Exception as e:
+            log_error(f"MCP image_search failed: {e}")
+            return []
 
 
 class ImageDownloadTool(BaseTool):

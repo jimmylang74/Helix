@@ -105,6 +105,21 @@ class ToolRegistry:
         )
         self._user_plugins_dir = os.path.join(self._plugins_dir, "user")
 
+    def _get_all_registered_intent_ids(self) -> List[str]:
+        """Return all registered intent IDs from the intent router."""
+        try:
+            from modules.agents.intent_router import intent_router
+            return list(intent_router.get_registered_intents().keys())
+        except Exception:
+            return []
+
+    @staticmethod
+    def _resolve_effective_intents(tool: BaseTool, all_intents: List[str]) -> List[str]:
+        """Resolve the effective intents for a tool, treating [] or ['*'] as all."""
+        if '*' in tool.intents or not tool.intents:
+            return list(all_intents)
+        return list(tool.intents)
+
     def register(self, tool: BaseTool):
         """Register a tool instance."""
         with self._tools_lock:
@@ -129,14 +144,24 @@ class ToolRegistry:
             return dict(self._tools)
 
     def get_all_as_list(self) -> List[Dict[str, Any]]:
-        """Get all tools as serialized dicts."""
+        """Get all tools as serialized dicts with effective intents resolved."""
         with self._tools_lock:
-            return [tool.to_dict() for tool in self._tools.values()]
+            result = []
+            all_intents = self._get_all_registered_intent_ids()
+            for tool in self._tools.values():
+                d = tool.to_dict()
+                d["intents"] = self._resolve_effective_intents(tool, all_intents)
+                result.append(d)
+            return result
 
     def get_by_intent(self, intent: str) -> List[BaseTool]:
         """Get all tools that support a given intent."""
         with self._tools_lock:
-            return [t for t in self._tools.values() if intent in t.intents]
+            result = []
+            for t in self._tools.values():
+                if '*' in t.intents or not t.intents or intent in t.intents:
+                    result.append(t)
+            return result
 
     def get_enabled_tools(self) -> List[BaseTool]:
         """Get all enabled tools."""
@@ -146,9 +171,13 @@ class ToolRegistry:
     def get_intents(self) -> List[str]:
         """Get all unique intent IDs across registered tools."""
         with self._tools_lock:
+            all_intents = self._get_all_registered_intent_ids()
             intents = set()
             for t in self._tools.values():
-                intents.update(t.intents)
+                if '*' in t.intents or not t.intents:
+                    intents.update(all_intents)
+                else:
+                    intents.update(t.intents)
             return list(intents)
 
     def set_enabled(self, name: str, enabled: bool) -> bool:
@@ -254,7 +283,6 @@ class ToolRegistry:
                         tools_config[name] = {}
                     tools_config[name]["enabled"] = tool.enabled
                     tools_config[name]["intents"] = list(tool.intents)
-                    tools_config[name]["source"] = tool.source
             config.update_section("plugins", tools_config)
         except Exception as e:
             log_error(f"ToolRegistry: failed to save tool config: {e}")

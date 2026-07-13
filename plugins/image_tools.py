@@ -1,52 +1,14 @@
 """
-Image Tools Plugin - Image search and download.
+Image Tools Plugin - Image download.
 """
 
 import os
-import json
 import requests
-from typing import Any, Dict, List
+from typing import List
 from datetime import datetime
 
 from modules.agents.tool_base import BaseTool
-from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.utils.logger import log_tool_call, log_agent_action, log_error
-
-
-class ImageSearchTool(BaseTool):
-    """Search for images via MCP (Pexels/Unsplash)."""
-
-    name = "image_search"
-    description = "Search for images related to a query. Returns image URLs and metadata."
-    category = "image"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The image search query"
-            },
-            "max_results": {
-                "type": "integer",
-                "description": "Maximum number of images (default: 5)",
-                "default": 5
-            }
-        },
-        "required": ["query"]
-    }
-
-    def execute(self, query: str = "", max_results: int = 5, **kwargs) -> List[Dict[str, str]]:
-        log_tool_call(f"image_search(query='{query}', max_results={max_results}) via MCP")
-        try:
-            result_text = mcp_registry.call_tool("image_search", {"query": query, "max_results": max_results})
-            if result_text:
-                results = json.loads(result_text)
-                if isinstance(results, list):
-                    return results
-            return []
-        except Exception as e:
-            log_error(f"MCP image_search failed: {e}")
-            return []
 
 
 class ImageDownloadTool(BaseTool):

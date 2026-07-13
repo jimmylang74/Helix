@@ -91,6 +91,10 @@ def main():
 
     mcp_registry.initialize()
 
+    from plugins.mcp_tools import register_mcp_tools
+    register_mcp_tools(tool_registry)
+    log_info(f"All tools registered: {len(tool_registry.get_all())} tool(s)")
+
     # Create apps
     service_app = create_service_app()
     admin_app = create_admin_app()

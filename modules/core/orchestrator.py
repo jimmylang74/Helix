@@ -15,7 +15,6 @@ from modules.core.agent_state import (
 from modules.core.context_manager import context_manager
 from modules.core.todo_manager import todo_manager
 from modules.agents.tool_base import tool_registry
-from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
 from modules.prompts.system_prompts import (
     ORCHESTRATOR_SYSTEM_PROMPT, TODO_PLANNING_PROMPT,
@@ -206,7 +205,7 @@ class AgentOrchestrator:
         state["subtask_status"] = "running"
 
         system_prompt = self._get_system_prompt(state["intent_type"])
-        tool_definitions = self._build_tool_definitions(state.get("intent_type", "research"))
+        tool_definitions = self._build_tool_definitions()
 
         context_manager.reset_subtask_contexts(state)
         context_manager.reset_conversation(state)
@@ -367,8 +366,8 @@ class AgentOrchestrator:
         log_llm_decision(f"Todo summary: {summary[:150]}...")
         return summary
 
-    def _build_tool_definitions(self, intent: str) -> List[ToolDefinition]:
-        """Collect all available tool definitions for the given intent."""
+    def _build_tool_definitions(self) -> List[ToolDefinition]:
+        """Collect all available tool definitions from ToolRegistry."""
         tool_definitions = []
 
         for tool in tool_registry.get_enabled_tools():
@@ -377,17 +376,6 @@ class AgentOrchestrator:
                 description=tool.description,
                 parameters=tool.parameters,
             ))
-
-        mcp_tools = mcp_registry.get_tools_for_intent(intent)
-        existing_names = {t.name for t in tool_definitions}
-        for mt in mcp_tools:
-            if mt.name not in existing_names:
-                tool_definitions.append(ToolDefinition(
-                    name=mt.name,
-                    description=mt.description,
-                    parameters=mt.input_schema,
-                ))
-                log_info(f"MCP tool added for intent '{intent}': {mt.name}")
 
         return tool_definitions
 
@@ -415,11 +403,8 @@ class AgentOrchestrator:
         try:
             if name == "web_search":
                 query = arguments.get("query", "")
-                try:
-                    result_text = mcp_registry.call_tool("web_search", {"query": query})
-                    results = json.loads(result_text) if result_text else []
-                except Exception:
-                    results = tool_registry.call_tool("web_search", {"query": query})
+                result_text = tool_registry.call_tool("web_search", {"query": query})
+                results = json.loads(result_text) if result_text else []
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"] = urls
@@ -439,11 +424,8 @@ class AgentOrchestrator:
             elif name == "image_search":
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
-                try:
-                    result_text = mcp_registry.call_tool("image_search", {"query": query, "max_results": max_results})
-                    results = json.loads(result_text) if result_text else []
-                except Exception:
-                    results = tool_registry.call_tool("image_search", {"query": query, "max_results": max_results})
+                result_text = tool_registry.call_tool("image_search", {"query": query, "max_results": max_results})
+                results = json.loads(result_text) if result_text else []
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"].extend(urls)
@@ -458,18 +440,13 @@ class AgentOrchestrator:
 
             else:
                 try:
-                    result_text = mcp_registry.call_tool(name, arguments)
+                    result = tool_registry.call_tool(name, arguments)
                     context_manager.add_message(state, "assistant",
-                        f"[{name} results]\n{result_text}")
+                        f"[{name} results]\n{json.dumps(result, ensure_ascii=False, default=str)}")
                 except Exception:
-                    try:
-                        result = tool_registry.call_tool(name, arguments)
-                        context_manager.add_message(state, "assistant",
-                            f"[{name} results]\n{json.dumps(result, ensure_ascii=False, default=str)}")
-                    except Exception:
-                        log_error(f"Unknown tool: {name}")
-                        context_manager.add_message(state, "assistant",
-                            f"[tool error] Unknown tool: {name}")
+                    log_error(f"Unknown tool: {name}")
+                    context_manager.add_message(state, "assistant",
+                        f"[tool error] Unknown tool: {name}")
 
         except Exception as e:
             log_error(f"Tool execution failed: {name}: {e}")

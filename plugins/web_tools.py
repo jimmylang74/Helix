@@ -1,46 +1,13 @@
 """
-Web Tools Plugin - Web search and batch URL fetching.
+Web Tools Plugin - Batch URL fetching.
 """
 
-import json
 import re
 import requests
-from typing import Any, Dict, List
+from typing import List
 
 from modules.agents.tool_base import BaseTool
-from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.utils.logger import log_tool_call, log_agent_action, log_error
-
-
-class WebSearchTool(BaseTool):
-    """Search the web via MCP (SearXNG)."""
-
-    name = "web_search"
-    description = "Search the web for information. Returns a list of URLs with titles and snippets."
-    category = "web"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {
-                "type": "string",
-                "description": "The search query string"
-            }
-        },
-        "required": ["query"]
-    }
-
-    def execute(self, query: str = "", **kwargs) -> List[Dict[str, str]]:
-        log_tool_call(f"web_search(query='{query}') via MCP")
-        try:
-            result_text = mcp_registry.call_tool("web_search", {"query": query})
-            if result_text:
-                results = json.loads(result_text)
-                if isinstance(results, list):
-                    return results
-            return []
-        except Exception as e:
-            log_error(f"MCP web_search failed: {e}")
-            return []
 
 
 class WebFetchBatchTool(BaseTool):

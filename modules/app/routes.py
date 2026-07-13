@@ -308,6 +308,8 @@ def save_mcp_server(name):
         # Reload registry to apply changes
         try:
             mcp_registry.reload()
+            from plugins.mcp_tools import register_mcp_tools
+            register_mcp_tools(tool_registry)
         except Exception as e:
             log_error(f"MCP registry reload failed: {e}")
 
@@ -329,6 +331,8 @@ def delete_mcp_server(name):
         # Reload registry
         try:
             mcp_registry.reload()
+            from plugins.mcp_tools import register_mcp_tools
+            register_mcp_tools(tool_registry)
         except Exception as e:
             log_error(f"MCP registry reload failed: {e}")
 
@@ -386,9 +390,11 @@ def get_mcp_tools():
 
 @admin_bp.route("/mcp/reload", methods=["POST"])
 def reload_mcp():
-    """Reload all MCP connections."""
+    """Reload all MCP connections and re-register adapters."""
     try:
         mcp_registry.reload()
+        from plugins.mcp_tools import register_mcp_tools
+        register_mcp_tools(tool_registry)
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500

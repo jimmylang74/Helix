@@ -14,8 +14,18 @@ class TodoManager:
         pass
 
     def set_todos(self, state: AgentState, todos: List[str]):
-        """Initialize the todo list."""
-        state["todo_list"] = todos
+        """Initialize the todo list.
+
+        Normalizes each item to a string, handling both plain strings
+        and LLM-returned dict objects like {"id": 1, "description": "...", "status": "..."}.
+        """
+        normalized = []
+        for t in todos:
+            if isinstance(t, dict):
+                normalized.append(t.get("description", str(t)))
+            else:
+                normalized.append(str(t))
+        state["todo_list"] = normalized
         state["current_todo_idx"] = 0
         state["todos_completed"] = []
         log_orchestrator(f"Todo list initialized with {len(todos)} items:")

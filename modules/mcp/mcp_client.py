@@ -276,6 +276,7 @@ class MCPClient:
         try:
             self._http_session = requests.Session()
             self._http_endpoint = base_url
+            self._active_protocol = "streamable_http"
 
             headers = {
                 "Content-Type": "application/json",
@@ -411,6 +412,7 @@ class MCPClient:
         self._http_session = None
         self._http_session_id = None
         self._http_endpoint = None
+        self._active_protocol = None
 
     # ── STDIO Transport ────────────────────────────────────────
 

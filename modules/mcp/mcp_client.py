@@ -1,7 +1,12 @@
 """
 MCP Client - Model Context Protocol client implementation.
-Supports both SSE (server type) and stdio (local type) transports.
+Supports three transport modes:
+- SSE (Server-Sent Events) transport over HTTP
+- Streamable HTTP transport (MCP 2025-03-26 spec)
+- stdio transport via subprocess
+
 Implements JSON-RPC 2.0 based MCP protocol for tool discovery and invocation.
+Auto-detects Streamable HTTP vs SSE when connecting to server type.
 """
 
 import json
@@ -49,8 +54,8 @@ class MCPTool:
 
 class MCPClient:
     """
-    MCP client supporting two transport modes:
-    - "server": SSE (Server-Sent Events) transport over HTTP
+    MCP client supporting three transport modes:
+    - "server": Auto-detects Streamable HTTP or SSE transport over HTTP
     - "local": stdio transport via subprocess
     """
 
@@ -77,12 +82,20 @@ class MCPClient:
         self._request_id = 0
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
 
+        # Active transport protocol: "streamable_http" or "sse" (for server type)
+        self._active_protocol: str | None = None
+
         # SSE-specific state
         self._sse_session: requests.Session | None = None
         self._sse_thread: threading.Thread | None = None
         self._sse_stop = threading.Event()
         self._message_url: str | None = None
         self._sse_buffer: queue.Queue[dict[str, Any]] = queue.Queue()
+
+        # Streamable HTTP-specific state
+        self._http_session: requests.Session | None = None
+        self._http_session_id: str | None = None
+        self._http_endpoint: str | None = None
 
         # STDIO-specific state
         self._process: subprocess.Popen[str] | None = None
@@ -108,7 +121,7 @@ class MCPClient:
         """Establish connection to the MCP server. Returns True on success."""
         try:
             if self.transport_type == "server":
-                return self._connect_sse()
+                return self._connect_auto()
             else:
                 return self._connect_stdio()
         except Exception as e:
@@ -119,9 +132,13 @@ class MCPClient:
         """Disconnect from the MCP server."""
         self._connected = False
         if self.transport_type == "server":
-            self._disconnect_sse()
+            if self._active_protocol == "streamable_http":
+                self._disconnect_streamable_http()
+            else:
+                self._disconnect_sse()
         else:
             self._disconnect_stdio()
+        self._active_protocol = None
         log_info(f"MCP [{self.name}] disconnected")
 
     def is_connected(self) -> bool:
@@ -231,6 +248,170 @@ class MCPClient:
         if self._sse_session:
             self._sse_session.close()
 
+    # ── Auto-Detection ────────────────────────────────────────
+
+    def _connect_auto(self) -> bool:
+        """Auto-detect transport: try Streamable HTTP first, fallback to SSE."""
+        base_url = self.config.get("url", "").rstrip("/")
+        if not base_url:
+            log_error(f"MCP [{self.name}] no URL configured for server type")
+            return False
+
+        log_info(f"MCP [{self.name}] auto-detecting transport for: {base_url}")
+
+        if self._try_streamable_http(base_url):
+            self._active_protocol = "streamable_http"
+            return True
+
+        log_info(f"MCP [{self.name}] Streamable HTTP failed, trying SSE...")
+        if self._connect_sse():
+            self._active_protocol = "sse"
+            return True
+
+        log_error(f"MCP [{self.name}] all transports failed")
+        return False
+
+    def _try_streamable_http(self, base_url: str) -> bool:
+        """Try connecting via Streamable HTTP. Returns True on success."""
+        try:
+            self._http_session = requests.Session()
+            self._http_endpoint = base_url
+
+            headers = {
+                "Content-Type": "application/json",
+                "Accept": "application/json, text/event-stream",
+            }
+
+            init_msg = {
+                "jsonrpc": "2.0",
+                "id": self._next_id(),
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "helix-mcp",
+                        "version": "1.0.0",
+                    },
+                },
+            }
+
+            resp = self._http_session.post(
+                base_url,
+                json=init_msg,
+                headers=headers,
+                timeout=10,
+            )
+
+            if resp.status_code == 202:
+                self._http_session_id = resp.headers.get("Mcp-Session-Id")
+                log_info(f"MCP [{self.name}] Streamable HTTP accepted (202)")
+                self._connected = True
+                self._send_notification("notifications/initialized")
+                log_info(f"MCP [{self.name}] Streamable HTTP connection established")
+                return True
+
+            if resp.status_code not in (200, 201):
+                log_info(f"MCP [{self.name}] Streamable HTTP rejected: {resp.status_code}")
+                self._disconnect_streamable_http()
+                return False
+
+            self._http_session_id = resp.headers.get("Mcp-Session-Id")
+
+            content_type = resp.headers.get("Content-Type", "")
+            if "text/event-stream" in content_type:
+                self._handle_streamable_http_sse_response(resp)
+            else:
+                result = resp.json()
+                if "error" in result:
+                    log_error(f"MCP [{self.name}] Streamable HTTP init error: {result['error']}")
+                    self._disconnect_streamable_http()
+                    return False
+
+            self._connected = True
+            self._send_notification("notifications/initialized")
+            log_info(f"MCP [{self.name}] Streamable HTTP connection established")
+            return True
+
+        except requests.exceptions.ConnectionError:
+            log_info(f"MCP [{self.name}] Streamable HTTP connection refused")
+            self._disconnect_streamable_http()
+            return False
+        except requests.exceptions.Timeout:
+            log_info(f"MCP [{self.name}] Streamable HTTP timeout")
+            self._disconnect_streamable_http()
+            return False
+        except Exception as e:
+            log_info(f"MCP [{self.name}] Streamable HTTP failed: {e}")
+            self._disconnect_streamable_http()
+            return False
+
+    def _handle_streamable_http_sse_response(self, resp: requests.Response):
+        """Parse SSE stream from Streamable HTTP response."""
+        for line in resp.iter_lines(decode_unicode=True):
+            if line is None:
+                continue
+            if line.startswith("data: "):
+                data = line[6:].strip()
+                try:
+                    msg = json.loads(data)
+                    msg_id = msg.get("id")
+                    if msg_id is not None and msg_id in self._pending:
+                        self._pending[msg_id].put(msg)
+                except json.JSONDecodeError:
+                    pass
+
+    def _send_streamable_http(self, msg: dict[str, Any]):
+        """Send JSON-RPC message via Streamable HTTP."""
+        if not self._http_session or not self._http_endpoint:
+            raise MCPError(-1, "Streamable HTTP session not initialized")
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+        if self._http_session_id:
+            headers["Mcp-Session-Id"] = self._http_session_id
+
+        resp = self._http_session.post(
+            self._http_endpoint,
+            json=msg,
+            headers=headers,
+            timeout=30,
+        )
+
+        if resp.status_code == 202:
+            return
+
+        if resp.status_code not in (200, 201):
+            raise MCPError(-1, f"Streamable HTTP send failed: HTTP {resp.status_code}")
+
+        content_type = resp.headers.get("Content-Type", "")
+        if "text/event-stream" in content_type:
+            self._handle_streamable_http_sse_response(resp)
+        elif resp.content:
+            try:
+                result = resp.json()
+                msg_id = msg.get("id")
+                if msg_id is not None and msg_id in self._pending:
+                    self._pending[msg_id].put(result)
+            except json.JSONDecodeError:
+                pass
+
+    def _disconnect_streamable_http(self):
+        """Disconnect Streamable HTTP transport."""
+        if self._http_session and self._http_session_id and self._http_endpoint:
+            try:
+                headers = {"Mcp-Session-Id": self._http_session_id}
+                self._http_session.delete(self._http_endpoint, headers=headers, timeout=5)
+            except Exception:
+                pass
+        if self._http_session:
+            self._http_session.close()
+        self._http_session = None
+        self._http_session_id = None
+        self._http_endpoint = None
+
     # ── STDIO Transport ────────────────────────────────────────
 
     def _connect_stdio(self) -> bool:
@@ -335,17 +516,18 @@ class MCPClient:
             "params": params or {},
         }
 
-        # Create response queue
         resp_queue = queue.Queue()
         self._pending[req_id] = resp_queue
 
         try:
             if self.transport_type == "server":
-                self._send_sse(msg)
+                if self._active_protocol == "streamable_http":
+                    self._send_streamable_http(msg)
+                else:
+                    self._send_sse(msg)
             else:
                 self._send_stdio(msg)
 
-            # Wait for response with timeout
             try:
                 resp = resp_queue.get(timeout=30)
             except queue.Empty:
@@ -371,7 +553,10 @@ class MCPClient:
         }
         try:
             if self.transport_type == "server":
-                self._send_sse(msg)
+                if self._active_protocol == "streamable_http":
+                    self._send_streamable_http(msg)
+                else:
+                    self._send_sse(msg)
             else:
                 self._send_stdio(msg)
         except Exception as e:
@@ -472,6 +657,7 @@ class MCPClient:
         result: dict[str, Any] = {
             "name": self.name,
             "type": self.transport_type,
+            "protocol": None,
             "connected": False,
             "tools_count": 0,
             "tools": [],
@@ -485,6 +671,7 @@ class MCPClient:
                 return result
 
             result["connected"] = True
+            result["protocol"] = self._active_protocol
             tools = self.list_tools()
             result["tools_count"] = len(tools)
             result["tools"] = [

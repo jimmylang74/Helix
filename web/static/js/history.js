@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function refreshHistory() {
-    const result = await apiCall('/admin/history');
+    const result = await apiCall('history.get');
     const tbody = document.getElementById('historyTable');
 
     if (!result.success || !result.history || result.history.length === 0) {

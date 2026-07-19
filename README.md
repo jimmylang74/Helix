@@ -70,7 +70,7 @@ pip install -r requirements.txt
 python3 Helix.py
 
 # 自定义端口
-python3 Helix.py --port 11555 --admin-port 11556
+python3 Helix.py --rpc-port 11555 --admin-port 11556
 
 # 调试模式
 python3 Helix.py --debug
@@ -78,29 +78,31 @@ python3 Helix.py --debug
 
 ### 访问服务
 
-- **API服务**: `http://localhost:11555/api/agent/router`
+- **API服务**: `http://localhost:11555/api/rpc`
 - **管理控制台**: `http://localhost:11556/`
 
 ## API 使用
 
+所有请求通过单一入口 `POST /api/rpc` 分发，`method` 字段决定处理逻辑。
+
 ### 发送请求 (自动识别意图)
 
 ```bash
-curl -X POST http://localhost:11555/api/agent/router \
+curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"request": "请搜索2024年AI的发展趋势"}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"agent/router","params":{"request":"请搜索2024年AI的发展趋势"}}'
 ```
 
 ### 强制指定意图
 
 ```bash
 # PPT生成
-curl -X POST http://localhost:11555/api/agent/router \
-  -d '{"request": "创建Python入门PPT", "intent": "ppt"}'
+curl -X POST http://localhost:11555/api/rpc \
+  -d '{"jsonrpc":"2.0","id":"2","method":"agent/router","params":{"request":"创建Python入门PPT","intent":"ppt"}}'
 
 # 代码生成
-curl -X POST http://localhost:11555/api/agent/router \
-  -d '{"request": "写一个Fibonacci函数", "intent": "coding"}'
+curl -X POST http://localhost:11555/api/rpc \
+  -d '{"jsonrpc":"2.0","id":"3","method":"agent/router","params":{"request":"写一个Fibonacci函数","intent":"coding"}}'
 ```
 
 详细API文档见 [API.md](API.md)
@@ -111,7 +113,7 @@ curl -X POST http://localhost:11555/api/agent/router \
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| server.service_port | 服务端口 | 11555 |
+| server.rpc_port | RPC API端口 | 11555 |
 | server.admin_port | 管理端口 | 11556 |
 | llm.provider | LLM提供商 (ai_engine provider key) | ollama_native |
 | llm.model | 模型名称 | qwen2.5:7b |

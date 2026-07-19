@@ -16,7 +16,7 @@ let i18nLocaleUrlPrefix = '/api/admin/locale';
  */
 async function i18nInit() {
   try {
-    const resp = await apiCall('/admin/config');
+    const resp = await apiCall('config.get');
     if (resp.success && resp.config && resp.config.server) {
       i18nCurrentLang = resp.config.server.language || 'zh-CN';
     }
@@ -146,7 +146,7 @@ function __(key, vars, fallback) {
 async function setLanguage(lang) {
   if (lang === i18nCurrentLang) return;
   try {
-    await apiCall('/admin/config', 'POST', {
+    await apiCall('config.update', {
       settings: { 'server.language': lang }
     });
   } catch (e) {

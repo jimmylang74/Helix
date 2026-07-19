@@ -4,17 +4,17 @@ AI Hybrid-Driven Agent Service
 Main entry point for the Flask-based AI Agent service.
 
 Architecture:
-- Flask REST API on configurable service port (default: 11555)
+- JSON-RPC 2.0 API on configurable RPC port (default: 11555)
 - Admin web UI on configurable admin port (default: 11556)
 - LangGraph-based dual-loop orchestrator
 - Multi-LLM support (Ollama, OpenAI, Gemini, DeepSeek)
 - Built-in tools: web_search, image_search, PPT generation, coding
 
 Usage:
-    python3 Helix.py                    # Run with default config
-    python3 Helix.py --port 11555       # Custom service port
-    python3 Helix.py --admin-port 11556 # Custom admin port
-    python3 Helix.py --debug            # Debug mode
+    python3 Helix.py                        # Run with default config
+    python3 Helix.py --rpc-port 11555       # Custom RPC port
+    python3 Helix.py --admin-port 11556     # Custom admin port
+    python3 Helix.py --debug                # Debug mode
 """
 
 import os
@@ -65,8 +65,8 @@ def create_admin_app() -> Flask:
 
 def main():
     parser = argparse.ArgumentParser(description="AI Hybrid Agent Service")
-    parser.add_argument("--port", type=int, default=None, help="Service port")
-    parser.add_argument("--admin-port", type=int, default=None, help="Admin port")
+    parser.add_argument("--rpc-port", type=int, default=None, help="JSON-RPC 2.0 API port (default: 11555, endpoint: POST /api/rpc)")
+    parser.add_argument("--admin-port", type=int, default=None, help="Admin web UI port (default: 11556)")
     parser.add_argument("--host", type=str, default=None, help="Bind address")
     parser.add_argument("--debug", action="store_true", default=None, help="Debug mode")
     args = parser.parse_args()
@@ -75,7 +75,7 @@ def main():
     config = ConfigManager()
 
     # Override with CLI args
-    service_port = args.port or config.get_service_port()
+    rpc_port = args.rpc_port or config.get_rpc_port()
     admin_port = args.admin_port or config.get_admin_port()
     host = args.host or config.get_host()
     debug = args.debug if args.debug is not None else config.is_debug()
@@ -83,7 +83,7 @@ def main():
     # Initialize logger
     init_logger("debugout.log", console=True)
     log_info(f"Starting AI Hybrid Agent Service...")
-    log_info(f"Service port: {service_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
+    log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 
     # Initialize plugin tool registry (auto-scans plugins/ directory)
     tool_registry.initialize()
@@ -116,13 +116,13 @@ def main():
     admin_thread.start()
 
     # Run service app in main thread
-    log_info(f"Service API starting on http://{host}:{service_port}")
+    log_info(f"JSON-RPC API starting on http://{host}:{rpc_port}")
     log_orchestrator("System ready. Waiting for requests...")
     log_orchestrator(f"Admin panel: http://{host}:{admin_port}")
-    log_orchestrator(f"API endpoint: POST http://{host}:{service_port}/api/agent/router")
+    log_orchestrator(f"RPC endpoint: POST http://{host}:{rpc_port}/api/rpc")
 
     try:
-        service_app.run(host=host, port=service_port, debug=debug, use_reloader=False)
+        service_app.run(host=host, port=rpc_port, debug=debug, use_reloader=False)
     except KeyboardInterrupt:
         log_info("Shutting down...")
     except Exception as e:

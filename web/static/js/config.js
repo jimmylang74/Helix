@@ -28,7 +28,7 @@ function setupTabs() {
 }
 
 async function loadConfig() {
-    const result = await apiCall('/admin/config');
+    const result = await apiCall('config.get');
     if (!result.success) return;
 
     const config = result.config;
@@ -44,7 +44,7 @@ async function loadConfig() {
     onProviderChange();
 
     // Server
-    document.getElementById('servicePort').value = server.service_port || 11555;
+    document.getElementById('servicePort').value = server.rpc_port || 11555;
     document.getElementById('adminPort').value = server.admin_port || 11556;
     document.getElementById('serverHost').value = server.host || '0.0.0.0';
     const langSelect = document.getElementById('languageSelect');
@@ -58,7 +58,7 @@ function onProviderChange() {
 }
 
 async function loadLLMProviders() {
-    const result = await apiCall('/admin/llm/providers');
+    const result = await apiCall('llm.providers');
     const sel = document.getElementById('llmProvider');
     if (!result.success || !result.providers) {
         sel.innerHTML = '<option value="ollama_native">Ollama</option>';
@@ -96,7 +96,7 @@ function getLLMConfig() {
 }
 
 async function saveLLMConfig() {
-    const result = await apiCall('/admin/config', 'POST', {
+    const result = await apiCall('config.update', {
         section: 'llm', values: getLLMConfig(),
     });
     if (result.success) showToast(__('config.llm.saveSuccess'), 'success');
@@ -108,7 +108,7 @@ async function testLLM() {
     btn.disabled = true;
     btn.textContent = __('config.llm.testing');
     const resultEl = document.getElementById('llmTestResult');
-    const result = await apiCall('/admin/llm/test', 'POST');
+    const result = await apiCall('llm.test');
     if (result.success) {
         resultEl.textContent = __('config.llm.testSuccess') + (result.response || '').substring(0, 100);
         resultEl.style.color = 'green';
@@ -122,7 +122,7 @@ async function testLLM() {
 
 async function refreshLLMLogs() {
     const viewer = document.getElementById('llmLogViewer');
-    const result = await apiCall('/admin/llm/logs?lines=300');
+    const result = await apiCall('llm.logs', { lines: 300 });
     if (!result.success || !result.logs || result.logs.length === 0) {
         viewer.innerHTML = '<span class="text-muted">' + __('config.llm.noLogs') + '</span>';
         return;
@@ -183,7 +183,7 @@ function stopLLMLogPoll() {
 let registeredIntents = {};
 
 async function loadIntents() {
-    const result = await apiCall('/admin/intents');
+    const result = await apiCall('intents.get');
     const tbody = document.getElementById('intentsTable');
     if (!result.success || !result.intents) {
         tbody.innerHTML = '<tr><td colspan="5" class="text-center">' + __('config.intents.loadFailed') + '</td></tr>';
@@ -287,8 +287,8 @@ function updateMultiselectLabel(containerId) {
 
 async function loadMCPServers() {
     const [configResult, mcpResult] = await Promise.all([
-        apiCall('/admin/config'),
-        apiCall('/admin/mcp/servers'),
+        apiCall('config.get'),
+        apiCall('mcp.servers'),
     ]);
 
     if (!configResult.success) return;
@@ -349,7 +349,7 @@ async function saveBuiltinMCPSearxng() {
             SEARXNG_MAX_RESULTS: String(parseInt(document.getElementById('mcpSearxngMaxResults').value) || 10),
         },
     };
-    const result = await apiCall('/admin/mcp/servers/searxng', 'POST', config);
+    const result = await apiCall('mcp.servers.save', { name: 'searxng', ...config });
     if (result.success) {
         showToast(__('config.mcp.srcSaveSuccess'), 'success');
         loadMCPServers();
@@ -372,7 +372,7 @@ async function saveBuiltinMCPImageSearch() {
             UNSPLASH_API_KEY: document.getElementById('mcpImageSearchUnsplashKey').value,
         },
     };
-    const result = await apiCall('/admin/mcp/servers/image_search', 'POST', config);
+    const result = await apiCall('mcp.servers.save', { name: 'image_search', ...config });
     if (result.success) {
         showToast(__('config.mcp.imgSaveSuccess'), 'success');
         loadMCPServers();
@@ -409,7 +409,7 @@ async function testBuiltinMCP(name) {
         };
     }
 
-    const result = await apiCall('/admin/mcp/test', 'POST', { name, config });
+    const result = await apiCall('mcp.test', { name, config });
     if (result.success && result.result && result.result.connected) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
         resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${__('config.mcp.tools')}: ${tools})`;
@@ -421,8 +421,6 @@ async function testBuiltinMCP(name) {
     btn.disabled = false;
     btn.textContent = __('config.mcp.test');
 }
-
-// ── Custom MCP Server Modal ────────────────────────────────
 
 function showAddMCPServer() {
     currentEditServer = null;
@@ -459,7 +457,7 @@ function editCustomMCPServer(name) {
     document.getElementById('mcpServerModal').style.display = 'flex';
 
     // Load current config
-    apiCall('/admin/config').then(result => {
+    apiCall('config.get').then(result => {
         if (!result.success) return;
         const servers = result.config.mcp_servers || {};
         const s = servers[name];
@@ -504,7 +502,7 @@ async function saveCustomMCPServer() {
         config.env = env;
     }
 
-    const result = await apiCall(`/admin/mcp/servers/${name}`, 'POST', config);
+    const result = await apiCall('mcp.servers.save', { name, ...config });
     if (result.success) {
         showToast(__('config.mcp.saved', {name}), 'success');
         closeMCPServerModal();
@@ -516,7 +514,7 @@ async function saveCustomMCPServer() {
 
 async function deleteCustomMCPServer(name) {
     if (!confirm(__('config.mcp.confirmDelete', {name}))) return;
-    const result = await apiCall(`/admin/mcp/servers/${name}`, 'DELETE');
+    const result = await apiCall('mcp.servers.delete', { name });
     if (result.success) {
         showToast(__('config.mcp.deleted', {name}), 'success');
         loadMCPServers();
@@ -552,7 +550,7 @@ async function testCustomMCP() {
     const resultEl = document.getElementById('mcpCustomTestResult');
     resultEl.textContent = __('config.mcp.testingLabel');
 
-    const result = await apiCall('/admin/mcp/test', 'POST', { name, config });
+    const result = await apiCall('mcp.test', { name, config });
     if (result.success && result.result && result.result.connected) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
         resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${result.result.tools_count} tools: ${tools})`;
@@ -568,13 +566,13 @@ async function testCustomMCP() {
 // ============================================================
 
 async function toggleIntent(intentId) {
-    const result = await apiCall('/admin/config', 'POST', {
+    const result = await apiCall('config.update', {
         settings: { [`intents.${intentId}.enabled`]: false },
     });
-    const configResult = await apiCall('/admin/config');
+    const configResult = await apiCall('config.get');
     if (configResult.success) {
         const current = configResult.config.intents?.[intentId]?.enabled;
-        await apiCall('/admin/config', 'POST', {
+        await apiCall('config.update', {
             settings: { [`intents.${intentId}.enabled`]: !current },
         });
     }
@@ -584,7 +582,7 @@ async function toggleIntent(intentId) {
 
 async function deleteIntent(intentId) {
     if (!confirm(__('config.intents.confirmDelete', {id: intentId}))) return;
-    const result = await apiCall(`/admin/intents/${intentId}`, 'DELETE');
+    const result = await apiCall('intents.delete', { intent_type: intentId });
     if (result.success) { loadIntents(); showToast(__('config.intents.deleted'), 'success'); }
     else { showToast(__('config.intents.deleteFailed'), 'error'); }
 }
@@ -594,11 +592,11 @@ async function registerIntent() {
     const name = document.getElementById('newIntentName').value.trim();
     const desc = document.getElementById('newIntentDesc').value.trim();
     if (!id || !name) { showToast(__('config.intents.regRequired'), 'error'); return; }
-    const intentsResult = await apiCall('/admin/intents');
+    const intentsResult = await apiCall('intents.get');
     if (intentsResult.success && intentsResult.intents?.[id]) {
         showToast(__('config.intents.idExists'), 'error'); return;
     }
-    const result = await apiCall(`/admin/intents/${id}`, 'POST', { enabled: true, name, description: desc });
+    const result = await apiCall('intents.update', { intent_type: id, enabled: true, name, description: desc });
     if (result.success) {
         showToast(__('config.intents.regSuccess'), 'success');
         document.getElementById('newIntentId').value = '';
@@ -617,7 +615,7 @@ function onLanguageChange() {
     if (typeof setLanguage === 'function') {
         setLanguage(lang);
     } else {
-        apiCall('/admin/config', 'POST', {
+        apiCall('config.update', {
             settings: { 'server.language': lang }
         });
     }
@@ -626,13 +624,13 @@ function onLanguageChange() {
 async function saveServerConfig() {
     const selectedLang = document.getElementById('languageSelect').value || 'zh-CN';
     const serverConfig = {
-        service_port: parseInt(document.getElementById('servicePort').value) || 11555,
+        rpc_port: parseInt(document.getElementById('servicePort').value) || 11555,
         admin_port: parseInt(document.getElementById('adminPort').value) || 11556,
         host: document.getElementById('serverHost').value || '0.0.0.0',
         debug: true,
         language: selectedLang,
     };
-    const result = await apiCall('/admin/config', 'POST', { section: 'server', values: serverConfig });
+    const result = await apiCall('config.update', { section: 'server', values: serverConfig });
     if (result.success) {
         showToast(__('config.server.saveSuccess'), 'success');
         if (typeof i18nLoadLocale === 'function') {
@@ -651,7 +649,7 @@ let allPlugins = [];
 let currentPluginDetail = null;
 
 async function loadPlugins() {
-    const result = await apiCall('/admin/plugins');
+    const result = await apiCall('plugins.get');
     const tbody = document.getElementById('pluginsTable');
     if (!result.success || !result.tools) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center">' + __('config.plugins.loadFailed') + '</td></tr>';
@@ -720,7 +718,7 @@ function filterPlugins() {
 }
 
 async function togglePlugin(name, enabled) {
-    const result = await apiCall(`/admin/plugins/${name}/toggle`, 'POST', { enabled });
+    const result = await apiCall('plugins.toggle', { tool_name: name, enabled });
     if (result.success) {
         showToast(__('config.plugins.toggleSuccess', { name }), 'success');
         loadPlugins();
@@ -777,7 +775,7 @@ async function togglePluginFromDetail() {
 async function savePluginIntents() {
     if (!currentPluginDetail) return;
     const selected = getSelectedIntents('pluginDetailIntentCheckboxes');
-    const result = await apiCall(`/admin/plugins/${currentPluginDetail.name}/intents`, 'POST', { intents: selected });
+    const result = await apiCall('plugins.intents', { tool_name: currentPluginDetail.name, intents: selected });
     if (result.success) {
         showToast(__('config.plugins.intentsSaved', { name: currentPluginDetail.name }), 'success');
         currentPluginDetail.intents = selected;

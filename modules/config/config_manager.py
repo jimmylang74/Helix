@@ -41,7 +41,9 @@ class ConfigManager:
             try:
                 with open(self._config_path, "r", encoding="utf-8") as f:
                     self._data = json.load(f)
-                # Merge any missing top-level keys from defaults (for upgrades)
+                # Migrate: service_port → rpc_port
+                if "server" in self._data and "service_port" in self._data["server"]:
+                    self._data["server"]["rpc_port"] = self._data["server"].pop("service_port")
                 defaults = self._defaults()
                 changed = False
                 for key, val in defaults.items():
@@ -64,7 +66,7 @@ class ConfigManager:
     def _defaults(self) -> Dict[str, Any]:
         return {
             "server": {
-                "service_port": 11555,
+                "rpc_port": 11555,
                 "admin_port": 11556,
                 "host": "0.0.0.0",
                 "debug": True,
@@ -182,8 +184,8 @@ class ConfigManager:
             "log_file": self.get("llm.log_file", "llm_engine.log"),
         }
 
-    def get_service_port(self) -> int:
-        return self.get("server.service_port", 11555)
+    def get_rpc_port(self) -> int:
+        return self.get("server.rpc_port", 11555)
 
     def get_admin_port(self) -> int:
         return self.get("server.admin_port", 11556)

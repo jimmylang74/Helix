@@ -14,7 +14,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function refreshLogs() {
     const lines = document.getElementById('logLines').value;
-    const result = await apiCall(`/admin/logs?lines=${lines}`);
+    const result = await apiCall('logs.get', { lines: parseInt(lines) });
 
     if (!result.success) {
         document.getElementById('logContainer').textContent =

@@ -2,137 +2,144 @@
 
 ## Overview
 
-AI混合驱动智能服务的RESTful API文档。服务提供三种核心Agent能力：PPT生成、智能搜索和代码生成。
+AI混合驱动智能服务的JSON-RPC 2.0 API文档。服务提供三种核心Agent能力：PPT生成、智能搜索和代码生成。
 
-**Base URL**: `http://<host>:<service_port>/api`  
-**Admin URL**: `http://<host>:<admin_port>/api/admin`  
-**默认端口**: 服务端口 11555, 管理端口 11556
+**Base URL**: `http://<host>:<rpc_port>`
+**RPC Endpoint**: `POST /api/rpc` (single entry point, method dispatch)
+**Admin URL**: `http://<host>:<admin_port>`
+**默认端口**: RPC API端口 11555, 管理端口 11556
 
 ---
 
-## 1. Agent API
+## 1. JSON-RPC 2.0 Protocol
 
-### 1.1 路由请求
-
-向Agent发送请求，自动识别意图并处理。
+All API calls go through a single endpoint:
 
 ```
-POST /api/agent/router
+POST /api/rpc
 ```
 
-**Request Body**:
+**Request**:
 ```json
 {
-    "request": "用户请求内容",
-    "intent": "auto",        // 可选: auto, ppt, research, coding
-    "stream": false          // 是否流式响应（预留）
+    "jsonrpc": "2.0",
+    "id": "<unique-id>",
+    "method": "<method-name>",
+    "params": { ... }
 }
 ```
 
-**Response** (200 OK):
+**Success Response**:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": "<unique-id>",
+    "result": { ... }
+}
+```
+
+**Error Response**:
+```json
+{
+    "jsonrpc": "2.0",
+    "id": "<unique-id>",
+    "error": {
+        "code": -32601,
+        "message": "Method 'xxx' not found"
+    }
+}
+```
+
+---
+
+## 2. Available Methods
+
+### 2.1 Agent
+
+#### `agent/router`
+
+向Agent发送请求，自动识别意图并处理。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| request | string | ✅ | 用户请求内容 |
+| intent | string | | auto / ppt / research / coding (默认 auto) |
+| stream | bool | | 是否流式返回 (默认 false) |
+
+**Result**:
 ```json
 {
     "success": true,
     "request_id": "req_abc123def456",
     "intent_type": "research",
     "final_result": "处理结果摘要...",
-    "generated_files": [
-        "output/presentation_20241201_120000.pptx"
-    ],
+    "generated_files": ["output/presentation_20241201_120000.pptx"],
     "todos_completed": 3,
     "subtask_loops": 7
 }
 ```
 
-**Error Response** (4xx/5xx):
-```json
-{
-    "success": false,
-    "request_id": "req_abc123def456",
-    "error": "错误描述信息"
-}
-```
-
-### 1.2 查询请求状态
+#### `agent/status`
 
 获取某个请求的当前处理状态。
 
-```
-GET /api/agent/status/<request_id>
-```
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| request_id | string | ✅ | 请求ID |
 
-**Response**:
+**Result**:
 ```json
 {
-    "success": true,
     "request_id": "req_abc123def456",
     "intent_type": "research",
     "orchestrator_phase": "todo_loop",
-    "todo_progress": "✅ [1/3] 搜索信息\n🔄 [2/3] 分析数据\n⬜ [3/3] 生成回答",
+    "todo_progress": "...",
     "current_todo": "搜索和分析数据",
-    "subtask_status": "running",
-    "generated_files": [],
-    "error": null
+    "subtask_status": "running"
 }
 ```
 
 ---
 
-## 2. Admin API
+### 2.2 Config
 
-### 2.1 获取配置
+#### `config.get`
 
-```
-GET /api/admin/config
-```
+获取完整配置。
 
-**Response**:
+**Params**: (none)
+
+**Result**:
 ```json
 {
-    "success": true,
     "config": {
-        "server": {
-            "service_port": 11555,
-            "admin_port": 11556,
-            "host": "0.0.0.0",
-            "debug": true
-        },
-        "llm": {
-            "provider": "ollama_native",
-            "model": "qwen2.5:7b",
-            "endpoint": "http://localhost:11434",
-            "api_key": "",
-            "verbose": true,
-            "log_file": "llm_engine.log"
-        },
-        "tools": { ... },
-        "intents": { ... }
+        "server": { "rpc_port": 11555, "admin_port": 11556, "host": "0.0.0.0" },
+        "llm": { "provider": "ollama_native", "model": "qwen2.5:7b", ... },
+        "tools": { "...": "..." },
+        "intents": { "...": "..." }
     }
 }
 ```
 
-### 2.2 更新配置
+#### `config.update`
 
-```
-POST /api/admin/config
-```
+更新配置。
 
-**Request Body** (方式1 - 更新整个section):
+**Params** (方式1 - 更新整个section):
 ```json
 {
     "section": "llm",
     "values": {
-        "provider": "ollama_native",
-        "model": "qwen2.5:7b",
-        "endpoint": "http://localhost:11434",
-        "api_key": "",
-        "verbose": true,
-        "log_file": "llm_engine.log"
+        "provider": "openai",
+        "model": "gpt-4o",
+        "endpoint": "https://api.openai.com/v1"
     }
 }
 ```
 
-**Request Body** (方式2 - 更新单个字段):
+**Params** (方式2 - 更新单个字段):
 ```json
 {
     "settings": {
@@ -141,114 +148,187 @@ POST /api/admin/config
 }
 ```
 
-### 2.3 测试LLM连接
+---
 
-```
-POST /api/admin/llm/test
-```
+### 2.3 Intents
 
-**Response**:
+#### `intents.get`
+
+获取所有已注册的意图。
+
+**Params**: (none)
+
+#### `intents.update`
+
+注册或更新一个意图。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| intent_type | string | ✅ | 意图ID |
+| enabled | bool | | 是否启用 |
+| name | string | | 显示名称 |
+| description | string | | 描述 |
+
+#### `intents.delete`
+
+删除一个意图。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| intent_type | string | ✅ | 意图ID |
+
+---
+
+### 2.4 LLM
+
+#### `llm.test`
+
+测试LLM连接。
+
+**Params**: (none)
+
+**Result**:
 ```json
 {
-    "success": true,
     "response": "OK. I am working correctly.",
     "provider": "ollama_native"
 }
 ```
 
-### 2.4 获取可用 LLM Provider 列表
+#### `llm.providers`
 
-```
-GET /api/admin/llm/providers
-```
+获取可用LLM Provider列表 (从 ai_engine --get-provider 获取)。
 
-从 `ai_engine --get-provider` 获取当前支持的所有 Provider 信息。
+**Params**: (none)
 
-**Response**:
-```json
-{
-    "success": true,
-    "providers": {
-        "ollama_native": {
-            "name": "Ollama Chat API  (/api/chat)",
-            "description": "Ollama Chat API  (/api/chat)",
-            "default_endpoint": "http://localhost:11434"
-        },
-        "openai": {
-            "name": "OpenAI API",
-            "description": "OpenAI API",
-            "default_endpoint": "https://api.openai.com/v1"
-        },
-        "...": "..."
-    }
-}
-```
+#### `llm.logs`
 
-### 2.5 获取 LLM 交互日志
+获取LLM交互日志。
 
-```
-GET /api/admin/llm/logs?lines=200
-```
-
+**Params**:
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | lines | int | 200 | 返回最近的行数 |
 
-日志文件由 `Helix.json` 中 `llm.log_file` 配置，需在 LLM 配置中启用 `verbose: true`。
+---
 
-**Response**:
-```json
-{
-    "success": true,
-    "logs": ["[2026-07-12] [INFO] provider=ollama_native model=qwen2.5:7b\n", "..."],
-    "total_lines": 512
-}
-```
+### 2.5 Logs / History
 
-### 2.6 获取日志
+#### `logs.get`
 
-```
-GET /api/admin/logs?lines=200
-```
+获取系统运行日志。
 
+**Params**:
 | 参数 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| lines | int | 200 | 返回最近的行数 |
 | file | string | debugout.log | 日志文件名 |
+| lines | int | 200 | 返回最近的行数 |
 
-**Response**:
-```json
-{
-    "success": true,
-    "logs": ["[2024-12-01] [INFO] ...", "..."],
-    "total_lines": 1024,
-    "file": "debugout.log"
-}
-```
+#### `history.get`
 
-### 2.7 意图管理
+获取请求历史。
 
-#### 获取所有意图
-```
-GET /api/admin/intents
-```
+**Params**: (none)
 
-#### 注册/更新意图
-```
-POST /api/admin/intents/<intent_type>
-```
-```json
-{
-    "enabled": true,
-    "name": "翻译",
-    "description": "根据用户要求进行翻译"
-}
-```
+---
 
-#### 删除意图
-```
-DELETE /api/admin/intents/<intent_type>
-```
+### 2.6 MCP
+
+#### `mcp.servers`
+
+获取所有MCP Server配置及状态。
+
+**Params**: (none)
+
+#### `mcp.servers.save`
+
+创建或更新MCP Server配置。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | ✅ | Server名称 |
+| type | string | | server / local |
+| command | string | | 本地模式命令 |
+| args | array | | 命令参数 |
+| url | string | | 远程模式URL |
+| enabled | bool | | 是否启用 |
+| env | object | | 环境变量 |
+
+#### `mcp.servers.delete`
+
+删除MCP Server配置。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | ✅ | Server名称 |
+
+#### `mcp.test`
+
+测试MCP连接。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| name | string | | Server名称 (默认 "test-server") |
+| config | object | ✅ | Server配置 |
+
+#### `mcp.tools`
+
+获取MCP工具列表 (可按意图过滤)。
+
+**Params**:
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| intent | string | 按意图过滤 (留空返回全部) |
+
+#### `mcp.reload`
+
+重新加载所有MCP连接。
+
+**Params**: (none)
+
+---
+
+### 2.7 Plugins
+
+#### `plugins.get`
+
+获取所有已注册的插件工具。
+
+**Params**: (none)
+
+#### `plugins.toggle`
+
+启用/禁用插件。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| tool_name | string | ✅ | 工具名称 |
+| enabled | bool | | 启用/禁用 (留空则翻转) |
+
+#### `plugins.intents`
+
+保存插件的意图分配。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| tool_name | string | ✅ | 工具名称 |
+| intents | array | | 意图列表 |
+
+#### `plugins.detail`
+
+获取插件详情。
+
+**Params**:
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| tool_name | string | ✅ | 工具名称 |
 
 ---
 
@@ -262,14 +342,15 @@ DELETE /api/admin/intents/<intent_type>
 
 ---
 
-## 4. 错误码
+## 4. JSON-RPC 2.0 错误码
 
-| HTTP状态码 | 说明 |
-|-----------|------|
-| 200 | 请求成功 |
-| 400 | 请求参数错误 |
-| 404 | 资源未找到 |
-| 500 | 服务端内部错误 |
+| 错误码 | 说明 |
+|--------|------|
+| -32700 | Parse error |
+| -32600 | Invalid request |
+| -32601 | Method not found |
+| -32602 | Invalid params |
+| -32603 | Internal error |
 
 ---
 
@@ -279,37 +360,49 @@ DELETE /api/admin/intents/<intent_type>
 
 ```bash
 # 发送Agent请求（自动识别）
-curl -X POST http://localhost:11555/api/agent/router \
+curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"request": "请搜索2024年AI发展趋势", "intent": "auto"}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"agent/router","params":{"request":"请搜索2024年AI发展趋势","intent":"auto"}}'
 
 # 强制PPT生成
-curl -X POST http://localhost:11555/api/agent/router \
+curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"request": "创建关于Python入门的PPT", "intent": "ppt"}'
+  -d '{"jsonrpc":"2.0","id":"2","method":"agent/router","params":{"request":"创建关于Python入门的PPT","intent":"ppt"}}'
 
 # 查询请求状态
-curl http://localhost:11555/api/agent/status/req_abc123
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"3","method":"agent/status","params":{"request_id":"req_abc123"}}'
 
 # 获取配置
-curl http://localhost:11556/api/admin/config
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"4","method":"config.get","params":{}}'
 
 # 更新LLM配置
-curl -X POST http://localhost:11556/api/admin/config \
+curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"section": "llm", "values": {"provider": "openai", "model": "gpt-4o", "endpoint": "https://api.openai.com/v1", "api_key": "sk-xxx"}}'
+  -d '{"jsonrpc":"2.0","id":"5","method":"config.update","params":{"section":"llm","values":{"provider":"openai","model":"gpt-4o","endpoint":"https://api.openai.com/v1","api_key":"sk-xxx"}}}'
 
 # 测试LLM连接
-curl -X POST http://localhost:11556/api/admin/llm/test
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"6","method":"llm.test","params":{}}'
 
 # 获取可用 Provider 列表
-curl http://localhost:11556/api/admin/llm/providers
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"7","method":"llm.providers","params":{}}'
 
 # 获取 LLM 交互日志
-curl "http://localhost:11556/api/admin/llm/logs?lines=100"
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"8","method":"llm.logs","params":{"lines":100}}'
 
 # 获取系统日志
-curl "http://localhost:11556/api/admin/logs?lines=100"
+curl -X POST http://localhost:11555/api/rpc \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":"9","method":"logs.get","params":{"lines":100}}'
 ```
 
 ### Python 示例
@@ -317,15 +410,25 @@ curl "http://localhost:11556/api/admin/logs?lines=100"
 ```python
 import requests
 
+RPC_URL = "http://localhost:11555/api/rpc"
+
+def rpc_call(method, params=None, req_id="1"):
+    payload = {"jsonrpc": "2.0", "id": req_id, "method": method}
+    if params:
+        payload["params"] = params
+    resp = requests.post(RPC_URL, json=payload)
+    return resp.json()
+
 # 发送请求
-resp = requests.post(
-    "http://localhost:11555/api/agent/router",
-    json={"request": "搜索Python FastAPI教程", "intent": "research"}
-)
-result = resp.json()
-print(result["final_result"])
+result = rpc_call("agent/router", {
+    "request": "搜索Python FastAPI教程",
+    "intent": "research"
+})
+print(result["result"]["final_result"])
 
 # 获取状态
-status = requests.get(f"http://localhost:11555/api/agent/status/{result['request_id']}")
-print(status.json())
+status = rpc_call("agent/status", {
+    "request_id": result["result"]["request_id"]
+})
+print(status)
 ```

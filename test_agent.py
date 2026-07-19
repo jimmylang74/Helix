@@ -368,9 +368,9 @@ def test_11_config_manager():
     print_result("Config get()", bool(provider),
                  f"LLM provider: {provider}")
 
-    port = config.get_service_port()
+    port = config.get_rpc_port()
     print_result("Config port", port > 0,
-                 f"Service port: {port}")
+                 f"RPC port: {port}")
 
     return True
 

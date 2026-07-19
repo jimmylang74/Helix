@@ -1,16 +1,13 @@
 """
-Flask REST API routes for the AI Agent Service.
-/api/agent/router - Main agent endpoint
-/api/admin/config - Configuration management
-/api/admin/mcp/* - MCP management endpoints
-/api/admin/... - Other admin endpoints
+JSON-RPC 2.0 API routes for the AI Agent Service.
+Single entry point: POST /api/rpc  (method dispatch)
+Web UI routes served by the admin app.
 """
 
 import json
 import os
 import sys
 import uuid
-from datetime import datetime
 from flask import Blueprint, request, jsonify, render_template, send_from_directory
 
 from modules.core.orchestrator import orchestrator
@@ -27,256 +24,202 @@ admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
 
 # ============================================================
-# API Routes
+# JSON-RPC 2.0 Error Codes (per spec)
+# ============================================================
+PARSE_ERROR      = -32700
+INVALID_REQUEST  = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS   = -32602
+INTERNAL_ERROR   = -32603
+
+
+# ============================================================
+# JSON-RPC 2.0 Helpers
 # ============================================================
 
-@api_bp.route("/agent/router", methods=["POST"])
-def agent_router():
-    """
-    Main agent endpoint.
-    Accepts user request and routes to the appropriate agent.
-
-    Request JSON:
-    {
-        "request": "User's request text",
-        "intent": "optional|auto|ppt|research|coding",  # Force a specific intent
-        "stream": false  # Whether to stream the response
-    }
-
-    Response JSON:
-    {
-        "success": true,
-        "request_id": "req_xxx",
-        "intent_type": "research",
-        "final_result": "...",
-        "generated_files": [...],
-        "todos_completed": 3
-    }
-    """
+def _rpc_id() -> str | None:
+    """Extract JSON-RPC request id from the incoming body."""
     try:
-        data = request.get_json(force=True)
-        if not data or "request" not in data:
-            return jsonify({"success": False, "error": "Missing 'request' field"}), 400
-
-        user_request = data["request"]
-        forced_intent = data.get("intent", "auto")
-        stream = data.get("stream", False)
-
-        # Validate forced intent if provided
-        if forced_intent != "auto" and forced_intent not in ("ppt", "research", "coding"):
-            return jsonify({
-                "success": False,
-                "error": f"Invalid intent: {forced_intent}. Must be one of: auto, ppt, research, coding"
-            }), 400
-
-        request_id = f"req_{uuid.uuid4().hex[:12]}"
-        log_info(f"API request [{request_id}]: intent={forced_intent}, request={user_request[:100]}...")
-
-        # If intent is forced, prepend to request for orchestrator processing
-        if forced_intent != "auto":
-            user_request = f"[Intent: {forced_intent}] {user_request}"
-
-        # Process via orchestrator
-        result = orchestrator.process_request(user_request, request_id)
-
-        return jsonify(result)
-
-    except Exception as e:
-        log_error(f"API error: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        data = request.get_json(force=True, silent=True)
+        if data and "id" in data:
+            return data["id"]
+    except Exception:
+        pass
+    return uuid.uuid4().hex[:12]
 
 
-@api_bp.route("/agent/status/<request_id>", methods=["GET"])
-def agent_status(request_id):
-    """Get status of a request."""
+def _rpc_success(result, rpc_id: str | None = None) -> tuple:
+    """JSON-RPC 2.0 success envelope."""
+    return jsonify({
+        "jsonrpc": "2.0",
+        "id": rpc_id or _rpc_id(),
+        "result": result,
+    })
+
+
+def _rpc_error(code: int, message: str, rpc_id: str | None = None) -> tuple:
+    """JSON-RPC 2.0 error envelope."""
+    return jsonify({
+        "jsonrpc": "2.0",
+        "id": rpc_id or _rpc_id(),
+        "error": {"code": code, "message": message},
+    })
+
+
+# ============================================================
+# Internal handler functions
+# ------------------------------------------------------------
+# Each receives params dict (already extracted from request body).
+# All return a plain dict (result payload for _rpc_success).
+# Exceptions propagate to _dispatch which wraps them as RPC errors.
+# ============================================================
+
+# ---- Agent ----
+
+def _agent_router(params):
+    if not params or "request" not in params:
+        raise ValueError("Missing 'request' field in params")
+    user_request = params["request"]
+    forced_intent = params.get("intent", "auto")
+    if forced_intent != "auto" and forced_intent not in ("ppt", "research", "coding"):
+        raise ValueError(f"Invalid intent: {forced_intent}. Must be one of: auto, ppt, research, coding")
+
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
+    log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
+
+    effective = f"[Intent: {forced_intent}] {user_request}" if forced_intent != "auto" else user_request
+    return orchestrator.process_request(effective, request_id)
+
+
+def _agent_status(params):
+    request_id = params.get("request_id", "")
+    if not request_id:
+        raise ValueError("Missing 'request_id' in params")
     state = orchestrator.get_state(request_id)
     if not state:
-        return jsonify({"success": False, "error": "Request not found"}), 404
-    return jsonify({"success": True, **state})
+        raise ValueError(f"Request '{request_id}' not found")
+    return state
 
 
-# ============================================================
-# Admin API Routes
-# ============================================================
+# ---- Config ----
 
-@admin_bp.route("/config", methods=["GET"])
-def get_config():
-    """Get full configuration."""
+def _config_get(params):
     config = ConfigManager()
-    return jsonify({"success": True, "config": config.get_all()})
+    return {"config": config.get_all()}
 
 
-@admin_bp.route("/config", methods=["POST"])
-def update_config():
-    """Update configuration section."""
-    try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"success": False, "error": "No data provided"}), 400
-
-        config = ConfigManager()
-        section = data.get("section", "")
-        values = data.get("values", {})
-
-        if section:
-            config.update_section(section, values)
-        else:
-            # Update individual keys
-            for key, value in data.get("settings", {}).items():
-                config.set(key, value)
-
-        # Refresh LLM if LLM config changed
-        if section == "llm" or any(k.startswith("llm") for k in data.get("settings", {}).keys()):
-            try:
-                orchestrator.refresh_llm()
-            except Exception as e:
-                log_error(f"LLM refresh failed: {e}")
-
-        return jsonify({"success": True, "config": config.get_all()})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+def _config_update(params):
+    config = ConfigManager()
+    section = params.get("section", "")
+    values  = params.get("values", {})
+    if section:
+        config.update_section(section, values)
+    else:
+        for key, value in params.get("settings", {}).items():
+            config.set(key, value)
+    if section == "llm" or any(k.startswith("llm") for k in params.get("settings", {}).keys()):
+        try:
+            orchestrator.refresh_llm()
+        except Exception as e:
+            log_error(f"LLM refresh failed: {e}")
+    return {"config": config.get_all()}
 
 
-@admin_bp.route("/intents", methods=["GET"])
-def get_intents():
-    """Get all registered intents."""
-    return jsonify({
-        "success": True,
-        "intents": intent_router.get_registered_intents()
-    })
+# ---- Intents ----
+
+def _intents_get(params):
+    return {"intents": intent_router.get_registered_intents()}
 
 
-@admin_bp.route("/intents/<intent_type>", methods=["POST"])
-def update_intent(intent_type):
-    """Update or create an intent."""
-    try:
-        data = request.get_json(force=True)
-        success = intent_router.update_intent(intent_type, data)
-        return jsonify({"success": success})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+def _intents_update(params):
+    intent_type = params.get("intent_type", "")
+    if not intent_type:
+        raise ValueError("Missing 'intent_type' in params")
+    success = intent_router.update_intent(intent_type, params)
+    return {"success": success}
 
 
-@admin_bp.route("/intents/<intent_type>", methods=["DELETE"])
-def delete_intent(intent_type):
-    """Delete an intent."""
+def _intents_delete(params):
+    intent_type = params.get("intent_type", "")
+    if not intent_type:
+        raise ValueError("Missing 'intent_type' in params")
     success = intent_router.delete_intent(intent_type)
-    return jsonify({"success": success})
+    return {"success": success}
 
 
-@admin_bp.route("/logs", methods=["GET"])
-def get_logs():
-    """Get recent log entries."""
-    try:
-        log_file = request.args.get("file", "debugout.log")
-        lines = int(request.args.get("lines", 200))
+# ---- Logs ----
 
-        import os
-        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), log_file)
-
-        if not os.path.exists(log_path):
-            return jsonify({"success": True, "logs": [], "file": log_file})
-
-        with open(log_path, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
-
-        return jsonify({
-            "success": True,
-            "logs": all_lines[-lines:],
-            "total_lines": len(all_lines),
-            "file": log_file
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+def _logs_get(params):
+    log_file = params.get("file", "debugout.log")
+    lines    = int(params.get("lines", 200))
+    log_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        log_file,
+    )
+    if not os.path.exists(log_path):
+        return {"logs": [], "file": log_file, "total_lines": 0}
+    with open(log_path, "r", encoding="utf-8") as f:
+        all_lines = f.readlines()
+    return {
+        "logs": all_lines[-lines:],
+        "total_lines": len(all_lines),
+        "file": log_file,
+    }
 
 
-@admin_bp.route("/history", methods=["GET"])
-def get_history():
-    """Get request history (from current session)."""
-    return jsonify({
-        "success": True,
-        "history": []
-    })
+def _history_get(params):
+    return {"history": []}
 
 
-@admin_bp.route("/llm/test", methods=["POST"])
-def test_llm():
-    """Test LLM connection via ai_engine."""
-    try:
-        from modules.llm.llm_client import LLMClient
-        client = LLMClient()
-        result = client.simple_chat(
-            "Reply exactly with: OK. I am working correctly.",
-            system_prompt="You are a test assistant. Reply in plain text."
-        )
-        return jsonify({
-            "success": True,
-            "response": result[:200],
-            "provider": client._provider
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+# ---- LLM ----
+
+def _llm_test(params):
+    from modules.llm.llm_client import LLMClient
+    client = LLMClient()
+    result = client.simple_chat(
+        "Reply exactly with: OK. I am working correctly.",
+        system_prompt="You are a test assistant. Reply in plain text.",
+    )
+    return {"response": result[:200], "provider": client._provider}
 
 
-@admin_bp.route("/llm/providers", methods=["GET"])
-def get_llm_providers():
-    """Get available LLM providers from ai_engine --get-provider."""
-    try:
-        import subprocess
-        ai_engine_path = os.path.join(
+def _llm_providers(params):
+    import subprocess
+    ai_engine_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "ai_engine", "ai_engine.py",
+    )
+    result = subprocess.run(
+        [sys.executable, ai_engine_path, "--get-provider"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr)
+    return {"providers": json.loads(result.stdout)}
+
+
+def _llm_logs(params):
+    config   = ConfigManager()
+    log_file = config.get("llm.log_file", "llm_engine.log")
+    lines    = int(params.get("lines", 200))
+    if not os.path.isabs(log_file):
+        log_file = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "ai_engine", "ai_engine.py"
+            log_file,
         )
-        result = subprocess.run(
-            [sys.executable, ai_engine_path, "--get-provider"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0:
-            providers = json.loads(result.stdout)
-            return jsonify({"success": True, "providers": providers})
-        else:
-            return jsonify({"success": False, "error": result.stderr}), 500
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    if not os.path.exists(log_file):
+        return {"logs": [], "total_lines": 0}
+    with open(log_file, "r", encoding="utf-8") as f:
+        all_lines = f.readlines()
+    return {"logs": all_lines[-lines:], "total_lines": len(all_lines)}
 
 
-@admin_bp.route("/llm/logs", methods=["GET"])
-def get_llm_logs():
-    """Get LLM engine interaction logs (from ai_engine --verbose --log)."""
-    try:
-        config = ConfigManager()
-        log_file = config.get("llm.log_file", "llm_engine.log")
-        lines = int(request.args.get("lines", 200))
+# ---- MCP ----
 
-        if not os.path.isabs(log_file):
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__))))
-            log_file = os.path.join(project_root, log_file)
-
-        if not os.path.exists(log_file):
-            return jsonify({"success": True, "logs": [], "total_lines": 0})
-
-        with open(log_file, "r", encoding="utf-8") as f:
-            all_lines = f.readlines()
-
-        return jsonify({
-            "success": True,
-            "logs": all_lines[-lines:],
-            "total_lines": len(all_lines),
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-@admin_bp.route("/mcp/servers", methods=["GET"])
-def get_mcp_servers():
-    """Get all MCP server configurations and their status."""
+def _mcp_servers_get(params):
     config = ConfigManager()
     mcp_servers = config.get("mcp_servers", {})
-    
-    # Ensure registry is initialized for accurate status
     mcp_registry.initialize()
-    
-    # Get connection status from registry
     status_info = {}
     for name in mcp_servers:
         client = mcp_registry.get_client(name)
@@ -284,189 +227,219 @@ def get_mcp_servers():
             "connected": client.is_connected() if client else False,
             "tools_count": len(client.get_tools()) if client and client.is_connected() else 0,
         }
-    
-    return jsonify({
-        "success": True,
-        "servers": mcp_servers,
-        "status": status_info,
-    })
+    return {"servers": mcp_servers, "status": status_info}
 
 
-@admin_bp.route("/mcp/servers/<name>", methods=["POST"])
-def save_mcp_server(name):
-    """Create or update an MCP server configuration."""
-    try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"success": False, "error": "No data provided"}), 400
-
-        config = ConfigManager()
-        mcp_servers = config.get("mcp_servers", {})
-        mcp_servers[name] = data
-        config.update_section("mcp_servers", mcp_servers)
-
-        # Reload registry to apply changes
-        try:
-            mcp_registry.reload()
-            from plugins.mcp_tools import register_mcp_tools
-            register_mcp_tools(tool_registry)
-        except Exception as e:
-            log_error(f"MCP registry reload failed: {e}")
-
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@admin_bp.route("/mcp/servers/<name>", methods=["DELETE"])
-def delete_mcp_server(name):
-    """Delete an MCP server configuration."""
-    try:
-        config = ConfigManager()
-        mcp_servers = config.get("mcp_servers", {})
-        if name in mcp_servers:
-            del mcp_servers[name]
-            config.update_section("mcp_servers", mcp_servers)
-
-        # Reload registry
-        try:
-            mcp_registry.reload()
-            from plugins.mcp_tools import register_mcp_tools
-            register_mcp_tools(tool_registry)
-        except Exception as e:
-            log_error(f"MCP registry reload failed: {e}")
-
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@admin_bp.route("/mcp/test", methods=["POST"])
-def test_mcp_connection():
-    """Test MCP connection with given config."""
-    try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"success": False, "error": "No data provided"}), 400
-
-        name = data.get("name", "test-server")
-        server_config = data.get("config", {})
-
-        if not server_config:
-            return jsonify({"success": False, "error": "No server config provided"}), 400
-
-        # Create temporary client and test
-        client = create_mcp_client(name, server_config)
-        result = client.test_connection()
-
-        return jsonify({
-            "success": result.get("connected", False),
-            "result": result,
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@admin_bp.route("/mcp/tools", methods=["GET"])
-def get_mcp_tools():
-    """Get all MCP tools, optionally filtered by intent."""
-    intent = request.args.get("intent", "")
-    
-    if intent:
-        tools = mcp_registry.get_tools_for_intent(intent)
-        return jsonify({
-            "success": True,
-            "intent": intent,
-            "tools": [t.to_tool_definition() for t in tools],
-            "tools_count": len(tools),
-        })
-    else:
-        all_tools = mcp_registry.get_all_tools()
-        return jsonify({
-            "success": True,
-            "servers": all_tools,
-        })
-
-
-@admin_bp.route("/mcp/reload", methods=["POST"])
-def reload_mcp():
-    """Reload all MCP connections and re-register adapters."""
+def _mcp_servers_save(params):
+    name = params.get("name", "")
+    if not name:
+        raise ValueError("Missing 'name' in params")
+    config = ConfigManager()
+    mcp_servers = config.get("mcp_servers", {})
+    server_config = {k: v for k, v in params.items() if k != "name"}
+    mcp_servers[name] = server_config
+    config.update_section("mcp_servers", mcp_servers)
     try:
         mcp_registry.reload()
         from plugins.mcp_tools import register_mcp_tools
         register_mcp_tools(tool_registry)
-        return jsonify({"success": True})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        log_error(f"MCP registry reload failed: {e}")
+    return {"success": True}
 
 
-# ============================================================
-# Plugin Tool Management API Routes
-# ============================================================
+def _mcp_servers_delete(params):
+    name = params.get("name", "")
+    if not name:
+        raise ValueError("Missing 'name' in params")
+    config = ConfigManager()
+    mcp_servers = config.get("mcp_servers", {})
+    if name in mcp_servers:
+        del mcp_servers[name]
+        config.update_section("mcp_servers", mcp_servers)
+    try:
+        mcp_registry.reload()
+        from plugins.mcp_tools import register_mcp_tools
+        register_mcp_tools(tool_registry)
+    except Exception as e:
+        log_error(f"MCP registry reload failed: {e}")
+    return {"success": True}
 
-@admin_bp.route("/plugins", methods=["GET"])
-def get_plugins():
-    """Get all registered plugin tools with their metadata."""
-    tools = tool_registry.get_all_as_list()
+
+def _mcp_test(params):
+    name = params.get("name", "test-server")
+    server_config = params.get("config", {})
+    if not server_config:
+        raise ValueError("No server config provided")
+    client = create_mcp_client(name, server_config)
+    result = client.test_connection()
+    return {"connected": result.get("connected", False), "result": result}
+
+
+def _mcp_tools(params):
+    intent = params.get("intent", "")
+    if intent:
+        tools = mcp_registry.get_tools_for_intent(intent)
+        return {
+            "intent": intent,
+            "tools": [t.to_tool_definition() for t in tools],
+            "tools_count": len(tools),
+        }
+    return {"servers": mcp_registry.get_all_tools()}
+
+
+def _mcp_reload(params):
+    mcp_registry.reload()
+    from plugins.mcp_tools import register_mcp_tools
+    register_mcp_tools(tool_registry)
+    return {"success": True}
+
+
+# ---- Plugins ----
+
+def _plugins_get(params):
+    tools  = tool_registry.get_all_as_list()
     intents = tool_registry.get_intents()
-    return jsonify({
-        "success": True,
-        "tools": tools,
-        "intents": sorted(intents),
-        "total": len(tools),
-    })
+    return {"tools": tools, "intents": sorted(intents), "total": len(tools)}
 
 
-@admin_bp.route("/plugins/<tool_name>/toggle", methods=["POST"])
-def toggle_plugin(tool_name):
-    """Enable or disable a plugin tool."""
-    try:
-        data = request.get_json(force=True) if request.data else {}
-        enabled = data.get("enabled")
-        if enabled is None:
-            tool = tool_registry.get(tool_name)
-            if tool:
-                enabled = not tool.enabled
-            else:
-                return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
-
-        success = tool_registry.set_enabled(tool_name, enabled)
-        if success:
-            tool_registry.save_enabled_state()
-            return jsonify({"success": True, "name": tool_name, "enabled": enabled})
-        return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@admin_bp.route("/plugins/<tool_name>/intents", methods=["POST"])
-def save_plugin_intents(tool_name):
-    """Save intent assignments for a plugin tool."""
-    try:
-        data = request.get_json(force=True)
-        intents = data.get("intents", [])
-        tool = tool_registry.get(tool_name)
-        if not tool:
-            return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
-
-        tool.intents = list(intents)
-        tool_registry.save_enabled_state()
-        return jsonify({"success": True, "name": tool_name, "intents": tool.intents})
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@admin_bp.route("/plugins/<tool_name>", methods=["GET"])
-def get_plugin_detail(tool_name):
-    """Get detailed info for a specific plugin tool."""
+def _plugins_toggle(params):
+    tool_name = params.get("tool_name", "")
+    if not tool_name:
+        raise ValueError("Missing 'tool_name' in params")
     tool = tool_registry.get(tool_name)
     if not tool:
-        return jsonify({"success": False, "error": f"Tool '{tool_name}' not found"}), 404
-    return jsonify({"success": True, "tool": tool.to_dict()})
+        raise ValueError(f"Tool '{tool_name}' not found")
+    enabled = params.get("enabled")
+    if enabled is None:
+        enabled = not tool.enabled
+    success = tool_registry.set_enabled(tool_name, enabled)
+    if not success:
+        raise ValueError(f"Tool '{tool_name}' not found")
+    tool_registry.save_enabled_state()
+    return {"name": tool_name, "enabled": enabled}
+
+
+def _plugins_intents(params):
+    tool_name = params.get("tool_name", "")
+    if not tool_name:
+        raise ValueError("Missing 'tool_name' in params")
+    tool = tool_registry.get(tool_name)
+    if not tool:
+        raise ValueError(f"Tool '{tool_name}' not found")
+    tool.intents = list(params.get("intents", []))
+    tool_registry.save_enabled_state()
+    return {"name": tool_name, "intents": tool.intents}
+
+
+def _plugins_detail(params):
+    tool_name = params.get("tool_name", "")
+    if not tool_name:
+        raise ValueError("Missing 'tool_name' in params")
+    tool = tool_registry.get(tool_name)
+    if not tool:
+        raise ValueError(f"Tool '{tool_name}' not found")
+    return {"tool": tool.to_dict()}
 
 
 # ============================================================
-# Web UI Routes (served by admin port)
+# Dispatch table: JSON-RPC method → handler function
+# ============================================================
+
+METHODS = {
+    # Agent
+    "agent/router":        _agent_router,
+    "agent/status":        _agent_status,
+    # Config
+    "config.get":          _config_get,
+    "config.update":       _config_update,
+    # Intents
+    "intents.get":         _intents_get,
+    "intents.update":      _intents_update,
+    "intents.delete":      _intents_delete,
+    # Logs / History
+    "logs.get":            _logs_get,
+    "history.get":         _history_get,
+    # LLM
+    "llm.test":            _llm_test,
+    "llm.providers":       _llm_providers,
+    "llm.logs":            _llm_logs,
+    # MCP
+    "mcp.servers":         _mcp_servers_get,
+    "mcp.servers.save":    _mcp_servers_save,
+    "mcp.servers.delete":  _mcp_servers_delete,
+    "mcp.test":            _mcp_test,
+    "mcp.tools":           _mcp_tools,
+    "mcp.reload":          _mcp_reload,
+    # Plugins
+    "plugins.get":         _plugins_get,
+    "plugins.toggle":      _plugins_toggle,
+    "plugins.intents":     _plugins_intents,
+    "plugins.detail":      _plugins_detail,
+}
+
+
+# ============================================================
+# Single JSON-RPC 2.0 entry point
+# ============================================================
+
+@api_bp.route("/rpc", methods=["POST"])
+def rpc_dispatch():
+    """
+    POST /api/rpc
+
+    JSON-RPC 2.0 method dispatch.
+
+    Request:
+        {"jsonrpc":"2.0","id":"1","method":"<method>","params":{...}}
+
+    Success:
+        {"jsonrpc":"2.0","id":"1","result":{...}}
+
+    Error:
+        {"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"..."}}
+    """
+    rpc_id = _rpc_id()
+
+    # --- Parse body --------------------------------------------------
+    try:
+        data = request.get_json(force=True, silent=True)
+    except Exception:
+        return _rpc_error(PARSE_ERROR, "Parse error", rpc_id)
+
+    if not data or not isinstance(data, dict):
+        return _rpc_error(INVALID_REQUEST, "Request body must be a JSON object", rpc_id)
+
+    # --- Validate required fields ------------------------------------
+    if data.get("jsonrpc") != "2.0":
+        return _rpc_error(INVALID_REQUEST, "Missing or invalid 'jsonrpc' field (must be \"2.0\")", rpc_id)
+
+    method = data.get("method")
+    if not method:
+        return _rpc_error(INVALID_REQUEST, "Missing 'method' field", rpc_id)
+
+    params = data.get("params", {})
+    if not isinstance(params, dict):
+        return _rpc_error(INVALID_PARAMS, "'params' must be an object", rpc_id)
+
+    # --- Dispatch ----------------------------------------------------
+    handler = METHODS.get(method)
+    if handler is None:
+        available = ", ".join(sorted(METHODS.keys()))
+        return _rpc_error(METHOD_NOT_FOUND, f"Method '{method}' not found. Available: {available}", rpc_id)
+
+    try:
+        result = handler(params)
+        return _rpc_success(result, rpc_id)
+    except (ValueError, KeyError) as e:
+        return _rpc_error(INVALID_PARAMS, str(e), rpc_id)
+    except Exception as e:
+        log_error(f"RPC [{method}] error: {e}")
+        return _rpc_error(INTERNAL_ERROR, str(e), rpc_id)
+
+
+# ============================================================
+# Web UI Routes (served by the admin app, NOT under /api/rpc)
 # ============================================================
 
 def create_admin_routes(app):
@@ -490,19 +463,23 @@ def create_admin_routes(app):
 
     @app.route("/output/<path:filename>")
     def download_file(filename):
-        import os
-        output_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "output")
+        output_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "output",
+        )
         return send_from_directory(output_dir, filename)
 
-    # Add locale serving route
+    # Locale serving route (not RPC — serves static JSON)
     @app.route("/api/admin/locale/<lang>")
     def serve_locale(lang):
-        import os, json
-        locale_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "web", "locales")
+        locale_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "..", "web", "locales",
+        )
         safe_lang = lang.replace("..", "").replace("/", "").replace("\\", "")
         filepath = os.path.join(locale_dir, f"{safe_lang}.json")
         if not os.path.exists(filepath):
-            return jsonify({"error": "Locale not found"}), 404
+            return _rpc_error(METHOD_NOT_FOUND, "Locale not found")
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return jsonify(data)
+        return _rpc_success(data)

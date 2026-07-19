@@ -5,23 +5,47 @@
 
 const API_BASE = '/api';
 
-// Utility: API call helper
-async function apiCall(endpoint, method = 'GET', body = null) {
-    const options = {
+/**
+ * JSON-RPC 2.0 call helper.
+ *
+ * @param {string} method  – dispatch method, e.g. "config.get", "agent/router"
+ * @param {object|null} params – method parameters (sent inside "params")
+ * @returns {Promise<{success: boolean, ...result}|{success: false, error: string}>}
+ *          Unwrapped so callers never see jsonrpc envelope internals.
+ */
+async function apiCall(method, params = null) {
+    const body = {
+        jsonrpc: '2.0',
+        id: crypto.randomUUID().slice(0, 12),
         method,
-        headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-        },
     };
-    if (body) {
-        options.body = JSON.stringify(body);
+    if (params && typeof params === 'object') {
+        body.params = params;
     }
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
-        return await response.json();
+        const response = await fetch(`${API_BASE}/rpc`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const json = await response.json();
+
+        // Unwrap JSON-RPC 2.0 envelope for callers
+        if (json.jsonrpc === '2.0') {
+            if (json.error) {
+                return { success: false, error: json.error.message || 'RPC error' };
+            }
+            const result = json.result || {};
+            if (typeof result === 'object' && result !== null) {
+                return { success: true, ...result };
+            }
+            return { success: true, result };
+        }
+
+        // Fallback for non-RPC responses (locale, etc.)
+        return json;
     } catch (error) {
-        console.error(`API Error (${endpoint}):`, error);
+        console.error(`RPC Error (${method}):`, error);
         return { success: false, error: error.message };
     }
 }

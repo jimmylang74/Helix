@@ -10,7 +10,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 async function loadSystemInfo() {
-    const result = await apiCall('/admin/config');
+    const result = await apiCall('config.get');
     if (result.success) {
         const config = result.config;
         const llm = config.llm || {};
@@ -18,7 +18,7 @@ async function loadSystemInfo() {
 
         document.getElementById('llmProvider').textContent = llm.provider || '-';
         document.getElementById('llmModel').textContent = llm.model || '-';
-        document.getElementById('servicePort').textContent = server.service_port || 11555;
+        document.getElementById('servicePort').textContent = server.rpc_port || 11555;
         document.getElementById('adminPort').textContent = server.admin_port || 11556;
     }
 }
@@ -51,7 +51,7 @@ function setupTestForm() {
         document.getElementById('resultStatus').className = 'badge badge-info';
 
         try {
-            const result = await apiCall('/agent/router', 'POST', {
+            const result = await apiCall('agent/router', {
                 request: requestInput,
                 intent: requestType,
                 stream: false,

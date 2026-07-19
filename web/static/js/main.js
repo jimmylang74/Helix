@@ -13,10 +13,19 @@ const API_BASE = '/api';
  * @returns {Promise<{success: boolean, ...result}|{success: false, error: string}>}
  *          Unwrapped so callers never see jsonrpc envelope internals.
  */
+function _genId() {
+    // crypto.randomUUID() requires secure context (HTTPS / localhost).
+    // Fallback to Math.random for plain-HTTP on non-localhost.
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID().slice(0, 12);
+    }
+    return Math.random().toString(36).slice(2, 14);
+}
+
 async function apiCall(method, params = null) {
     const body = {
         jsonrpc: '2.0',
-        id: crypto.randomUUID().slice(0, 12),
+        id: _genId(),
         method,
     };
     if (params && typeof params === 'object') {

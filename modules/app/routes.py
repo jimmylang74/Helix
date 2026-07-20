@@ -8,6 +8,7 @@ import json
 import os
 import sys
 import uuid
+import threading
 from flask import Blueprint, request, jsonify, render_template, send_from_directory
 
 from modules.core.orchestrator import orchestrator
@@ -94,7 +95,18 @@ def _agent_router(params):
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
 
     effective = f"[Intent: {forced_intent}] {user_request}" if forced_intent != "auto" else user_request
-    return orchestrator.process_request(effective, request_id)
+
+    def _run():
+        orchestrator.process_request(effective, request_id)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+    return {
+        "success": True,
+        "request_id": request_id,
+        "intent_type": forced_intent if forced_intent != "auto" else "",
+        "status": "started",
+    }
 
 
 def _agent_status(params):

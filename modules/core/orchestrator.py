@@ -144,8 +144,8 @@ class AgentOrchestrator:
         state["intent_type"] = intent_type
         log_llm_decision(f"Intent: {intent_type}, Todos: {len(todos)}")
 
-        # Initialize todo list
         todo_manager.set_todos(state, todos)
+        state["todo_subtask_lists"] = [[] for _ in todos]
         context_manager.add_message(state, "assistant", json.dumps(response, ensure_ascii=False))
 
     def _determine_loop_level(self, state: AgentState):
@@ -213,8 +213,18 @@ class AgentOrchestrator:
         subtasks = self._decompose_todo(state, todo_item, previous_todo_summary, system_prompt)
         log_orchestrator(f"  Decomposed into {len(subtasks)} subtask(s)")
 
+        todo_idx = state.get("current_todo_idx", 0)
+        todo_subtask_lists = state.get("todo_subtask_lists", [])
+        if todo_idx < len(todo_subtask_lists):
+            todo_subtask_lists[todo_idx] = [
+                {"subtask": s, "status": "pending"} for s in subtasks
+            ]
+
         for idx, subtask in enumerate(subtasks, 1):
             state["subtask_loop_count"] = idx
+            state["current_subtask_idx"] = idx - 1
+            if todo_idx < len(todo_subtask_lists):
+                todo_subtask_lists[todo_idx][idx - 1]["status"] = "running"
             log_orchestrator(f"  Subtask [{idx}/{len(subtasks)}]: {subtask}")
 
             previous_subtask_summary = context_manager.get_previous_subtask_summary(state)
@@ -223,6 +233,10 @@ class AgentOrchestrator:
                 state, subtask, idx, len(subtasks),
                 previous_subtask_summary, tool_definitions, system_prompt
             )
+
+            subtask_status = "completed" if result else "failed"
+            if todo_idx < len(todo_subtask_lists):
+                todo_subtask_lists[todo_idx][idx - 1]["status"] = subtask_status
 
             subtask_summary = self._generate_subtask_summary(state, subtask, result, tool_definitions, system_prompt)
             context_manager.save_subtask_summary(state, subtask, subtask_summary)
@@ -495,6 +509,8 @@ class AgentOrchestrator:
             "todo_list": state.get("todo_list", []),
             "current_todo_idx": state.get("current_todo_idx", 0),
             "todos_completed": state.get("todos_completed", []),
+            "todo_subtask_lists": state.get("todo_subtask_lists", []),
+            "current_subtask_idx": state.get("current_subtask_idx", 0),
             "subtask_status": state.get("subtask_status"),
             "subtask_history": state.get("subtask_history", []),
             "final_result": state.get("final_result", ""),

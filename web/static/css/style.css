@@ -783,7 +783,6 @@ select.form-control {
 }
 
 .todo-completed .todo-text {
-    text-decoration: line-through;
     color: var(--text-muted);
 }
 

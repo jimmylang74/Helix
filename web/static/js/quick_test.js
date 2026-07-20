@@ -1,0 +1,518 @@
+/**
+ * Quick Test JavaScript
+ * Handles test form submission, result display with tabs,
+ * run log, todo tree, and LLM streaming logs
+ *
+ * State is persisted in sessionStorage so navigating away and
+ * back preserves the in-progress request and form content.
+ */
+
+const STORAGE_KEY = 'qt_state';
+
+let currentRequestId = null;
+let autoRefreshTimer = null;
+let todoPollTimer = null;
+let isProcessing = false;
+
+function saveState() {
+    const data = {
+        requestId: currentRequestId,
+        requestType: document.getElementById('requestType')?.value || 'auto',
+        requestInput: document.getElementById('requestInput')?.value || '',
+        isProcessing,
+    };
+    try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+}
+
+function loadState() {
+    try {
+        const raw = sessionStorage.getItem(STORAGE_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+function clearState() {
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) {}
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    if (typeof i18nReady !== 'undefined') await i18nReady;
+    setupTestForm();
+    setupTabs();
+    loadRunLog();
+    startAutoRefreshLog();
+    restoreFromStorage();
+});
+
+async function restoreFromStorage() {
+    const saved = loadState();
+    if (!saved) return;
+
+    document.getElementById('requestType').value = saved.requestType || 'auto';
+    document.getElementById('requestInput').value = saved.requestInput || '';
+
+    if (saved.requestId && saved.isProcessing) {
+        const result = await apiCall('agent/status', { request_id: saved.requestId });
+        if (!result.success) {
+            clearState();
+            return;
+        }
+
+        currentRequestId = saved.requestId;
+        document.getElementById('resultId').textContent = `ID: ${currentRequestId}`;
+        setProcessing(true);
+        updateStatus('processing');
+        clearFinalResult();
+        startTodoPolling();
+        startFinalResultPolling();
+    } else if (saved.requestId) {
+        currentRequestId = saved.requestId;
+        document.getElementById('resultId').textContent = `ID: ${currentRequestId}`;
+        startTodoPolling();
+        startFinalResultPolling();
+    }
+}
+
+function setupTabs() {
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+        });
+    });
+}
+
+function setupTestForm() {
+    const form = document.getElementById('testForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const btnText = document.getElementById('btnText');
+    const btnSpinner = document.getElementById('btnSpinner');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const requestType = document.getElementById('requestType').value;
+        const requestInput = document.getElementById('requestInput').value;
+
+        if (!requestInput.trim()) {
+            showToast(__('qt.enterRequest'), 'error');
+            return;
+        }
+
+        setProcessing(true);
+        updateStatus('processing');
+        document.getElementById('resultIntent').textContent = '';
+        document.getElementById('resultId').textContent = '';
+        clearLlmLog();
+        clearFinalResult();
+
+        try {
+            await submitWithStreaming(requestType, requestInput);
+        } catch (error) {
+            updateStatus('error');
+            document.getElementById('resultId').textContent = '';
+            showToast(`${__('qt.failure')}: ${error.message}`, 'error');
+        } finally {
+            setProcessing(false);
+            saveState();
+        }
+    });
+
+    cancelBtn.addEventListener('click', () => {
+        setProcessing(false);
+        clearState();
+    });
+}
+
+async function submitWithStreaming(requestType, requestInput) {
+    const rpcId = `rpc_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    currentRequestId = rpcId;
+    document.getElementById('resultId').textContent = `ID: ${rpcId}`;
+    saveState();
+
+    const response = await fetch('/api/rpc', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: rpcId,
+            method: 'agent/router',
+            params: { request: requestInput, intent: requestType, rpc_id: rpcId },
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+        throw new Error(data.error.message || 'Request failed');
+    }
+
+    const result = data.result || {};
+
+    if (result.success) {
+        updateStatus('success');
+    } else {
+        updateStatus('error');
+    }
+
+    if (result.final_result) {
+        updateFinalResult(result.final_result, result.generated_files);
+    }
+
+    startTodoPolling();
+}
+
+function handleStreamEvent(event) {
+    switch (event.type) {
+        case 'thinking_delta':
+        case 'thinking':
+            addLlmLogEntry({ type: 'thinking', content: event.delta || event.content || '' });
+            break;
+        case 'thinking_end':
+            addLlmLogEntry({ type: 'thinking_end' });
+            break;
+        case 'assistant_delta':
+        case 'assistant':
+            addLlmLogEntry({ type: 'assistant', content: event.delta || event.content || '' });
+            break;
+        case 'assistant_end':
+            addLlmLogEntry({ type: 'assistant_end' });
+            break;
+        case 'tool_call_begin':
+        case 'tool_call_start':
+            addLlmLogEntry({ type: 'tool_call', name: event.name || '', id: event.id || '' });
+            break;
+        case 'tool_call_delta':
+            addLlmLogEntry({ type: 'tool_call_delta', id: event.id || '', content: event.delta || event.arguments || '' });
+            break;
+        case 'tool_call_end':
+        case 'tool_call_complete':
+            addLlmLogEntry({ type: 'tool_call_end', id: event.id || '', arguments: event.arguments || '' });
+            break;
+        case 'usage':
+            addLlmLogEntry({
+                type: 'usage',
+                prompt_tokens: event.prompt_tokens || 0,
+                completion_tokens: event.completion_tokens || 0,
+                reasoning_tokens: event.reasoning_tokens || 0,
+            });
+            break;
+        case 'done':
+        case 'complete':
+            addLlmLogEntry({ type: 'done', finish_reason: event.finish_reason || '' });
+            updateStatus('success');
+            break;
+        case 'error':
+            addLlmLogEntry({ type: 'error', message: event.message || event.error || 'Unknown error' });
+            updateStatus('error');
+            break;
+    }
+}
+
+function updateStatus(status) {
+    const el = document.getElementById('resultStatus');
+    switch (status) {
+        case 'processing':
+            el.textContent = __('qt.processing');
+            el.className = 'badge badge-info';
+            break;
+        case 'success':
+            el.textContent = __('qt.success');
+            el.className = 'badge badge-success';
+            break;
+        case 'error':
+            el.textContent = __('qt.error');
+            el.className = 'badge badge-danger';
+            break;
+        case 'idle':
+            el.textContent = __('qt.idle');
+            el.className = 'badge badge-secondary';
+            break;
+    }
+}
+
+function setProcessing(processing) {
+    isProcessing = processing;
+    const submitBtn = document.getElementById('submitBtn');
+    const btnText = document.getElementById('btnText');
+    const btnSpinner = document.getElementById('btnSpinner');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    if (processing) {
+        btnText.textContent = __('qt.processing');
+        btnSpinner.classList.remove('hidden');
+        submitBtn.disabled = true;
+        cancelBtn.style.display = 'inline-flex';
+    } else {
+        btnText.textContent = __('qt.sendRequest');
+        btnSpinner.classList.add('hidden');
+        submitBtn.disabled = false;
+        cancelBtn.style.display = 'none';
+        stopTodoPolling();
+        stopFinalResultPolling();
+    }
+}
+
+// ========== Run Log ==========
+
+async function loadRunLog() {
+    const lines = document.getElementById('logLines').value;
+    const result = await apiCall('logs.get', { lines: parseInt(lines) });
+    const container = document.getElementById('runLogContainer');
+
+    if (!result.success) {
+        container.innerHTML = `<div class="log-entry error">${__('qt.logLoadFailed')}${result.error}</div>`;
+        return;
+    }
+
+    const logs = result.logs || [];
+    if (logs.length === 0) {
+        container.innerHTML = `<div class="log-entry info">${__('qt.noLogs')}</div>`;
+        return;
+    }
+
+    container.innerHTML = logs.map(line =>
+        `<div class="log-entry ${getLogClass(line)}">${escapeHtml(line)}</div>`
+    ).join('');
+    container.scrollTop = container.scrollHeight;
+}
+
+function getLogClass(line) {
+    if (line.includes('[ERROR]')) return 'error';
+    if (line.includes('[WARN]')) return 'warn';
+    if (line.includes('[ORCH]') || line.includes('[Orchestrator]')) return 'orchestrator';
+    if (line.includes('[A→LLM]') || line.includes('[Agent→LLM]')) return 'agent_to_llm';
+    if (line.includes('[LLM→A]') || line.includes('[LLM→Agent]')) return 'llm_to_agent';
+    if (line.includes('[TOOL]') || line.includes('[Tool]')) return 'tool_call';
+    if (line.includes('[State]')) return 'state';
+    if (line.includes('[ACTION]') || line.includes('[Action]')) return 'agent_to_llm';
+    if (line.includes('[LLM-Decision]') || line.includes('[DECISION]')) return 'llm_to_agent';
+    return 'info';
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function toggleAutoRefreshLog() {
+    document.getElementById('autoRefreshLog').checked ? startAutoRefreshLog() : stopAutoRefreshLog();
+}
+
+function startAutoRefreshLog() {
+    stopAutoRefreshLog();
+    autoRefreshTimer = setInterval(loadRunLog, 3000);
+}
+
+function stopAutoRefreshLog() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+}
+
+// ========== Todo Tree ==========
+
+function startTodoPolling() {
+    stopTodoPolling();
+    todoPollTimer = setInterval(pollTodoState, 2000);
+}
+
+function stopTodoPolling() {
+    if (todoPollTimer) { clearInterval(todoPollTimer); todoPollTimer = null; }
+}
+
+async function pollTodoState() {
+    if (!currentRequestId) return;
+    try {
+        const result = await apiCall('agent/status', { request_id: currentRequestId });
+        if (result.success) renderTodoTree(result);
+    } catch (_) {}
+}
+
+function renderTodoTree(state) {
+    const container = document.getElementById('todoTreeContainer');
+    const todoList = state.todo_list || [];
+    const completed = state.todos_completed || [];
+    const currentIdx = state.current_todo_idx || 0;
+
+    if (todoList.length === 0) {
+        container.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
+        return;
+    }
+
+    let html = '<ul class="todo-list">';
+    todoList.forEach((todo, idx) => {
+        let statusClass = 'todo-pending';
+        let icon = '⬜';
+        if (idx < currentIdx) {
+            statusClass = 'todo-completed';
+            icon = '✅';
+        } else if (idx === currentIdx && state.subtask_status !== 'completed') {
+            statusClass = 'todo-running';
+            icon = '<span class="spinner-inline"></span>';
+        }
+        html += `<li class="todo-item ${statusClass}">
+            <div class="todo-header"><span class="todo-icon">${icon}</span><span class="todo-text">${escapeHtml(todo)}</span></div>`;
+        const subtaskHistory = state.subtask_history || [];
+        if (subtaskHistory.length > 0 && idx === currentIdx) {
+            html += '<ul class="subtask-list">';
+            subtaskHistory.forEach(st => {
+                const s = st.status === 'completed' ? '✅' : st.status === 'failed' ? '❌' : '<span class="spinner-inline"></span>';
+                html += `<li class="subtask-item">${s} ${escapeHtml(st.subtask || '')}</li>`;
+            });
+            html += '</ul>';
+        }
+        html += '</li>';
+    });
+    html += '</ul>';
+    container.innerHTML = html;
+}
+
+// ========== Final Result ==========
+
+let finalResultPollTimer = null;
+
+function startFinalResultPolling() {
+    stopFinalResultPolling();
+    finalResultPollTimer = setInterval(pollFinalResult, 2000);
+}
+
+function stopFinalResultPolling() {
+    if (finalResultPollTimer) { clearInterval(finalResultPollTimer); finalResultPollTimer = null; }
+}
+
+async function pollFinalResult() {
+    if (!currentRequestId) return;
+    try {
+        const result = await apiCall('agent/status', { request_id: currentRequestId });
+        if (result.success && result.final_result) {
+            updateFinalResult(result.final_result, result.generated_files);
+            stopFinalResultPolling();
+            setProcessing(false);
+            updateStatus('success');
+            saveState();
+        }
+    } catch (_) {}
+}
+
+function clearFinalResult() {
+    document.getElementById('finalResultContainer').innerHTML =
+        `<span class="text-muted">${__('qt.processingResult')}</span>`;
+    document.getElementById('resultFiles').innerHTML = '';
+}
+
+function updateFinalResult(content, files) {
+    if (content) {
+        document.getElementById('finalResultContainer').textContent = content;
+    }
+    if (files && files.length > 0) {
+        const filesDiv = document.getElementById('resultFiles');
+        if (filesDiv.children.length > 0) return;
+        const title = document.createElement('p');
+        title.textContent = __('qt.generatedFiles');
+        title.style.fontWeight = 'bold';
+        title.style.marginBottom = '8px';
+        filesDiv.appendChild(title);
+        files.forEach(file => {
+            const link = document.createElement('a');
+            link.href = `/output/${file.split('/').pop()}`;
+            link.textContent = file.split('/').pop();
+            link.target = '_blank';
+            filesDiv.appendChild(link);
+        });
+    }
+}
+
+// ========== LLM Log ==========
+
+function addLlmLogEntry(entry) {
+    const container = document.getElementById('llmLogContainer');
+    const autoScroll = document.getElementById('llmAutoScroll').checked;
+    const div = document.createElement('div');
+    div.className = `llm-log-entry llm-log-${entry.type}`;
+
+    switch (entry.type) {
+        case 'thinking':
+            div.innerHTML = `<span class="llm-log-thinking-label">💭 Thinking:</span> ${escapeHtml(entry.content)}`;
+            break;
+        case 'thinking_end':
+            div.innerHTML = '<span class="llm-log-thinking-label">💭 [end]</span>';
+            break;
+        case 'assistant':
+            div.innerHTML = `<span class="llm-log-assistant-label">🤖 Assistant:</span> ${escapeHtml(entry.content)}`;
+            break;
+        case 'assistant_end':
+            div.innerHTML = '<span class="llm-log-assistant-label">🤖 [end]</span>';
+            break;
+        case 'tool_call':
+            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Call:</span> <strong>${escapeHtml(entry.name)}</strong> (${entry.id})`;
+            break;
+        case 'tool_call_delta':
+            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Args:</span> ${escapeHtml(entry.content)}`;
+            break;
+        case 'tool_call_end':
+            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Complete:</span> ${entry.id}`;
+            break;
+        case 'usage':
+            div.innerHTML = `<span class="llm-log-usage-label">📊 Usage:</span> prompt=${entry.prompt_tokens}, completion=${entry.completion_tokens}, reasoning=${entry.reasoning_tokens}`;
+            break;
+        case 'done':
+            div.innerHTML = `<span class="llm-log-done-label">✅ Done:</span> ${entry.finish_reason || 'completed'}`;
+            break;
+        case 'error':
+            div.innerHTML = `<span class="llm-log-error-label">❌ Error:</span> ${escapeHtml(entry.message)}`;
+            break;
+        default:
+            div.innerHTML = `<span class="llm-log-unknown-label">[${entry.type}]</span> ${escapeHtml(JSON.stringify(entry))}`;
+    }
+
+    container.appendChild(div);
+    if (autoScroll) container.scrollTop = container.scrollHeight;
+}
+
+function clearLlmLog() {
+    document.getElementById('llmLogContainer').innerHTML = '';
+}
+
+// ========== Copy Result ==========
+
+document.getElementById('copyBtn')?.addEventListener('click', () => {
+    const container = document.getElementById('finalResultContainer');
+    if (container.textContent) {
+        navigator.clipboard.writeText(container.textContent)
+            .then(() => showToast(__('qt.copySuccess'), 'success'))
+            .catch(() => showToast(__('qt.copyError'), 'error'));
+    }
+});
+
+// ========== Utilities ==========
+
+function showToast(message, type = 'info') {
+    if (typeof window.showToast === 'function') {
+        window.showToast(message, type);
+    } else {
+        const toast = document.createElement('div');
+        toast.className = `toast toast-${type}`;
+        toast.textContent = message;
+        toast.style.cssText = `
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            padding: 12px 24px; border-radius: 8px;
+            color: white; font-size: 14px; z-index: 1000;
+            background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#17a2b8'};
+        `;
+        document.body.appendChild(toast);
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transition = 'opacity 0.5s';
+            setTimeout(() => toast.remove(), 500);
+        }, 3000);
+    }
+}

@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+    <h2 data-i18n="qt.title">快速测试</h2>
+    <p class="text-muted" data-i18n="qt.subtitle">测试 AI Agent 功能并查看实时结果</p>
+</div>
+
+<!-- Quick Test Form -->
+<div class="card">
+    <div class="card-header">
+        <h3 data-i18n="qt.formTitle">请求</h3>
+    </div>
+    <div class="card-body">
+        <form id="testForm">
+            <div class="form-group">
+                <label for="requestType" data-i18n="qt.requestType">请求类型</label>
+                <select id="requestType" class="form-control">
+                    <option value="auto" data-i18n="qt.autoDetect">自动识别</option>
+                    <option value="research" data-i18n="qt.smartSearch">智能搜索</option>
+                    <option value="ppt" data-i18n="qt.pptGeneration">PPT生成</option>
+                    <option value="coding" data-i18n="qt.codingGeneration">代码生成</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="requestInput" data-i18n="qt.requestContent">请求内容</label>
+                <textarea id="requestInput" class="form-control" rows="4"
+                    placeholder="请输入您的请求..." data-i18n-placeholder="qt.requestPlaceholder"></textarea>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <button type="submit" class="btn btn-primary" id="submitBtn">
+                    <span id="btnText" data-i18n="qt.sendRequest">发送请求</span>
+                    <span id="btnSpinner" class="spinner hidden">⟳</span>
+                </button>
+                <button type="button" class="btn btn-outline" id="cancelBtn" style="display: none;">
+                    <span data-i18n="qt.cancel">取消</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Results Card - Always Visible -->
+<div class="card" id="resultCard">
+    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <h3 data-i18n="qt.resultTitle">处理结果</h3>
+            <span class="badge badge-secondary" id="resultId"></span>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <span class="badge" id="resultStatus" data-i18n="qt.idle">空闲</span>
+            <span class="badge badge-info" id="resultIntent"></span>
+            <button class="btn btn-sm btn-outline" id="copyBtn" data-i18n="qt.copy">📋 复制</button>
+        </div>
+    </div>
+    <div class="card-body" style="padding: 0;">
+        <!-- Tabs -->
+        <div class="tabs" style="margin-bottom: 0; padding: 0 20px;">
+            <button class="tab-btn active" data-tab="result" data-i18n="qt.tabResult">最终结果</button>
+            <button class="tab-btn" data-tab="log" data-i18n="qt.tabLog">运行日志</button>
+            <button class="tab-btn" data-tab="todo" data-i18n="qt.tabTodo">任务清单</button>
+            <button class="tab-btn" data-tab="llm" data-i18n="qt.tabLlm">LLM日志</button>
+        </div>
+
+        <!-- Tab Contents -->
+        <div style="padding: 0 20px 20px;">
+            <!-- 最终结果 Tab -->
+            <div class="tab-content active" id="tab-result">
+                <div id="finalResultContainer" class="result-box" style="min-height: 120px;">
+                    <span class="text-muted" data-i18n="qt.waitingResult">等待请求...</span>
+                </div>
+                <div id="resultFiles" class="file-list"></div>
+            </div>
+
+            <!-- 运行日志 Tab -->
+            <div class="tab-content" id="tab-log">
+                <div class="log-controls">
+                    <label><span data-i18n="qt.logLines">显示行数：</span>
+                        <select id="logLines" onchange="loadRunLog()">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="200">200</option>
+                        </select>
+                    </label>
+                    <label>
+                        <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()">
+                        <span data-i18n="qt.autoRefresh">自动刷新</span>
+                    </label>
+                    <button class="btn btn-sm btn-outline" onclick="loadRunLog()" data-i18n="qt.refresh">🔄 刷新</button>
+                </div>
+                <div id="runLogContainer" class="log-container"></div>
+            </div>
+
+            <!-- 任务清单 Tab -->
+            <div class="tab-content" id="tab-todo">
+                <div id="todoTreeContainer" style="padding: 12px 0;">
+                    <div class="todo-empty" data-i18n="qt.noTasks">暂无任务</div>
+                </div>
+            </div>
+
+            <!-- LLM日志 Tab -->
+            <div class="tab-content" id="tab-llm">
+                <div class="llm-log-controls">
+                    <label>
+                        <input type="checkbox" id="llmAutoScroll" checked>
+                        <span data-i18n="qt.autoScroll">自动滚动</span>
+                    </label>
+                    <button class="btn btn-sm btn-outline" onclick="clearLlmLog()" data-i18n="qt.clearLog">🗑️ 清屏</button>
+                </div>
+                <div id="llmLogContainer" class="log-container llm-log-container"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/quick_test.js"></script>
+{% endblock %}

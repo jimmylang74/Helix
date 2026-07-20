@@ -65,6 +65,7 @@ POST /api/rpc
 |------|------|------|------|
 | request | string | ✅ | 用户请求内容 |
 | intent | string | | auto / ppt / research / coding (默认 auto) |
+| rpc_id | string | | 前端追踪ID（如 `rpc_xxx`），后端自动映射为内部 `req_id`，便于前端跨页面导航恢复状态 |
 | stream | bool | | 是否流式返回 (默认 false) |
 
 **Result**:
@@ -82,12 +83,13 @@ POST /api/rpc
 
 #### `agent/status`
 
-获取某个请求的当前处理状态。
+获取某个请求的当前处理状态。支持 `request_id` 或 `rpc_id` 查询（后端自动识别并转换）。
 
 **Params**:
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| request_id | string | ✅ | 请求ID |
+| request_id | string | | 内部请求ID（`req_xxx` 格式） |
+| rpc_id | string | | 前端追踪ID（`rpc_xxx` 格式），优先级高于 `request_id` |
 
 **Result**:
 ```json
@@ -362,14 +364,14 @@ POST /api/rpc
 # 发送Agent请求（自动识别）
 curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":"1","method":"agent/router","params":{"request":"请搜索2024年AI发展趋势","intent":"auto"}}'
+  -d '{"jsonrpc":"2.0","id":"1","method":"agent/router","params":{"request":"请搜索2024年AI发展趋势","intent":"auto","rpc_id":"rpc_abc123"}}'
 
 # 强制PPT生成
 curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":"2","method":"agent/router","params":{"request":"创建关于Python入门的PPT","intent":"ppt"}}'
+  -d '{"jsonrpc":"2.0","id":"2","method":"agent/router","params":{"request":"创建关于Python入门的PPT","intent":"ppt","rpc_id":"rpc_xyz789"}}'
 
-# 查询请求状态
+# 查询请求状态（支持 request_id 或 rpc_id）
 curl -X POST http://localhost:11555/api/rpc \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":"3","method":"agent/status","params":{"request_id":"req_abc123"}}'
@@ -422,13 +424,14 @@ def rpc_call(method, params=None, req_id="1"):
 # 发送请求
 result = rpc_call("agent/router", {
     "request": "搜索Python FastAPI教程",
-    "intent": "research"
+    "intent": "research",
+    "rpc_id": "rpc_py001"
 })
 print(result["result"]["final_result"])
 
-# 获取状态
+# 获取状态（支持 request_id 或 rpc_id）
 status = rpc_call("agent/status", {
-    "request_id": result["result"]["request_id"]
+    "rpc_id": "rpc_py001"
 })
 print(status)
 ```

@@ -53,21 +53,27 @@ async function restoreFromStorage() {
     document.getElementById('requestType').value = saved.requestType || 'auto';
     document.getElementById('requestInput').value = saved.requestInput || '';
 
-    if (saved.requestId && saved.isProcessing) {
-        const result = await apiCall('agent/status', { request_id: saved.requestId });
-        if (!result.success) {
-            clearState();
-            return;
-        }
+    if (!saved.requestId) return;
 
-        currentRequestId = saved.requestId;
+    // Always query backend for actual task status instead of relying on
+    // the locally-saved isProcessing flag, which may have been cleared
+    // when the page was navigated away from mid-request.
+    const result = await apiCall('agent/status', { request_id: saved.requestId });
+    if (!result.success) {
+        clearState();
+        return;
+    }
+
+    currentRequestId = saved.requestId;
+
+    if (result.final_result) {
+        updateStatus('success');
+        updateFinalResult(result.final_result, result.generated_files);
+        saveState();
+    } else {
         setProcessing(true);
         updateStatus('processing');
         clearFinalResult();
-        startTodoPolling();
-        startFinalResultPolling();
-    } else if (saved.requestId) {
-        currentRequestId = saved.requestId;
         startTodoPolling();
         startFinalResultPolling();
     }
@@ -105,7 +111,6 @@ function setupTestForm() {
         setProcessing(true);
         updateStatus('processing');
         document.getElementById('resultIntent').textContent = '';
-        document.getElementById('resultId').textContent = '';
         clearLlmLog();
         clearFinalResult();
 
@@ -113,7 +118,6 @@ function setupTestForm() {
             await submitWithStreaming(requestType, requestInput);
         } catch (error) {
             updateStatus('error');
-            document.getElementById('resultId').textContent = '';
             showToast(`${__('qt.failure')}: ${error.message}`, 'error');
         } finally {
             setProcessing(false);
@@ -132,40 +136,49 @@ async function submitWithStreaming(requestType, requestInput) {
     currentRequestId = rpcId;
     saveState();
 
-    const response = await fetch('/api/rpc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-        body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: rpcId,
-            method: 'agent/router',
-            params: { request: requestInput, intent: requestType, rpc_id: rpcId },
-        }),
-    });
+    console.log(`[DEBUG] submitWithStreaming called: rpcId=${rpcId}, intent=${requestType}`);
 
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    try {
+        const response = await fetch('/api/rpc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: rpcId,
+                method: 'agent/router',
+                params: { request: requestInput, intent: requestType, rpc_id: rpcId },
+            }),
+        });
+
+        console.log(`[DEBUG] fetch response received: status=${response.status}, ok=${response.ok}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.error) {
+            throw new Error(data.error.message || 'Request failed');
+        }
+
+        const result = data.result || {};
+
+        if (result.success) {
+            updateStatus('success');
+        } else {
+            updateStatus('error');
+        }
+
+        if (result.final_result) {
+            updateFinalResult(result.final_result, result.generated_files);
+        }
+
+        startTodoPolling();
+    } catch (error) {
+        console.error(`[DEBUG] submitWithStreaming error:`, error);
+        throw error;
     }
-
-    const data = await response.json();
-
-    if (data.error) {
-        throw new Error(data.error.message || 'Request failed');
-    }
-
-    const result = data.result || {};
-
-    if (result.success) {
-        updateStatus('success');
-    } else {
-        updateStatus('error');
-    }
-
-    if (result.final_result) {
-        updateFinalResult(result.final_result, result.generated_files);
-    }
-
-    startTodoPolling();
 }
 
 function handleStreamEvent(event) {

@@ -407,6 +407,7 @@ def rpc_dispatch():
     Error:
         {"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"..."}}
     """
+    log_info(f"[DEBUG] rpc_dispatch called - method={request.method}, path={request.path}")
     rpc_id = _rpc_id()
 
     # --- Parse body --------------------------------------------------
@@ -431,6 +432,8 @@ def rpc_dispatch():
         return _rpc_error(INVALID_PARAMS, "'params' must be an object", rpc_id)
 
     # --- Dispatch ----------------------------------------------------
+    if method != "logs.get":
+        log_info(f"[DEBUG] rpc_dispatch method={method}, params_keys={list(params.keys()) if params else []}")
     handler = METHODS.get(method)
     if handler is None:
         available = ", ".join(sorted(METHODS.keys()))

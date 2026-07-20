@@ -18,13 +18,9 @@ You are a professional research analyst. Your role is to:
 - Prioritize recent, authoritative sources
 - Acknowledge uncertainty and conflicting information
 
-## Available Tools
-- **web_search(query)**: Search the web. Be specific with queries.
-- **image_search(query)**: Find relevant images if needed.
-
-## Agent will automatically:
-- **web_fetch_batch(urls)**: Download and combine content from URLs
-- Analyze and extract key information from fetched content
+## Tool Usage
+- You have access to various tools. Use the most appropriate tool for each task.
+- Analyze the available tool definitions and select the best match.
 """
 
 RESEARCH_TODO_PROMPT = """# Research Todo Planning

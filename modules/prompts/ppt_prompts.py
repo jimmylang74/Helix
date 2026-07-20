@@ -17,15 +17,6 @@ You are a professional presentation designer and content strategist. Your role i
 - Appropriate use of visuals and whitespace
 - Content that supports the narrative
 - Accessible and readable typography
-
-## Available Tools
-- **image_search(query)**: Find background images or illustrations
-- **web_search(query)**: Research additional context if needed
-
-## Agent will automatically:
-- **web_fetch_batch(urls)**: Download reference content
-- **image_download(urls)**: Save images locally
-- **create_ppt(config)**: Generate the final PowerPoint
 """
 
 PPT_TODO_PROMPT = """# PPT Generation Todo Planning

@@ -61,7 +61,6 @@ async function restoreFromStorage() {
         }
 
         currentRequestId = saved.requestId;
-        document.getElementById('resultId').textContent = `ID: ${currentRequestId}`;
         setProcessing(true);
         updateStatus('processing');
         clearFinalResult();
@@ -69,7 +68,6 @@ async function restoreFromStorage() {
         startFinalResultPolling();
     } else if (saved.requestId) {
         currentRequestId = saved.requestId;
-        document.getElementById('resultId').textContent = `ID: ${currentRequestId}`;
         startTodoPolling();
         startFinalResultPolling();
     }
@@ -132,7 +130,6 @@ function setupTestForm() {
 async function submitWithStreaming(requestType, requestInput) {
     const rpcId = `rpc_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     currentRequestId = rpcId;
-    document.getElementById('resultId').textContent = `ID: ${rpcId}`;
     saveState();
 
     const response = await fetch('/api/rpc', {

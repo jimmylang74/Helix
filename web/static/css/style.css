@@ -856,3 +856,40 @@ select.form-control {
 .llm-log-tool_call_end { color: var(--text-muted); font-style: italic; }
 
 .llm-log-unknown-label { color: #9e9e9e; }
+
+/* Quick Test - unified flex-height tab content */
+#resultCard .tab-content.active {
+    height: 600px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+#resultCard .tab-content.active .result-box,
+#resultCard .tab-content.active .log-container,
+#resultCard .tab-content.active .llm-log-container {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+    overflow-y: auto;
+}
+
+#resultCard .tab-content.active .log-controls,
+#resultCard .tab-content.active .llm-log-controls {
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+#resultCard .card-body {
+    padding: 0;
+}
+
+#resultCard,
+#todoCard {
+    margin-bottom: 0;
+}
+
+#resultCard + .card textarea.form-control {
+    min-height: auto;
+    resize: none;
+}

@@ -46,6 +46,8 @@
 - **分层上下文管理**: Todo摘要 → Subtask摘要 → 对话历史，逐层传递避免上下文污染
 - **LLM驱动决策**: LLM负责意图识别、任务分解、工具调用判断、数据分析、结果总结
 - **三种预置Agent**: PPT生成、智能搜索、代码生成
+- **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
+- **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash)
 - **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看
@@ -176,6 +178,10 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── code_tools.py          #   代码工具 (save_code, run_code)
 │   ├── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
 │   └── user/                  #   外部插件 (用户自定义, 来源标记为 "外部插件")
+│       ├── __init__.py
+│       ├── plugin.md          #     插件编写指南
+│       ├── weather_tool.py    #     示例: 天气查询工具
+│       └── calculator_tool.py #     示例: 安全计算器工具
 ├── mcp/                       # MCP Server 实现 (stdio 传输)
 │   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
 │   └── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)
@@ -215,6 +221,31 @@ python3 test_agent.py
 - 同时输出到屏幕和控制台文件 `debugout.log`
 - 颜色标识: 蓝色(Agent→LLM), 绿色(LLM→Agent), 青色(Tool调用), 黄色(Orchestrator状态)
 - 管理控制台提供Web日志查看器
+
+## 外部插件开发
+
+在 `plugins/user/` 目录下放入 `.py` 文件即可自动注册为工具，来源标记为 `"外部插件"`，与内置插件区分。
+
+**快速上手**：继承 `BaseTool`，实现 `execute()` 方法，定义 `name`/`description`/`intents`/`parameters`，重启服务即可生效。
+
+```python
+from modules.agents.tool_base import BaseTool
+
+class MyTool(BaseTool):
+    name = "my_tool"
+    description = "工具说明，LLM 根据此描述决定是否调用"
+    intents = ["research"]  # 绑定意图，["*"] 表示所有意图可用
+    parameters = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "参数说明"}},
+        "required": ["query"]
+    }
+
+    def execute(self, query: str = "", **kwargs) -> str:
+        return f"结果: {query}"
+```
+
+完整指南和更多示例见 [plugins/user/plugin.md](plugins/user/plugin.md)。
 
 ## 版权
 MIT

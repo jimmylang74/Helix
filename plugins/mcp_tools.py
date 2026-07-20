@@ -12,15 +12,18 @@ from modules.utils.logger import log_tool_call, log_error, log_info
 class MCPToolAdapter(BaseTool):
     """Adapter that wraps an MCP tool as a BaseTool for unified registry management."""
 
-    source = "MCP"
+    source = "MCP (内置)"
+    _builtin_servers = {"searxng", "image_search"}
 
     def __init__(self, tool_name: str, description: str, input_schema: dict[str, Any],
-                 intents: list[str] | None = None):
+                 intents: list[str] | None = None, server_name: str = ""):
         super().__init__()
         self.name = tool_name
         self.description = description
         self.parameters = input_schema
         self.intents = intents or []
+        if server_name and server_name not in self._builtin_servers:
+            self.source = "MCP (外部)"
 
     def execute(self, **kwargs) -> Any:
         log_tool_call(f"MCP adapter: {self.name}({kwargs})")
@@ -58,6 +61,7 @@ def register_mcp_tools(tool_registry):
                     description=t["description"],
                     input_schema=t["input_schema"],
                     intents=saved_cfg.get("intents", []),
+                    server_name=server_name,
                 )
                 if "enabled" in saved_cfg:
                     adapter.enabled = saved_cfg["enabled"]

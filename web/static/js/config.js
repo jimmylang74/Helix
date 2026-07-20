@@ -648,6 +648,13 @@ async function saveServerConfig() {
 let allPlugins = [];
 let currentPluginDetail = null;
 
+function sourceBadgeClass(source) {
+    if (source === 'MCP (内置)') return 'badge-source-mcp-builtin';
+    if (source === 'MCP (外部)') return 'badge-source-mcp-external';
+    if (source === '外部插件') return 'badge-source-external';
+    return 'badge-source-internal';
+}
+
 async function loadPlugins() {
     const result = await apiCall('plugins.get');
     const tbody = document.getElementById('pluginsTable');
@@ -687,7 +694,7 @@ function renderPluginsTable(tools) {
             <td><code>${tool.name}</code></td>
             <td><span class="badge badge-info">${intents}</span></td>
             <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tool.description}">${tool.description}</td>
-            <td><span class="badge badge-secondary">${source}</span></td>
+            <td><span class="badge ${sourceBadgeClass(source)}">${source}</span></td>
             <td><span class="badge ${tool.enabled ? 'badge-success' : 'badge-danger'}">${tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled')}</span></td>
             <td>
                 <button class="btn btn-sm btn-outline" onclick="showPluginDetail('${tool.name}')">${__('config.plugins.details')}</button>
@@ -736,8 +743,9 @@ function showPluginDetail(name) {
     document.getElementById('pluginDetailDesc').textContent = tool.description;
 
     const sourceBadge = document.getElementById('pluginDetailSource');
-    sourceBadge.textContent = tool.source || '内部插件';
-    sourceBadge.className = 'badge badge-secondary';
+    const pluginSource = tool.source || '内部插件';
+    sourceBadge.textContent = pluginSource;
+    sourceBadge.className = 'badge ' + sourceBadgeClass(pluginSource);
 
     const statusBadge = document.getElementById('pluginDetailStatus');
     statusBadge.textContent = tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled');

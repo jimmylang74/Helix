@@ -415,6 +415,32 @@ select.form-control {
     color: #c62828;
 }
 
+/* Plugin source badges */
+.badge-source-internal {
+    background: #e0f2f1;
+    color: #00695c;
+}
+
+.badge-source-external {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.badge-source-mcp {
+    background: #f3e5f5;
+    color: #6a1b9a;
+}
+
+.badge-source-mcp-builtin {
+    background: #e8eaf6;
+    color: #283593;
+}
+
+.badge-source-mcp-external {
+    background: #fce4ec;
+    color: #ad1457;
+}
+
 /* Results */
 .result-meta {
     display: flex;

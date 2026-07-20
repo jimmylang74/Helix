@@ -189,6 +189,7 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── templates/             #   HTML 模板
 │   │   ├── base.html          #     基础布局
 │   │   ├── dashboard.html     #     仪表盘
+│   │   ├── quick_test.html    #     快速测试
 │   │   ├── config.html        #     配置管理
 │   │   ├── logs.html          #     日志查看
 │   │   └── history.html       #     请求历史
@@ -197,6 +198,7 @@ curl -X POST http://localhost:11555/api/rpc \
 │   │   └── js/                #     JavaScript
 │   │       ├── main.js        #       主逻辑
 │   │       ├── dashboard.js   #       仪表盘
+│   │       ├── quick_test.js  #       快速测试
 │   │       ├── config.js      #       配置管理
 │   │       ├── logs.js        #       日志查看
 │   │       ├── history.js     #       请求历史

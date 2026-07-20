@@ -33,7 +33,8 @@ async function i18nLoadLocale(lang) {
   try {
     const resp = await fetch(`${i18nLocaleUrlPrefix}/${lang}`);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    i18nLocaleData = await resp.json();
+    const data = await resp.json();
+    i18nLocaleData = data.result || data;
     i18nCurrentLang = lang;
     i18nTranslatePage();
   } catch (e) {

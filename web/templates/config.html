@@ -346,6 +346,19 @@
         </div>
     </div>
 </div>
+
+<!-- Confirm Dialog Modal -->
+<div id="confirmModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1001;align-items:center;justify-content:center;" onclick="if(event.target===this)closeConfirmModal(false)">
+    <div style="background:white;border-radius:8px;padding:24px;max-width:400px;width:90%;box-shadow:0 4px 20px rgba(0,0,0,0.15);" onclick="event.stopPropagation()">
+        <h3 id="confirmModalTitle" style="margin-bottom:12px;font-size:16px;"></h3>
+        <p id="confirmModalMessage" style="margin-bottom:20px;color:var(--text-muted);font-size:14px;line-height:1.5;"></p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+            <button class="btn btn-outline" onclick="closeConfirmModal(false)" data-i18n="config.mcp.cancel">取消</button>
+            <button class="btn btn-danger" onclick="closeConfirmModal(true)" data-i18n="config.mcp.delete">删除</button>
+        </div>
+    </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}

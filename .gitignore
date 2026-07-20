@@ -8,3 +8,4 @@ Helix.json
 .git-credential-helper.sh
 llm_engine.log
 .omo/
+.playwright-mcp/

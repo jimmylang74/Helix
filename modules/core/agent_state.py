@@ -28,6 +28,10 @@ class AgentState(TypedDict, total=False):
     current_todo_idx: int
     todos_completed: List[Dict[str, Any]]
 
+    # Per-todo subtask tracking (parallel to todo_list)
+    todo_subtask_lists: List[List[Dict[str, Any]]]
+    current_subtask_idx: int  # index of running subtask within current todo's subtask list
+
     # Subtask execution
     current_subtask: str
     subtask_context: str
@@ -67,6 +71,9 @@ def create_initial_state(user_request: str, request_id: str) -> AgentState:
         "todo_list": [],
         "current_todo_idx": -1,
         "todos_completed": [],
+
+        "todo_subtask_lists": [],
+        "current_subtask_idx": 0,
 
         "current_subtask": "",
         "subtask_context": "",

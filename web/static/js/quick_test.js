@@ -111,21 +111,26 @@ function setupTestForm() {
         setProcessing(true);
         updateStatus('processing');
         document.getElementById('resultIntent').textContent = '';
+        document.getElementById('todoTreeContainer').innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearLlmLog();
         clearFinalResult();
 
         try {
             await submitWithStreaming(requestType, requestInput);
         } catch (error) {
+            stopTodoPolling();
+            stopFinalResultPolling();
+            setProcessing(false);
             updateStatus('error');
             showToast(`${__('qt.failure')}: ${error.message}`, 'error');
         } finally {
-            setProcessing(false);
             saveState();
         }
     });
 
     cancelBtn.addEventListener('click', () => {
+        stopTodoPolling();
+        stopFinalResultPolling();
         setProcessing(false);
         clearState();
     });
@@ -135,6 +140,9 @@ async function submitWithStreaming(requestType, requestInput) {
     const rpcId = `rpc_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
     currentRequestId = rpcId;
     saveState();
+
+    startTodoPolling();
+    startFinalResultPolling();
 
     console.log(`[DEBUG] submitWithStreaming called: rpcId=${rpcId}, intent=${requestType}`);
 
@@ -161,20 +169,6 @@ async function submitWithStreaming(requestType, requestInput) {
         if (data.error) {
             throw new Error(data.error.message || 'Request failed');
         }
-
-        const result = data.result || {};
-
-        if (result.success) {
-            updateStatus('success');
-        } else {
-            updateStatus('error');
-        }
-
-        if (result.final_result) {
-            updateFinalResult(result.final_result, result.generated_files);
-        }
-
-        startTodoPolling();
     } catch (error) {
         console.error(`[DEBUG] submitWithStreaming error:`, error);
         throw error;
@@ -267,8 +261,6 @@ function setProcessing(processing) {
         btnSpinner.classList.add('hidden');
         submitBtn.disabled = false;
         cancelBtn.style.display = 'none';
-        stopTodoPolling();
-        stopFinalResultPolling();
     }
 }
 
@@ -350,8 +342,9 @@ async function pollTodoState() {
 function renderTodoTree(state) {
     const container = document.getElementById('todoTreeContainer');
     const todoList = state.todo_list || [];
-    const completed = state.todos_completed || [];
     const currentIdx = state.current_todo_idx || 0;
+    const todoSubtaskLists = state.todo_subtask_lists || [];
+    const subtaskStatus = state.subtask_status || 'idle';
 
     if (todoList.length === 0) {
         container.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
@@ -364,19 +357,22 @@ function renderTodoTree(state) {
         let icon = '⬜';
         if (idx < currentIdx) {
             statusClass = 'todo-completed';
-            icon = '✅';
-        } else if (idx === currentIdx && state.subtask_status !== 'completed') {
+            icon = '✓';
+        } else if (idx === currentIdx && subtaskStatus !== 'completed') {
             statusClass = 'todo-running';
             icon = '<span class="spinner-inline"></span>';
         }
         html += `<li class="todo-item ${statusClass}">
             <div class="todo-header"><span class="todo-icon">${icon}</span><span class="todo-text">${escapeHtml(todo)}</span></div>`;
-        const subtaskHistory = state.subtask_history || [];
-        if (subtaskHistory.length > 0 && idx === currentIdx) {
+        const subtasks = todoSubtaskLists[idx] || [];
+        if (subtasks.length > 0) {
             html += '<ul class="subtask-list">';
-            subtaskHistory.forEach(st => {
-                const s = st.status === 'completed' ? '✅' : st.status === 'failed' ? '❌' : '<span class="spinner-inline"></span>';
-                html += `<li class="subtask-item">${s} ${escapeHtml(st.subtask || '')}</li>`;
+            subtasks.forEach((st) => {
+                let sIcon = '⬜';
+                if (st.status === 'completed') sIcon = '✓';
+                else if (st.status === 'failed') sIcon = '✗';
+                else if (st.status === 'running') sIcon = '<span class="spinner-inline"></span>';
+                html += `<li class="subtask-item">${sIcon} ${escapeHtml(st.subtask || '')}</li>`;
             });
             html += '</ul>';
         }
@@ -405,6 +401,7 @@ async function pollFinalResult() {
         const result = await apiCall('agent/status', { request_id: currentRequestId });
         if (result.success && result.final_result) {
             updateFinalResult(result.final_result, result.generated_files);
+            stopTodoPolling();
             stopFinalResultPolling();
             setProcessing(false);
             updateStatus('success');

@@ -6,6 +6,7 @@
 let currentEditServer = null;
 let llmProviderInfo = {};
 let llmLogPollTimer = null;
+let confirmModalResolve = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadLLMProviders();
@@ -25,6 +26,23 @@ function setupTabs() {
             document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
         });
     });
+}
+
+function showConfirmDialog(title, message) {
+    return new Promise(resolve => {
+        confirmModalResolve = resolve;
+        document.getElementById('confirmModalTitle').textContent = title;
+        document.getElementById('confirmModalMessage').textContent = message;
+        document.getElementById('confirmModal').style.display = 'flex';
+    });
+}
+
+function closeConfirmModal(result) {
+    document.getElementById('confirmModal').style.display = 'none';
+    if (confirmModalResolve) {
+        confirmModalResolve(result);
+        confirmModalResolve = null;
+    }
 }
 
 async function loadConfig() {
@@ -353,6 +371,7 @@ async function saveBuiltinMCPSearxng() {
     if (result.success) {
         showToast(__('config.mcp.srcSaveSuccess'), 'success');
         loadMCPServers();
+        loadPlugins(); // Refresh plugin list to reflect MCP tool changes
     } else {
         showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
@@ -376,6 +395,7 @@ async function saveBuiltinMCPImageSearch() {
     if (result.success) {
         showToast(__('config.mcp.imgSaveSuccess'), 'success');
         loadMCPServers();
+        loadPlugins(); // Refresh plugin list to reflect MCP tool changes
     } else {
         showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
@@ -507,17 +527,23 @@ async function saveCustomMCPServer() {
         showToast(__('config.mcp.saved', {name}), 'success');
         closeMCPServerModal();
         loadMCPServers();
+        loadPlugins(); // Refresh plugin list to reflect new MCP tools
     } else {
         showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
     }
 }
 
 async function deleteCustomMCPServer(name) {
-    if (!confirm(__('config.mcp.confirmDelete', {name}))) return;
+    const confirmed = await showConfirmDialog(
+        __('config.mcp.confirmDeleteTitle'),
+        __('config.mcp.confirmDelete', {name})
+    );
+    if (!confirmed) return;
     const result = await apiCall('mcp.servers.delete', { name });
     if (result.success) {
         showToast(__('config.mcp.deleted', {name}), 'success');
         loadMCPServers();
+        loadPlugins(); // Refresh plugin list to remove deleted MCP tools
     } else {
         showToast(__('config.mcp.deleteFailed'), 'error');
     }
@@ -581,7 +607,11 @@ async function toggleIntent(intentId) {
 }
 
 async function deleteIntent(intentId) {
-    if (!confirm(__('config.intents.confirmDelete', {id: intentId}))) return;
+    const confirmed = await showConfirmDialog(
+        __('config.intents.confirmDeleteTitle'),
+        __('config.intents.confirmDelete', {id: intentId})
+    );
+    if (!confirmed) return;
     const result = await apiCall('intents.delete', { intent_type: intentId });
     if (result.success) { loadIntents(); showToast(__('config.intents.deleted'), 'success'); }
     else { showToast(__('config.intents.deleteFailed'), 'error'); }

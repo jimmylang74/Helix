@@ -492,8 +492,13 @@ class AgentOrchestrator:
             "orchestrator_phase": state.get("orchestrator_phase"),
             "todo_progress": get_todo_progress(state),
             "current_todo": get_current_todo(state),
+            "todo_list": state.get("todo_list", []),
+            "current_todo_idx": state.get("current_todo_idx", 0),
+            "todos_completed": state.get("todos_completed", []),
             "subtask_status": state.get("subtask_status"),
-            "generated_files": state.get("generated_files"),
+            "subtask_history": state.get("subtask_history", []),
+            "final_result": state.get("final_result", ""),
+            "generated_files": state.get("generated_files", []),
             "error": state.get("error"),
         }
 

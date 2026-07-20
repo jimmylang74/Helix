@@ -22,6 +22,9 @@ from modules.utils.logger import log_info, log_error
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
+# rpc_id → req_id mapping (frontend uses rpc_id to track requests)
+_rpc_to_req = {}
+
 
 # ============================================================
 # JSON-RPC 2.0 Error Codes (per spec)
@@ -84,7 +87,10 @@ def _agent_router(params):
     if forced_intent != "auto" and forced_intent not in ("ppt", "research", "coding"):
         raise ValueError(f"Invalid intent: {forced_intent}. Must be one of: auto, ppt, research, coding")
 
+    rpc_id = params.get("rpc_id", "")
     request_id = f"req_{uuid.uuid4().hex[:12]}"
+    if rpc_id:
+        _rpc_to_req[rpc_id] = request_id
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
 
     effective = f"[Intent: {forced_intent}] {user_request}" if forced_intent != "auto" else user_request
@@ -96,6 +102,8 @@ def _agent_status(params):
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
     state = orchestrator.get_state(request_id)
+    if not state and request_id in _rpc_to_req:
+        state = orchestrator.get_state(_rpc_to_req[request_id])
     if not state:
         raise ValueError(f"Request '{request_id}' not found")
     return state
@@ -448,6 +456,10 @@ def create_admin_routes(app):
     @app.route("/")
     def index():
         return render_template("dashboard.html")
+
+    @app.route("/quick-test")
+    def quick_test_page():
+        return render_template("quick_test.html")
 
     @app.route("/config")
     def config_page():

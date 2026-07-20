@@ -17,16 +17,6 @@ You are a senior software engineer. Your role is to:
 - Include error handling and edge cases
 - Add meaningful comments and documentation
 - Write tests to verify functionality
-
-## Available Tools
-- **web_search(query)**: Search for documentation, examples, or solutions
-
-## Agent will automatically:
-- **web_fetch_batch(urls)**: Fetch documentation or reference material
-- **write_file(path, content)**: Create source files
-- **read_file(path)**: Read existing files
-- **bash(command)**: Run commands (compile, test, execute)
-- **create_file(path)**: Create empty files
 """
 
 CODING_TODO_PROMPT = """# Coding Todo Planning

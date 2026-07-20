@@ -38,52 +38,8 @@
 
 <div class="card">
     <div class="card-header">
-        <h3 data-i18n="dashboard.quickTest">快速测试</h3>
+        <h3 data-i18n="dashboard.systemInfo">系统信息</h3>
     </div>
-    <div class="card-body">
-        <form id="testForm">
-            <div class="form-group">
-                <label for="requestType" data-i18n="dashboard.requestType">请求类型</label>
-                <select id="requestType" class="form-control">
-                    <option value="auto" data-i18n="dashboard.autoDetect">自动识别</option>
-                    <option value="research" data-i18n="dashboard.smartSearch">智能搜索</option>
-                    <option value="ppt" data-i18n="dashboard.pptGeneration">PPT生成</option>
-                    <option value="coding" data-i18n="dashboard.codingGeneration">代码生成</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label for="requestInput" data-i18n="dashboard.requestContent">请求内容</label>
-                <textarea id="requestInput" class="form-control" rows="4"
-                    placeholder="请输入您的请求..." data-i18n-placeholder="dashboard.requestPlaceholder"></textarea>
-            </div>
-            <button type="submit" class="btn btn-primary" id="submitBtn">
-                <span id="btnText" data-i18n="dashboard.sendRequest">发送请求</span>
-                <span id="btnSpinner" class="spinner hidden">⟳</span>
-            </button>
-        </form>
-    </div>
-</div>
-
-<div class="card" id="resultCard" style="display: none;">
-        <div class="card-header">
-            <h3 data-i18n="dashboard.resultTitle">处理结果</h3>
-            <button class="btn btn-sm btn-outline" onclick="copyResult()" data-i18n="dashboard.copy">📋 复制</button>
-        </div>
-    <div class="card-body">
-        <div class="result-meta">
-            <span class="badge" id="resultStatus" data-i18n="dashboard.waitingResponse">处理中...</span>
-            <span class="badge badge-info" id="resultIntent"></span>
-            <span class="badge badge-secondary" id="resultId"></span>
-        </div>
-        <pre id="resultContent" class="result-box"></pre>
-        <div id="resultFiles" class="file-list"></div>
-    </div>
-</div>
-
-<div class="card">
-        <div class="card-header">
-            <h3 data-i18n="dashboard.systemInfo">系统信息</h3>
-        </div>
     <div class="card-body">
         <div class="info-grid" id="systemInfo">
             <div class="info-item">

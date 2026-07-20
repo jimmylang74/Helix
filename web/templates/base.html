@@ -21,6 +21,9 @@
             <li><a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
                 <span class="nav-icon">📊</span> <span data-i18n="nav.dashboard">仪表盘</span>
             </a></li>
+            <li><a href="/quick-test" class="nav-link {% if request.path == '/quick-test' %}active{% endif %}">
+                <span class="nav-icon">🧪</span> <span data-i18n="nav.quickTest">快速测试</span>
+            </a></li>
             <li><a href="/config" class="nav-link {% if request.path == '/config' %}active{% endif %}">
                 <span class="nav-icon">⚙️</span> <span data-i18n="nav.config">配置管理</span>
             </a></li>

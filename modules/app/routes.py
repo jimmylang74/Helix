@@ -407,7 +407,6 @@ def rpc_dispatch():
     Error:
         {"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"..."}}
     """
-    log_info(f"[DEBUG] rpc_dispatch called - method={request.method}, path={request.path}")
     rpc_id = _rpc_id()
 
     # --- Parse body --------------------------------------------------

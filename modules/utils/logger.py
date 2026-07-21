@@ -127,6 +127,10 @@ def log_state(msg: str):
     _write(f"[State] {msg}", Colors.STATE, "STATE")
 
 
+def log_debug(msg: str):
+    _write(f"[DEBUG] {msg}", Colors.GRAY, "DEBUG")
+
+
 def log_section(title: str):
     """Print a section divider."""
     divider = "=" * 60

@@ -17,7 +17,9 @@ from modules.agents.intent_router import intent_router
 from modules.agents.tool_base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
-from modules.utils.logger import log_info, log_error
+from modules.utils.logger import log_info, log_error, log_debug
+
+HIGH_FREQ_METHODS = {"agent/status", "logs.get"}
 
 # Blueprints
 api_bp = Blueprint("api", __name__, url_prefix="/api")
@@ -171,7 +173,7 @@ def _intents_delete(params):
 
 def _logs_get(params):
     log_file = params.get("file", "debugout.log")
-    lines    = int(params.get("lines", 200))
+    lines    = int(params.get("lines", 0))
     log_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         log_file,
@@ -181,7 +183,7 @@ def _logs_get(params):
     with open(log_path, "r", encoding="utf-8") as f:
         all_lines = f.readlines()
     return {
-        "logs": all_lines[-lines:],
+        "logs": all_lines[-lines:] if lines > 0 else all_lines,
         "total_lines": len(all_lines),
         "file": log_file,
     }
@@ -443,8 +445,8 @@ def rpc_dispatch():
         return _rpc_error(INVALID_PARAMS, "'params' must be an object", rpc_id)
 
     # --- Dispatch ----------------------------------------------------
-    if method != "logs.get":
-        log_info(f"[DEBUG] rpc_dispatch method={method}, params_keys={list(params.keys()) if params else []}")
+    if method not in HIGH_FREQ_METHODS:
+        log_debug(f"rpc_dispatch method={method}, params_keys={list(params.keys()) if params else []}")
     handler = METHODS.get(method)
     if handler is None:
         available = ", ".join(sorted(METHODS.keys()))

@@ -128,10 +128,23 @@ function setupTestForm() {
         }
     });
 
-    cancelBtn.addEventListener('click', () => {
+    cancelBtn.addEventListener('click', async () => {
+        if (currentRequestId) {
+            try {
+                await apiCall('agent/cancel', { request_id: currentRequestId });
+            } catch (_) {}
+        }
         stopTodoPolling();
         stopFinalResultPolling();
         setProcessing(false);
+        updateStatus('idle');
+        document.getElementById('resultIntent').textContent = '';
+        document.getElementById('todoTreeContainer').innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
+        document.getElementById('finalResultContainer').innerHTML =
+            `<span class="text-muted">${__('qt.waitingResult')}</span>`;
+        document.getElementById('resultFiles').innerHTML = '';
+        clearLlmLog();
+        currentRequestId = null;
         clearState();
     });
 }

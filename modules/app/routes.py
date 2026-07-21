@@ -123,6 +123,21 @@ def _agent_status(params):
     return state
 
 
+def _agent_cancel(params):
+    request_id = params.get("request_id", "")
+    if not request_id:
+        raise ValueError("Missing 'request_id' in params")
+
+    cancelled = orchestrator.cancel_request(request_id)
+    if not cancelled and request_id in _rpc_to_req:
+        cancelled = orchestrator.cancel_request(_rpc_to_req[request_id])
+
+    if not cancelled:
+        raise ValueError(f"Request '{request_id}' not found or already completed")
+
+    return {"success": True, "message": "Request cancelled"}
+
+
 # ---- Config ----
 
 def _config_get(params):
@@ -372,6 +387,7 @@ METHODS = {
     # Agent
     "agent/router":        _agent_router,
     "agent/status":        _agent_status,
+    "agent/cancel":        _agent_cancel,
     # Config
     "config.get":          _config_get,
     "config.update":       _config_update,

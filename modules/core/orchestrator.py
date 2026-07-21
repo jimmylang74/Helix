@@ -171,6 +171,10 @@ class AgentOrchestrator:
 
         loop_count = 0
         while not todo_manager.is_finished(state):
+            if self.is_cancelled(state):
+                log_orchestrator("Todo loop cancelled by user")
+                break
+
             loop_count += 1
             if loop_count > state.get("max_todo_loops", 50):
                 state["error"] = "Max todo loops exceeded"
@@ -296,6 +300,10 @@ class AgentOrchestrator:
         context_manager.reset_conversation(state)
 
         for iteration in range(1, max_iterations + 1):
+            if self.is_cancelled(state):
+                log_orchestrator("Subtask loop cancelled by user")
+                break
+
             collected = state.get("collected_data", [])
             collected_summary = "\n".join(d[:500] for d in collected[-3:]) if collected else "(none)"
 
@@ -495,6 +503,21 @@ class AgentOrchestrator:
 
         log_llm_decision(f"Summary generated ({len(summary)} chars)")
 
+    def cancel_request(self, request_id: str) -> bool:
+        """Cancel an active request. Returns True if found and cancelled."""
+        state = self._active_states.get(request_id)
+        if not state:
+            return False
+        state["cancelled"] = True
+        state["orchestrator_phase"] = "done"
+        state["error"] = "Cancelled by user"
+        log_orchestrator(f"Request {request_id} cancelled by user")
+        return True
+
+    def is_cancelled(self, state: AgentState) -> bool:
+        """Check if a request has been cancelled."""
+        return state.get("cancelled", False)
+
     def get_state(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get current state for a request."""
         state = self._active_states.get(request_id)
@@ -516,6 +539,7 @@ class AgentOrchestrator:
             "final_result": state.get("final_result", ""),
             "generated_files": state.get("generated_files", []),
             "error": state.get("error"),
+            "cancelled": state.get("cancelled", False),
         }
 
     def refresh_llm(self):

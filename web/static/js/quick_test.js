@@ -139,6 +139,14 @@ function setupTestForm() {
         currentRequestId = null;
         clearState();
     });
+
+    const requestInput = document.getElementById('requestInput');
+    requestInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            form.requestSubmit();
+        }
+    });
 }
 
 async function submitWithStreaming(requestType, requestInput) {

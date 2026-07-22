@@ -863,10 +863,36 @@ select.form-control {
 
 #resultCard {
     margin-bottom: 0;
-    height: 260px;
+    height: 220px;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+#statusCard {
+    margin-bottom: 0;
+    height: 220px;
+}
+
+.status-info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.status-info-item label {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.status-info-item span {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--primary);
 }
 
 #resultCard .card-body {
@@ -886,6 +912,12 @@ select.form-control {
 
 #resultCard .file-list {
     flex-shrink: 0;
+}
+
+#requestInput {
+    min-height: unset !important;
+    height: auto !important;
+    max-height: 68px !important;
 }
 
 #resultCard + .card textarea.form-control {

@@ -947,18 +947,142 @@ graph LR
 
 ### 10.2 日志系统
 
-| 日志类型 | 颜色 | 函数 | 用途 |
-|----------|------|------|------|
-| Agent → LLM | 蓝色 | `log_agent_to_llm()` | 发送给 LLM 的请求 |
-| LLM → Agent | 绿色 | `log_llm_to_agent()` | LLM 返回的响应 |
-| Tool 调用 | 青色 | `log_tool_call()` | 工具执行记录 |
-| Orchestrator | 黄色 | `log_orchestrator()` | 编排器状态变更 |
-| 错误 | 红色 | `log_error()` | 异常信息 |
-| 信息 | 白色 | `log_info()` | 一般信息 |
+系统中存在三条独立的日志通路，各自服务于不同的目的和查看场景：
 
-日志同时输出到控制台和 `debugout.log` 文件，Admin UI 提供 Web 日志查看器。
+```mermaid
+graph TB
+    subgraph Source["数据来源"]
+        Logger["Logger<br/>modules/utils/logger.py"]
+        AIEngine["ai_engine<br/>run_engine()"]
+        LLMClient["LLMClient._call_engine()<br/>modules/llm/llm_client.py"]
+    end
 
-此外，当 `llm.verbose` 启用时，ai_engine 引擎的交互日志输出到 `llm_engine.log`（由 `llm.log_file` 配置），可通过 Admin UI 的 LLM 配置页面查看。
+    subgraph Sink1["通路 ① 控制台 + 运行日志"]
+        Console["终端彩色输出"]
+        DebugLog["debugout.log"]
+        RunLogUI["Admin UI 运行日志<br/>/logs 页面"]
+    end
+
+    subgraph Sink2["通路 ② LLM 引擎日志"]
+        EngineLog["llm_engine.log<br/>(ai_engine --verbose --log)"]
+        LlmLogUI["Admin UI LLM 交互日志<br/>/config → LLM 配置"]
+    end
+
+    subgraph Sink3["通路 ③ 快速测试 LLM 日志"]
+        EventBus["llm_events 事件总线<br/>(内存 Queue)"]
+        SSE["SSE 流<br/>GET /api/llm-stream"]
+        QtLogUI["快速测试页 LLM日志 标签<br/>EventSource → addLlmLogEntry"]
+    end
+
+    Logger --> Console
+    Logger --> DebugLog
+    DebugLog --> RunLogUI
+
+    AIEngine --> EngineLog
+    EngineLog --> LlmLogUI
+
+    LLMClient -->|"StdoutEventEmitter<br/>拦截 stdout NDJSON"| EventBus
+    EventBus --> SSE
+    SSE --> QtLogUI
+
+    style Source fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Sink1 fill:#fff3e0,stroke:#e65100,color:#000
+    style Sink2 fill:#fce4ec,stroke:#c62828,color:#000
+    style Sink3 fill:#e8f5e9,stroke:#2e7d32,color:#000
+```
+
+#### 通路 ① 控制台输出 + 运行日志 (`debugout.log`)
+
+| 项目 | 说明 |
+|------|------|
+| **来源** | `modules/utils/logger.py` — 所有模块调用 `log_*()` 函数 |
+| **目标** | 终端彩色输出 + `debugout.log` 文件（双写） |
+| **查看** | Admin UI「运行日志」标签页（`POST /api/rpc {method: "logs.get"}`） |
+| **内容** | 编排器状态、LLM 请求/响应摘要、工具调用、错误信息等运行时日志 |
+
+| 日志级别 | 颜色 | 函数 | 典型内容 |
+|----------|------|------|----------|
+| Agent → LLM | 蓝色 | `log_agent_to_llm()` | 发送给 LLM 的请求摘要 |
+| LLM → Agent | 绿色 | `log_llm_to_agent()` | LLM 返回的响应摘要 |
+| Tool 调用 | 青色 | `log_tool_call()` | `execute_tool(name, args)` |
+| Orchestrator | 黄色 | `log_orchestrator()` | 编排器阶段/进度状态 |
+| 错误 | 红色 | `log_error()` | 异常堆栈 |
+| 信息 | 白色 | `log_info()` | 一般性信息 |
+
+#### 通路 ② LLM 引擎日志 (`llm_engine.log`)
+
+| 项目 | 说明 |
+|------|------|
+| **来源** | `ai_engine` 子模块 — 当 `llm.verbose=true` 时，`run_engine()` 内部的 `_log_event()` 将每条 NDJSON 事件写入日志文件 |
+| **目标** | `llm_engine.log`（路径由 `llm.log_file` 配置，默认项目根目录下） |
+| **查看** | Admin UI「LLM 配置」页面的「LLM 交互日志」区域（`_llm_logs()` RPC handler 读取文件尾部） |
+| **内容** | ai_engine 引擎级别的完整交互日志，包含 thinking、tool_call、assistant 等原始 NDJSON 事件的可读格式 |
+
+**数据流**: `ai_engine._log_event()` → `--log llm_engine.log` → Admin UI `_llm_logs()` RPC
+
+> **注意**: 此日志与通路 ① 的 `debugout.log` 完全独立。`debugout.log` 记录编排层的运行状态摘要，`llm_engine.log` 记录模型层的原始交互事件。
+
+#### 通路 ③ 快速测试 LLM 交互日志（SSE 实时流）
+
+| 项目 | 说明 |
+|------|------|
+| **来源** | `LLMClient._call_engine()` 中的 `_StdoutEventEmitter` — 在 `redirect_stdout` 期间拦截 ai_engine 写入 stdout 的每行 NDJSON |
+| **目标** | 内存事件总线 (`llm_events.py`) → SSE 流 → 前端 `EventSource` |
+| **查看** | 快速测试页面（`/quick-test`）的「LLM日志」标签页 |
+| **内容** | 实时 LLM 交互事件：thinking、tool_call、assistant、usage、done 等 |
+
+**数据流**:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FE as 前端 (Quick Test)
+    participant SSE as SSE Endpoint<br/>/api/llm-stream
+    participant Bus as llm_events 事件总线<br/>(per-request Queue)
+    participant LLM as LLMClient._call_engine()
+    participant Eng as ai_engine<br/>run_engine()
+    participant Orch as Orchestrator
+
+    FE->>SSE: GET /api/llm-stream?request_id=xxx<br/>(EventSource 长连接)
+    SSE->>Bus: 注册消费者 Queue
+
+    Orch->>LLM: decide_json() / with_tools()
+    LLM->>Eng: redirect_stdout(emitter)
+    loop ai_engine 输出 NDJSON 事件
+        Eng-->>LLM: write('{"type":"thinking","content":"..."}\n')
+        LLM->>Bus: emit(request_id, event)
+        Bus-->>SSE: Queue.get()
+        SSE-->>FE: data: {"type":"thinking","content":"..."}
+        Note over FE: handleStreamEvent()<br/>→ addLlmLogEntry()
+    end
+
+    LLM->>Bus: emit_done(request_id)
+    Bus-->>SSE: None sentinel → 连接关闭
+    SSE-->>FE: EventSource.onclose
+```
+
+**关键实现**:
+
+| 组件 | 文件 | 职责 |
+|------|------|------|
+| `_StdoutEventEmitter` | `modules/llm/llm_client.py` | 包装 `StringIO` 缓冲区，`write()` 时同时解析 NDJSON 并 `emit()` 到事件总线 |
+| `llm_events` 事件总线 | `modules/llm/llm_events.py` | thread-local `request_id` 上下文 + per-request `Queue[]` + SSE `stream()` 生成器 |
+| `Orchestrator` | `modules/core/orchestrator.py` | `process_request()` 入口调用 `set_request_context()`，`finally` 调用 `llm_cleanup()` |
+| SSE endpoint | `modules/app/routes.py` | `GET /api/llm-stream?request_id=xxx` 返回 `text/event-stream` 响应 |
+| 前端 `EventSource` | `web/static/js/quick_test.js` | `startLlmStream()` 建立连接，`onmessage` → `handleStreamEvent()` → `addLlmLogEntry()` 渲染 |
+
+#### 三条通路对比
+
+| 维度 | ① 控制台 + 运行日志 | ② LLM 引擎日志 | ③ 快速测试 LLM 日志 |
+|------|---------------------|-----------------|---------------------|
+| **记录层** | 编排层 (Orchestrator/Tools) | 模型层 (ai_engine) | 模型层 (ai_engine) |
+| **粒度** | 运行状态摘要 | 原始交互事件 | 原始交互事件 |
+| **时效** | 持久化到文件 | 持久化到文件 | 仅内存（请求结束后清空） |
+| **传输方式** | 同步写入 | 同步写入 | SSE 实时推送 |
+| **查看入口** | Admin UI 运行日志 | Admin UI LLM 配置 | 快速测试页 LLM日志 |
+| **适用场景** | 运维排查、整体流程追踪 | LLM 交互分析、调试 | 实时调试、观察 LLM 思考过程 |
+
+> **注意**: 通路 ② 和 ③ 的数据来源相同（ai_engine NDJSON 事件），但通路 ② 由 ai_engine 内部写入文件，通路 ③ 由 LLMClient 在 stdout 拦截层实时推送到前端。两者互不干扰，配置 `llm.verbose=false` 会关闭通路 ② 但不影响通路 ③。
 
 ---
 

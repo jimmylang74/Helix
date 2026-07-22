@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from modules.config.config_manager import ConfigManager
+from modules.llm.llm_events import get_request_context, emit as _emit_event, emit_done as _emit_done
 from modules.utils.logger import (
     log_agent_to_llm, log_llm_to_agent, log_error, log_info, log_llm_decision,
 )
@@ -29,6 +30,46 @@ if _AI_ENGINE_DIR not in sys.path:
     sys.path.insert(0, _AI_ENGINE_DIR)
 
 from ai_engine import run_engine as _run_engine, _init_verbose, _close_verbose
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Stdout stream wrapper — forwards NDJSON lines to the event bus
+# ═══════════════════════════════════════════════════════════════════════
+
+class _StdoutEventEmitter:
+    """Tee stdout writes to the in-memory event bus.
+
+    Wraps the underlying ``StringIO`` buffer.  Each ``write()`` call
+    forwards complete JSON lines to ``llm_events.emit()`` while still
+    accumulating data for the caller's buffer.
+    """
+
+    def __init__(self, buf: io.StringIO):
+        self._buf = buf
+        self._partial = ""
+
+    def write(self, s: str) -> int:
+        self._buf.write(s)
+        request_id = get_request_context()
+        if request_id:
+            self._partial += s
+            while "\n" in self._partial:
+                line, self._partial = self._partial.split("\n", 1)
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    _emit_event(request_id, event)
+                except json.JSONDecodeError:
+                    pass
+        return len(s)
+
+    def flush(self):
+        self._buf.flush()
+
+    def getvalue(self) -> str:
+        return self._buf.getvalue()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -228,7 +269,8 @@ If you want to respond directly without tools:
         thinking_content = ""
 
         try:
-            with redirect_stdout(buf):
+            emitter = _StdoutEventEmitter(buf)
+            with redirect_stdout(emitter):
                 try:
                     _run_engine(args)
                 except SystemExit as exc:
@@ -242,7 +284,7 @@ If you want to respond directly without tools:
             _close_verbose()
 
         # Parse NDJSON events from captured stdout
-        output = buf.getvalue()
+        output = emitter.getvalue()
         for line in output.strip().split("\n"):
             line = line.strip()
             if not line:
@@ -297,6 +339,10 @@ If you want to respond directly without tools:
         # Clean up internal keys from tool_calls
         for tc in tool_calls:
             tc.pop("_arg_buf", None)
+
+        request_id = get_request_context()
+        if request_id:
+            _emit_done(request_id)
 
         # Log LLM response
         preview = content[:300] + "..." if len(content) > 300 else content

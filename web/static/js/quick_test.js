@@ -13,6 +13,7 @@ let currentRequestId = null;
 let autoRefreshTimer = null;
 let todoPollTimer = null;
 let isProcessing = false;
+let llmEventSource = null;
 
 function saveState() {
     const data = {
@@ -129,6 +130,7 @@ function setupTestForm() {
     });
 
     cancelBtn.addEventListener('click', async () => {
+        stopLlmStream();
         if (currentRequestId) {
             try {
                 await apiCall('agent/cancel', { request_id: currentRequestId });
@@ -182,9 +184,37 @@ async function submitWithStreaming(requestType, requestInput) {
         if (data.error) {
             throw new Error(data.error.message || 'Request failed');
         }
+
+        const requestId = data.result?.request_id;
+        if (requestId) {
+            startLlmStream(requestId);
+        }
     } catch (error) {
         console.error(`[DEBUG] submitWithStreaming error:`, error);
         throw error;
+    }
+}
+
+function startLlmStream(requestId) {
+    stopLlmStream();
+    const es = new EventSource(`/api/llm-stream?request_id=${encodeURIComponent(requestId)}`);
+    llmEventSource = es;
+    es.onmessage = (e) => {
+        try {
+            const event = JSON.parse(e.data);
+            handleStreamEvent(event);
+        } catch (_) {}
+    };
+    es.onerror = () => {
+        es.close();
+        llmEventSource = null;
+    };
+}
+
+function stopLlmStream() {
+    if (llmEventSource) {
+        llmEventSource.close();
+        llmEventSource = null;
     }
 }
 

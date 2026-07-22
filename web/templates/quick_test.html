@@ -5,79 +5,82 @@
     <p class="text-muted" data-i18n="qt.subtitle">测试 AI Agent 功能并查看实时结果</p>
 </div>
 
-<!-- Results Card - Always Visible -->
-<div style="display: flex; gap: 12px; align-items: stretch; margin-bottom: 20px;">
-<div class="card" id="resultCard" style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
-    <div class="card-header" style="border-bottom: none; padding: 12px 20px; flex-shrink: 0;">
+<!-- Top row: Run Log + LLM Log + Todo side by side -->
+<div class="qt-panels">
+    <div class="card qt-panel" id="logPanel">
+        <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
+            <h3 style="font-size: 14px;" data-i18n="qt.tabLog">运行日志</h3>
+            <div class="log-controls" style="margin-bottom: 0;">
+                <label><span data-i18n="qt.logLines">显示行数：</span>
+                    <select id="logLines" onchange="loadRunLog()">
+                        <option value="50">50</option>
+                        <option value="100">100</option>
+                        <option value="200">200</option>
+                        <option value="500">500</option>
+                        <option value="0" selected data-i18n="qt.logAll">全部</option>
+                    </select>
+                </label>
+                <label>
+                    <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()">
+                    <span data-i18n="qt.autoRefresh">自动刷新</span>
+                </label>
+                <button class="btn btn-sm btn-outline" onclick="loadRunLog()" data-i18n="qt.refresh">🔄 刷新</button>
+                <button class="btn btn-sm btn-outline" onclick="exportRunLog()" data-i18n="qt.exportLog">📥 导出</button>
+            </div>
+        </div>
+        <div class="card-body" style="padding: 0; flex: 1; min-height: 0; overflow: hidden;">
+            <div id="runLogContainer" class="log-container"></div>
+        </div>
+    </div>
+
+    <div class="card qt-panel" id="llmPanel">
+        <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
+            <h3 style="font-size: 14px;" data-i18n="qt.tabLlm">LLM日志</h3>
+            <div class="llm-log-controls" style="margin-bottom: 0;">
+                <label>
+                    <input type="checkbox" id="llmAutoScroll" checked>
+                    <span data-i18n="qt.autoScroll">自动滚动</span>
+                </label>
+                <button class="btn btn-sm btn-outline" onclick="exportLlmLog()" data-i18n="qt.exportLog">📥 导出</button>
+                <button class="btn btn-sm btn-outline" onclick="clearLlmLog()" data-i18n="qt.clearLog">🗑️ 清屏</button>
+            </div>
+        </div>
+        <div class="card-body" style="padding: 0; flex: 1; min-height: 0; overflow: hidden;">
+            <div id="llmLogContainer" class="log-container llm-log-container"></div>
+        </div>
+    </div>
+
+    <div id="todoCard" class="card qt-panel" style="width: 200px; flex: 0 0 200px;">
+        <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
+            <h3 style="font-size: 14px;" data-i18n="qt.tabTodo">任务清单</h3>
+        </div>
+        <div class="card-body" style="padding: 0 12px 12px; flex: 1; min-height: 0; overflow-y: auto;">
+            <div id="todoTreeContainer">
+                <div class="todo-empty" data-i18n="qt.noTasks">暂无任务</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Middle row: Final Result -->
+<div class="card" id="resultCard">
+    <div class="card-header" style="padding: 10px 16px;">
         <div style="display: flex; gap: 8px; align-items: center;">
+            <h3 style="font-size: 14px;" data-i18n="qt.tabResult">最终结果</h3>
             <span class="badge" id="resultStatus" data-i18n="qt.idle">空闲</span>
             <span class="badge badge-info" id="resultIntent"></span>
-            <button class="btn btn-sm btn-outline" id="copyBtn" data-i18n="qt.copy">📋 复制</button>
         </div>
+        <button class="btn btn-sm btn-outline" id="copyBtn" data-i18n="qt.copy">📋 复制</button>
     </div>
-    <div class="card-body" style="padding: 0; flex: 1; min-height: 0; overflow-y: auto;">
-        <div class="tabs" style="margin-bottom: 0; padding: 0 20px; flex-shrink: 0;">
-            <button class="tab-btn active" data-tab="result" data-i18n="qt.tabResult">最终结果</button>
-            <button class="tab-btn" data-tab="log" data-i18n="qt.tabLog">运行日志</button>
-            <button class="tab-btn" data-tab="llm" data-i18n="qt.tabLlm">LLM日志</button>
+    <div class="card-body" style="padding: 0;">
+        <div id="finalResultContainer" class="result-box" style="min-height: 60px;">
+            <span class="text-muted" data-i18n="qt.waitingResult">等待请求...</span>
         </div>
-
-        <div style="padding: 0 20px 20px;">
-            <div class="tab-content active" id="tab-result">
-                <div id="finalResultContainer" class="result-box" style="min-height: 60px;">
-                    <span class="text-muted" data-i18n="qt.waitingResult">等待请求...</span>
-                </div>
-                <div id="resultFiles" class="file-list"></div>
-            </div>
-
-            <div class="tab-content" id="tab-log">
-                <div class="log-controls">
-                    <label><span data-i18n="qt.logLines">显示行数：</span>
-                        <select id="logLines" onchange="loadRunLog()">
-                            <option value="50">50</option>
-                            <option value="100">100</option>
-                            <option value="200">200</option>
-                            <option value="500">500</option>
-                            <option value="0" selected data-i18n="qt.logAll">全部</option>
-                        </select>
-                    </label>
-                    <label>
-                        <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()">
-                        <span data-i18n="qt.autoRefresh">自动刷新</span>
-                    </label>
-                    <button class="btn btn-sm btn-outline" onclick="loadRunLog()" data-i18n="qt.refresh">🔄 刷新</button>
-                    <button class="btn btn-sm btn-outline" onclick="exportRunLog()" data-i18n="qt.exportLog">📥 导出日志</button>
-                </div>
-                <div id="runLogContainer" class="log-container"></div>
-            </div>
-
-            <div class="tab-content" id="tab-llm">
-                <div class="llm-log-controls">
-                    <label>
-                        <input type="checkbox" id="llmAutoScroll" checked>
-                        <span data-i18n="qt.autoScroll">自动滚动</span>
-                    </label>
-                    <button class="btn btn-sm btn-outline" onclick="exportLlmLog()" data-i18n="qt.exportLog">📥 导出日志</button>
-                    <button class="btn btn-sm btn-outline" onclick="clearLlmLog()" data-i18n="qt.clearLog">🗑️ 清屏</button>
-                </div>
-                <div id="llmLogContainer" class="log-container llm-log-container"></div>
-            </div>
-        </div>
+        <div id="resultFiles" class="file-list"></div>
     </div>
 </div>
 
-<div id="todoCard" class="card" style="width: 200px; flex-shrink: 0; display: flex; flex-direction: column;">
-    <div class="card-header" style="border-bottom: none; padding: 12px 16px; flex-shrink: 0;">
-        <h3 style="font-size: 14px;" data-i18n="qt.tabTodo">任务清单</h3>
-    </div>
-    <div class="card-body" style="padding: 0 12px 12px; flex: 1; min-height: 0; overflow-y: auto;">
-        <div id="todoTreeContainer">
-            <div class="todo-empty" data-i18n="qt.noTasks">暂无任务</div>
-        </div>
-    </div>
-</div>
-</div>
-
+<!-- Bottom row: Request Input -->
 <div class="card">
     <div class="card-body" style="padding-top: 16px;">
         <form id="testForm">

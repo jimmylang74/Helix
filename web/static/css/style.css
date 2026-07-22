@@ -324,44 +324,6 @@ select.form-control {
     display: none;
 }
 
-/* Tabs */
-.tabs {
-    display: flex;
-    gap: 0;
-    margin-bottom: 20px;
-    border-bottom: 2px solid var(--border);
-}
-
-.tab-btn {
-    padding: 10px 24px;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    font-size: 14px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.tab-btn:hover {
-    color: var(--primary);
-}
-
-.tab-btn.active {
-    color: var(--primary);
-    border-bottom-color: var(--primary);
-    font-weight: 600;
-}
-
-.tab-content {
-    display: none;
-}
-
-.tab-content.active {
-    display: block;
-}
-
 /* Tables */
 .table {
     width: 100%;
@@ -806,7 +768,6 @@ select.form-control {
 }
 
 .llm-log-container {
-    max-height: 500px;
     font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
     font-size: 12px;
     line-height: 1.6;
@@ -816,7 +777,6 @@ select.form-control {
     display: flex;
     gap: 16px;
     align-items: center;
-    margin-bottom: 12px;
 }
 
 .llm-log-controls label {
@@ -874,41 +834,67 @@ select.form-control {
 }
 .llm-log-sending-detail-label { color: #78909c; font-weight: 600; }
 
-/* Quick Test - unified flex-height tab content */
-#resultCard .tab-content.active {
-    height: 600px;
+.qt-panels {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    height: 520px;
+}
+
+.qt-panel {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0;
+}
+
+.qt-panel .card-body {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+.qt-panel .log-container {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+}
+
+#resultCard {
+    margin-bottom: 0;
+    height: 260px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#resultCard .card-body {
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
 }
 
-#resultCard .tab-content.active .result-box,
-#resultCard .tab-content.active .log-container,
-#resultCard .tab-content.active .llm-log-container {
+#resultCard .result-box {
+    max-height: none;
     flex: 1;
     min-height: 0;
-    max-height: none;
     overflow-y: auto;
 }
 
-#resultCard .tab-content.active .log-controls,
-#resultCard .tab-content.active .llm-log-controls {
-    margin-bottom: 8px;
+#resultCard .file-list {
     flex-shrink: 0;
-}
-
-#resultCard .card-body {
-    padding: 0;
-}
-
-#resultCard,
-#todoCard {
-    margin-bottom: 0;
 }
 
 #resultCard + .card textarea.form-control {
     min-height: auto;
     resize: none;
+}
+
+#todoCard {
+    margin-bottom: 0;
 }
 
 .subtask-header {

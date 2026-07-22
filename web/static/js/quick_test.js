@@ -41,7 +41,6 @@ function clearState() {
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof i18nReady !== 'undefined') await i18nReady;
     setupTestForm();
-    setupTabs();
     loadRunLog();
     startAutoRefreshLog();
     restoreFromStorage();
@@ -80,17 +79,6 @@ async function restoreFromStorage() {
     }
 }
 
-function setupTabs() {
-    document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
-        });
-    });
-}
-
 function setupTestForm() {
     const form = document.getElementById('testForm');
     const submitBtn = document.getElementById('submitBtn');
@@ -112,7 +100,8 @@ function setupTestForm() {
         setProcessing(true);
         updateStatus('processing');
         document.getElementById('resultIntent').textContent = '';
-        document.getElementById('todoTreeContainer').innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
+        const todoEl = document.getElementById('todoTreeContainer');
+        if (todoEl) todoEl.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearLlmLog();
         clearFinalResult();
 
@@ -141,7 +130,8 @@ function setupTestForm() {
         setProcessing(false);
         updateStatus('idle');
         document.getElementById('resultIntent').textContent = '';
-        document.getElementById('todoTreeContainer').innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
+        const todoEl2 = document.getElementById('todoTreeContainer');
+        if (todoEl2) todoEl2.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         document.getElementById('finalResultContainer').innerHTML =
             `<span class="text-muted">${__('qt.waitingResult')}</span>`;
         document.getElementById('resultFiles').innerHTML = '';
@@ -396,6 +386,7 @@ async function pollTodoState() {
 
 function renderTodoTree(state) {
     const container = document.getElementById('todoTreeContainer');
+    if (!container) return;
     const todoList = state.todo_list || [];
     const currentIdx = state.current_todo_idx || 0;
     const todoSubtaskLists = state.todo_subtask_lists || [];

@@ -9,7 +9,8 @@ import os
 import sys
 import uuid
 import threading
-from flask import Blueprint, request, jsonify, render_template, send_from_directory
+from flask import Blueprint, request, jsonify, render_template, send_from_directory, Response
+from modules.llm.llm_events import stream as llm_event_stream
 
 from modules.core.orchestrator import orchestrator
 from modules.config.config_manager import ConfigManager
@@ -527,3 +528,17 @@ def create_admin_routes(app):
         with open(filepath, "r", encoding="utf-8") as f:
             data = json.load(f)
         return _rpc_success(data)
+
+    @app.route("/api/llm-stream")
+    def llm_stream():
+        request_id = request.args.get("request_id", "")
+        if not request_id:
+            return jsonify({"error": "Missing request_id"}), 400
+        return Response(
+            llm_event_stream(request_id),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )

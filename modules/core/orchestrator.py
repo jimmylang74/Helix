@@ -28,6 +28,7 @@ from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
 )
+from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup
 from modules.utils.file_ops import FileOps
 
 
@@ -62,6 +63,7 @@ class AgentOrchestrator:
         if not request_id:
             request_id = f"req_{uuid.uuid4().hex[:12]}"
 
+        set_request_context(request_id)
         log_section(f"Processing Request: {request_id}")
         log_info(f"User request: {user_request[:200]}")
 
@@ -105,6 +107,9 @@ class AgentOrchestrator:
             import traceback
             log_error(traceback.format_exc())
             return self._error_response(state, str(e))
+        finally:
+            llm_cleanup(request_id)
+            clear_request_context()
 
     def _error_response(self, state: AgentState, error_msg: Optional[str] = None) -> Dict[str, Any]:
         """Build error response."""

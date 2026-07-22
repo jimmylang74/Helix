@@ -28,7 +28,7 @@ from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
 )
-from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup
+from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
 from modules.utils.file_ops import FileOps
 
 
@@ -298,7 +298,7 @@ class AgentOrchestrator:
         tool_definitions: List[ToolDefinition],
         system_prompt: str,
     ) -> str:
-        """Execute one subtask with tool-calling support. Returns the subtask result."""
+        """Execute one subtask with tool-calling support."""
         subtask_result = ""
         max_iterations = 5
 
@@ -345,7 +345,7 @@ class AgentOrchestrator:
                     self._execute_tool_call(state, tc)
                 continue
 
-            subtask_result = response_data.get("response", "")
+            subtask_result = response_data.get("response") or ""
             log_llm_decision(f"Subtask {subtask_index} result: {subtask_result[:200]}")
             break
 
@@ -421,12 +421,14 @@ class AgentOrchestrator:
                     pass
             return {"response": content}
 
-    def _execute_tool_call(self, state: AgentState, tool_call: Dict[str, Any]):
-        """Execute a tool call from LLM decision."""
+    def _execute_tool_call(self, state: AgentState, tool_call: Dict[str, Any]) -> str:
+        """Execute a tool call from LLM decision. Returns the result string."""
         name = tool_call.get("name", "")
         arguments = tool_call.get("arguments", {})
+        tc_id = tool_call.get("id", "")
         log_tool_call(f"Executing tool: {name}({json.dumps(arguments, ensure_ascii=False)})")
 
+        result_text = ""
         try:
             if name == "web_search":
                 query = arguments.get("query", "")
@@ -435,6 +437,8 @@ class AgentOrchestrator:
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"] = urls
+
+                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 条结果，获取 {len(urls)} 个网页...")
 
                 formatted = json.dumps(results, ensure_ascii=False)
                 context_manager.add_message(state, "assistant",
@@ -447,6 +451,7 @@ class AgentOrchestrator:
                     state["collected_data"].append(fetched)
                     context_manager.add_message(state, "assistant",
                         f"[web_fetch_batch completed: {len(urls)} URLs]")
+                    result_text = fetched
 
             elif name == "image_search":
                 query = arguments.get("query", "")
@@ -456,6 +461,8 @@ class AgentOrchestrator:
 
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"].extend(urls)
+
+                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 张图片")
 
                 if state.get("intent_type") == "ppt" and urls:
                     log_agent_action(f"Auto-downloading {len(urls)} images...")
@@ -467,18 +474,37 @@ class AgentOrchestrator:
 
             else:
                 try:
-                    result = tool_registry.call_tool(name, arguments)
+                    result_text = tool_registry.call_tool(name, arguments)
+                    preview = result_text[:500] + "..." if len(result_text) > 500 else result_text
+                    self._emit_tool_result(tc_id, name, preview)
                     context_manager.add_message(state, "assistant",
-                        f"[{name} results]\n{json.dumps(result, ensure_ascii=False, default=str)}")
+                        f"[{name} results]\n{json.dumps(result_text, ensure_ascii=False, default=str)}")
                 except Exception:
                     log_error(f"Unknown tool: {name}")
+                    self._emit_tool_result(tc_id, name, f"错误: 未知工具 {name}")
                     context_manager.add_message(state, "assistant",
                         f"[tool error] Unknown tool: {name}")
+                    result_text = f"Unknown tool: {name}"
 
         except Exception as e:
             log_error(f"Tool execution failed: {name}: {e}")
+            self._emit_tool_result(tc_id, name, f"错误: {e}")
             context_manager.add_message(state, "assistant",
                 f"[tool error] {name}: {e}")
+            result_text = f"Error: {e}"
+
+        return result_text
+
+    def _emit_tool_result(self, tc_id: str, name: str, result_preview: str):
+        """Emit a tool_call_result event to the SSE stream for the frontend."""
+        request_id = get_request_context()
+        if request_id:
+            _emit_llm_event(request_id, {
+                "type": "tool_call_result",
+                "id": tc_id,
+                "name": name,
+                "result": result_preview,
+            })
 
     def _summarization_phase(self, state: AgentState):
         """Phase 3: Summarize all results."""

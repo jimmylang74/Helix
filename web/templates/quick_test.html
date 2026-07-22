@@ -46,6 +46,7 @@
                         <span data-i18n="qt.autoRefresh">自动刷新</span>
                     </label>
                     <button class="btn btn-sm btn-outline" onclick="loadRunLog()" data-i18n="qt.refresh">🔄 刷新</button>
+                    <button class="btn btn-sm btn-outline" onclick="exportRunLog()" data-i18n="qt.exportLog">📥 导出日志</button>
                 </div>
                 <div id="runLogContainer" class="log-container"></div>
             </div>
@@ -56,6 +57,7 @@
                         <input type="checkbox" id="llmAutoScroll" checked>
                         <span data-i18n="qt.autoScroll">自动滚动</span>
                     </label>
+                    <button class="btn btn-sm btn-outline" onclick="exportLlmLog()" data-i18n="qt.exportLog">📥 导出日志</button>
                     <button class="btn btn-sm btn-outline" onclick="clearLlmLog()" data-i18n="qt.clearLog">🗑️ 清屏</button>
                 </div>
                 <div id="llmLogContainer" class="log-container llm-log-container"></div>

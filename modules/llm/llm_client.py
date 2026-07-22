@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from modules.config.config_manager import ConfigManager
-from modules.llm.llm_events import get_request_context, emit as _emit_event, emit_done as _emit_done
+from modules.llm.llm_events import get_request_context, emit as _emit_event
 from modules.utils.logger import (
     log_agent_to_llm, log_llm_to_agent, log_error, log_info, log_llm_decision,
 )
@@ -122,7 +122,7 @@ class LLMClient:
         return self._call_engine(
             text=text,
             system_prompt=system_prompt,
-            no_stream=True,
+            no_stream=False,
             expect_json=expect_json,
         )
 
@@ -192,7 +192,7 @@ If you want to respond directly without tools:
         return self._call_engine(
             text=flat_text,
             system_prompt=combined_system,
-            no_stream=True,
+            no_stream=False,
             expect_json=True,
         )
 
@@ -249,13 +249,23 @@ If you want to respond directly without tools:
         self,
         text: str,
         system_prompt: Optional[str] = None,
-        no_stream: bool = True,
+        no_stream: bool = False,
         expect_json: bool = True,
     ) -> LLMResponse:
         """Run ai_engine and parse NDJSON events into an LLMResponse."""
         args = self._build_engine_args(text, system_prompt, no_stream)
 
         log_agent_to_llm(f"LLM call via ai_engine: provider={args.provider}, model={args.model}")
+
+        request_id = get_request_context()
+        if request_id:
+            _emit_event(request_id, {
+                "type": "sending",
+                "provider": args.provider,
+                "model": args.model,
+                "system_prompt": (system_prompt or "")[:500],
+                "user_message": text[:1000],
+            })
 
         # Initialize verbose logging for this call
         _init_verbose(args)
@@ -339,10 +349,6 @@ If you want to respond directly without tools:
         # Clean up internal keys from tool_calls
         for tc in tool_calls:
             tc.pop("_arg_buf", None)
-
-        request_id = get_request_context()
-        if request_id:
-            _emit_done(request_id)
 
         # Log LLM response
         preview = content[:300] + "..." if len(content) > 300 else content

@@ -245,6 +245,9 @@ function handleStreamEvent(event) {
         case 'tool_call_complete':
             addLlmLogEntry({ type: 'tool_call_end', id: event.id || '', arguments: event.arguments || '' });
             break;
+        case 'tool_call_result':
+            addLlmLogEntry({ type: 'tool_call_result', id: event.id || '', name: event.name || '', result: event.result || '' });
+            break;
         case 'usage':
             addLlmLogEntry({
                 type: 'usage',
@@ -261,6 +264,15 @@ function handleStreamEvent(event) {
         case 'error':
             addLlmLogEntry({ type: 'error', message: event.message || event.error || 'Unknown error' });
             updateStatus('error');
+            break;
+        case 'sending':
+            addLlmLogEntry({
+                type: 'sending',
+                provider: event.provider || '',
+                model: event.model || '',
+                system_prompt: event.system_prompt || '',
+                user_message: event.user_message || '',
+            });
             break;
     }
 }
@@ -415,7 +427,9 @@ function renderTodoTree(state) {
                 if (st.status === 'completed') sIcon = '✓';
                 else if (st.status === 'failed') sIcon = '✗';
                 else if (st.status === 'running') sIcon = '<span class="spinner-inline"></span>';
-                html += `<li class="subtask-item">${sIcon} ${escapeHtml(st.subtask || '')}</li>`;
+                html += `<li class="subtask-item">
+                    <div class="subtask-header">${sIcon} ${escapeHtml(st.subtask || '')}</div>
+                </li>`;
             });
             html += '</ul>';
         }
@@ -483,53 +497,159 @@ function updateFinalResult(content, files) {
 
 // ========== LLM Log ==========
 
+let _lastLlmLogType = null;
+let _lastLlmLogDiv = null;
+
 function addLlmLogEntry(entry) {
     const container = document.getElementById('llmLogContainer');
     const autoScroll = document.getElementById('llmAutoScroll').checked;
-    const div = document.createElement('div');
-    div.className = `llm-log-entry llm-log-${entry.type}`;
 
-    switch (entry.type) {
-        case 'thinking':
-            div.innerHTML = `<span class="llm-log-thinking-label">💭 Thinking:</span> ${escapeHtml(entry.content)}`;
-            break;
-        case 'thinking_end':
-            div.innerHTML = '<span class="llm-log-thinking-label">💭 [end]</span>';
-            break;
-        case 'assistant':
-            div.innerHTML = `<span class="llm-log-assistant-label">🤖 Assistant:</span> ${escapeHtml(entry.content)}`;
-            break;
-        case 'assistant_end':
-            div.innerHTML = '<span class="llm-log-assistant-label">🤖 [end]</span>';
-            break;
-        case 'tool_call':
-            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Call:</span> <strong>${escapeHtml(entry.name)}</strong> (${entry.id})`;
-            break;
-        case 'tool_call_delta':
-            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Args:</span> ${escapeHtml(entry.content)}`;
-            break;
-        case 'tool_call_end':
-            div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Complete:</span> ${entry.id}`;
-            break;
-        case 'usage':
-            div.innerHTML = `<span class="llm-log-usage-label">📊 Usage:</span> prompt=${entry.prompt_tokens}, completion=${entry.completion_tokens}, reasoning=${entry.reasoning_tokens}`;
-            break;
-        case 'done':
-            div.innerHTML = `<span class="llm-log-done-label">✅ Done:</span> ${entry.finish_reason || 'completed'}`;
-            break;
-        case 'error':
-            div.innerHTML = `<span class="llm-log-error-label">❌ Error:</span> ${escapeHtml(entry.message)}`;
-            break;
-        default:
-            div.innerHTML = `<span class="llm-log-unknown-label">[${entry.type}]</span> ${escapeHtml(JSON.stringify(entry))}`;
+    const isDelta = entry.type === 'thinking' || entry.type === 'assistant' || entry.type === 'tool_call_delta';
+    const canAppend = isDelta && _lastLlmLogType === entry.type && _lastLlmLogDiv;
+
+    if (canAppend) {
+        const textNode = document.createTextNode(entry.content || entry.delta || '');
+        _lastLlmLogDiv.appendChild(textNode);
+    } else {
+        const div = document.createElement('div');
+        div.className = `llm-log-entry llm-log-${entry.type}`;
+
+        switch (entry.type) {
+            case 'sending':
+                div.innerHTML = `<span class="llm-log-sending-label">📤 Sending to LLM:</span> <span class="llm-log-sending-model">${escapeHtml(entry.provider)}/${escapeHtml(entry.model)}</span>`;
+                if (entry.system_prompt) {
+                    const spDiv = document.createElement('div');
+                    spDiv.className = 'llm-log-sending-detail';
+                    spDiv.innerHTML = `<span class="llm-log-sending-detail-label">System:</span> ${escapeHtml(entry.system_prompt)}`;
+                    div.appendChild(spDiv);
+                }
+                if (entry.user_message) {
+                    const umDiv = document.createElement('div');
+                    umDiv.className = 'llm-log-sending-detail';
+                    umDiv.innerHTML = `<span class="llm-log-sending-detail-label">User:</span> ${escapeHtml(entry.user_message)}`;
+                    div.appendChild(umDiv);
+                }
+                break;
+            case 'thinking':
+                div.innerHTML = `<span class="llm-log-thinking-label">💭 Thinking:</span> ${escapeHtml(entry.content)}`;
+                break;
+            case 'thinking_end':
+                div.innerHTML = '<span class="llm-log-thinking-label">💭 [end]</span>';
+                break;
+            case 'assistant':
+                div.innerHTML = `<span class="llm-log-assistant-label">🤖 Assistant:</span> ${escapeHtml(entry.content)}`;
+                break;
+            case 'assistant_end':
+                div.innerHTML = '<span class="llm-log-assistant-label">🤖 [end]</span>';
+                break;
+            case 'tool_call':
+                div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Call:</span> <strong>${escapeHtml(entry.name)}</strong> (${entry.id})`;
+                break;
+            case 'tool_call_delta':
+                div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Args:</span> ${escapeHtml(entry.content)}`;
+                break;
+            case 'tool_call_end':
+                div.innerHTML = `<span class="llm-log-tool-label">🔧 Tool Complete:</span> ${entry.id}`;
+                break;
+            case 'tool_call_result':
+                div.innerHTML = `<span class="llm-log-tool-result-label">📋 Toolcall Result [${escapeHtml(entry.name)}]:</span> ${escapeHtml(entry.result)}`;
+                break;
+            case 'usage':
+                div.innerHTML = `<span class="llm-log-usage-label">📊 Usage:</span> prompt=${entry.prompt_tokens}, completion=${entry.completion_tokens}, reasoning=${entry.reasoning_tokens}`;
+                break;
+            case 'done':
+                div.innerHTML = `<span class="llm-log-done-label">✅ Done:</span> ${entry.finish_reason || 'completed'}`;
+                break;
+            case 'error':
+                div.innerHTML = `<span class="llm-log-error-label">❌ Error:</span> ${escapeHtml(entry.message)}`;
+                break;
+            default:
+                div.innerHTML = `<span class="llm-log-unknown-label">[${entry.type}]</span> ${escapeHtml(JSON.stringify(entry))}`;
+        }
+
+        container.appendChild(div);
+        _lastLlmLogType = isDelta ? entry.type : null;
+        _lastLlmLogDiv = isDelta ? div : null;
     }
 
-    container.appendChild(div);
     if (autoScroll) container.scrollTop = container.scrollHeight;
 }
 
 function clearLlmLog() {
     document.getElementById('llmLogContainer').innerHTML = '';
+    _lastLlmLogType = null;
+    _lastLlmLogDiv = null;
+}
+
+function exportLlmLog() {
+    const container = document.getElementById('llmLogContainer');
+    if (!container.textContent.trim()) {
+        showToast(__('qt.logEmpty') || '日志为空', 'warning');
+        return;
+    }
+
+    const lines = [];
+    container.querySelectorAll('.llm-log-entry').forEach(el => {
+        lines.push(el.textContent.trim());
+    });
+    const content = lines.join('\n');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `llm_log_${timestamp}.txt`;
+
+    if (window.showDirectoryPicker) {
+        window.showDirectoryPicker().then(dirHandle => {
+            dirHandle.getFileHandle(filename, { create: true }).then(fileHandle => {
+                fileHandle.createWritable().then(writable => {
+                    writable.write(content).then(() => {
+                        writable.close();
+                        showToast(__('qt.exportSuccess') || '导出成功', 'success');
+                    });
+                });
+            });
+        }).catch(() => {});
+    } else {
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(__('qt.exportSuccess') || '导出成功', 'success');
+    }
+}
+
+function exportRunLog() {
+    const container = document.getElementById('runLogContainer');
+    if (!container.textContent.trim()) {
+        showToast(__('qt.logEmpty') || '日志为空', 'warning');
+        return;
+    }
+    const content = container.textContent;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `run_log_${timestamp}.txt`;
+
+    if (window.showDirectoryPicker) {
+        window.showDirectoryPicker().then(dirHandle => {
+            dirHandle.getFileHandle(filename, { create: true }).then(fileHandle => {
+                fileHandle.createWritable().then(writable => {
+                    writable.write(content).then(() => {
+                        writable.close();
+                        showToast(__('qt.exportSuccess') || '导出成功', 'success');
+                    });
+                });
+            });
+        }).catch(() => {});
+    } else {
+        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast(__('qt.exportSuccess') || '导出成功', 'success');
+    }
 }
 
 // ========== Copy Result ==========
@@ -546,23 +666,19 @@ document.getElementById('copyBtn')?.addEventListener('click', () => {
 // ========== Utilities ==========
 
 function showToast(message, type = 'info') {
-    if (typeof window.showToast === 'function') {
-        window.showToast(message, type);
-    } else {
-        const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
-        toast.textContent = message;
-        toast.style.cssText = `
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            padding: 12px 24px; border-radius: 8px;
-            color: white; font-size: 14px; z-index: 1000;
-            background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : '#17a2b8'};
-        `;
-        document.body.appendChild(toast);
-        setTimeout(() => {
-            toast.style.opacity = '0';
-            toast.style.transition = 'opacity 0.5s';
-            setTimeout(() => toast.remove(), 500);
-        }, 3000);
-    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        padding: 12px 24px; border-radius: 8px;
+        color: white; font-size: 14px; z-index: 1000;
+        background: ${type === 'success' ? '#28a745' : type === 'error' ? '#dc3545' : type === 'warning' ? '#ffc107' : '#17a2b8'};
+    `;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.5s';
+        setTimeout(() => toast.remove(), 500);
+    }, 3000);
 }

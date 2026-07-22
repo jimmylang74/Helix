@@ -15,6 +15,9 @@ from typing import Any, Dict, Generator, Optional
 _queues: Dict[str, list] = {}
 _lock = threading.Lock()
 
+# Event buffer for events emitted before any consumer connects
+_buffers: Dict[str, list] = {}
+
 # Thread-local storage for current request context
 _ctx = threading.local()
 
@@ -45,9 +48,17 @@ def _get_queues(request_id: str) -> list:
 
 
 def _register_queue(request_id: str) -> queue.Queue:
-    """Register a new consumer queue for a request and return it."""
+    """Register a new consumer queue for a request, flushing any buffered events into it."""
     q: queue.Queue = queue.Queue()
-    _get_queues(request_id).append(q)
+    with _lock:
+        _queues.setdefault(request_id, []).append(q)
+        buffered = _buffers.pop(request_id, None)
+    if buffered:
+        for payload in buffered:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                pass
     return q
 
 
@@ -67,17 +78,21 @@ def cleanup(request_id: str) -> None:
 def emit(request_id: str, event: Dict[str, Any]) -> None:
     """Push a single NDJSON event to all consumer queues for this request.
 
-    Called from the LLMClient thread (inside redirect_stdout).
-    Non-blocking: if a queue is full the event is dropped for that consumer.
+    If no consumer has connected yet, the event is buffered and flushed
+    when the first queue registers.
     """
     payload = json.dumps(event, ensure_ascii=False)
     with _lock:
         queues = _queues.get(request_id, [])
-    for q in queues:
-        try:
-            q.put_nowait(payload)
-        except queue.Full:
-            pass  # slow consumer — drop rather than block LLM
+    if queues:
+        for q in queues:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                pass
+    else:
+        with _lock:
+            _buffers.setdefault(request_id, []).append(payload)
 
 
 def emit_done(request_id: str) -> None:

@@ -1,20 +1,29 @@
 """
 Thread-safe in-memory event bus for streaming agent status changes to the frontend.
 
-Each request_id gets its own queue. The SSE endpoint reads from the queue
-and streams state snapshots to the browser.  The orchestrator calls emit()
-whenever the agent state meaningfully changes (todo advance, subtask
-completion, phase transition, final result, etc.).
+Each request_id gets its own queue and a ring buffer.  The SSE endpoint reads
+from the queue and streams state snapshots to the browser.  The orchestrator
+calls emit() whenever the agent state meaningfully changes.
+
+On reconnect the client sends a ``cursor`` query parameter; the stream()
+generator replays buffered events from that cursor onward before switching
+to real-time queue consumption.
 """
 
 import json
 import queue
 import threading
+from collections import deque
 from typing import Any, Dict, Generator, Optional
 
 # Per-request event queues: { request_id: [Queue, ...] }
 _queues: Dict[str, list] = {}
 _lock = threading.Lock()
+
+# Per-request ring buffers: { request_id: deque[(index, payload)] }
+_buffers: Dict[str, deque] = {}
+_buf_counters: Dict[str, int] = {}  # monotonically increasing event index
+MAX_BUFFER = 500
 
 
 # ── Queue management ────────────────────────────────────────────────
@@ -33,12 +42,13 @@ def _register_queue(request_id: str) -> queue.Queue:
 
 
 def cleanup(request_id: str) -> None:
-    """Remove all queues for a completed request and send sentinel."""
     with _lock:
         queues = _queues.pop(request_id, [])
+        _buffers.pop(request_id, None)
+        _buf_counters.pop(request_id, None)
     for q in queues:
         try:
-            q.put_nowait(None)  # sentinel: stream is done
+            q.put_nowait(None)
         except queue.Full:
             pass
 
@@ -46,12 +56,13 @@ def cleanup(request_id: str) -> None:
 # ── Emit (called by orchestrator on state transitions) ──────────────
 
 def emit(request_id: str, state: Dict[str, Any]) -> None:
-    """Push a snapshot of the relevant status fields to all consumers.
+    with _lock:
+        idx = _buf_counters.get(request_id, 0) + 1
+        _buf_counters[request_id] = idx
 
-    Only the fields the frontend cares about are sent to keep payloads small.
-    """
     snapshot = {
         "type": "status",
+        "cursor": idx,
         "request_id": request_id,
         "todo_list": state.get("todo_list", []),
         "current_todo_idx": state.get("current_todo_idx", -1),
@@ -63,8 +74,12 @@ def emit(request_id: str, state: Dict[str, Any]) -> None:
         "orchestrator_phase": state.get("orchestrator_phase", ""),
     }
     payload = json.dumps(snapshot, ensure_ascii=False)
+
     with _lock:
-        queues = _queues.get(request_id, [])
+        buf = _buffers.setdefault(request_id, deque(maxlen=MAX_BUFFER))
+        buf.append((idx, payload))
+        queues = list(_queues.get(request_id, []))
+
     for q in queues:
         try:
             q.put_nowait(payload)
@@ -74,14 +89,16 @@ def emit(request_id: str, state: Dict[str, Any]) -> None:
 
 # ── SSE stream generator (used by Flask endpoint) ──────────────────
 
-def stream(request_id: str, timeout: float = 120.0) -> Generator[str, None, None]:
-    """Yield SSE-formatted strings for *request_id*.
-
-    Blocks on each queue.get() until an event arrives or *timeout* seconds
-    elapse.  Yields keepalive comments to prevent proxy/browser timeouts.
-    """
+def stream(request_id: str, cursor: int = 0,
+           timeout: float = 120.0) -> Generator[str, None, None]:
     q = _register_queue(request_id)
     yield ": connected\n\n"
+
+    with _lock:
+        buf = _buffers.get(request_id)
+        buf_list = list(buf) if buf else []
+    for _, payload in buf_list:
+        yield f"data: {payload}\n\n"
 
     try:
         while True:

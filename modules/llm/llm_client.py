@@ -255,7 +255,11 @@ If you want to respond directly without tools:
         """Run ai_engine and parse NDJSON events into an LLMResponse."""
         args = self._build_engine_args(text, system_prompt, no_stream)
 
-        log_agent_to_llm(f"LLM call via ai_engine: provider={args.provider}, model={args.model}")
+        log_agent_to_llm(
+            f"LLM call via ai_engine: provider={args.provider}, model={args.model}\n"
+            f"  system_prompt: {system_prompt or ''}\n"
+            f"  user_message: {text}"
+        )
 
         request_id = get_request_context()
         if request_id:
@@ -263,8 +267,8 @@ If you want to respond directly without tools:
                 "type": "sending",
                 "provider": args.provider,
                 "model": args.model,
-                "system_prompt": (system_prompt or "")[:500],
-                "user_message": text[:1000],
+                "system_prompt": system_prompt or "",
+                "user_message": text,
             })
 
         # Initialize verbose logging for this call
@@ -351,8 +355,7 @@ If you want to respond directly without tools:
             tc.pop("_arg_buf", None)
 
         # Log LLM response
-        preview = content[:300] + "..." if len(content) > 300 else content
-        log_llm_to_agent(f"Response: {preview}")
+        log_llm_to_agent(f"Response: {content}")
 
         # If thinking was present, prepend it for JSON extraction context
         if expect_json and thinking_content and not content:

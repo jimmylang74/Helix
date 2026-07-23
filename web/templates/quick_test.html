@@ -12,7 +12,7 @@
             <h3 style="font-size: 14px;" data-i18n="qt.tabLog">运行日志</h3>
             <div class="log-controls" style="margin-bottom: 0;">
                 <label><span data-i18n="qt.logLines">显示行数：</span>
-                    <select id="logLines" onchange="loadRunLog()">
+                    <select id="logLines" onchange="restartLogStream()">
                         <option value="50">50</option>
                         <option value="100">100</option>
                         <option value="200">200</option>
@@ -21,10 +21,10 @@
                     </select>
                 </label>
                 <label>
-                    <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()">
+                    <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()" style="display:none;">
                     <span data-i18n="qt.autoRefresh">自动刷新</span>
                 </label>
-                <button class="btn btn-sm btn-outline" onclick="loadRunLog()" data-i18n="qt.refresh">🔄 刷新</button>
+                <button class="btn btn-sm btn-outline" onclick="restartLogStream()" data-i18n="qt.refresh">🔄 刷新</button>
                 <button class="btn btn-sm btn-outline" onclick="exportRunLog()" data-i18n="qt.exportLog">📥 导出</button>
             </div>
         </div>

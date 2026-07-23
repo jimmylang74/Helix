@@ -29,6 +29,7 @@ from modules.utils.logger import (
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
 )
 from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
+from modules.core import status_events
 from modules.utils.file_ops import FileOps
 
 
@@ -106,6 +107,9 @@ class AgentOrchestrator:
             log_error(f"Orchestrator error: {e}")
             import traceback
             log_error(traceback.format_exc())
+            state["error"] = str(e)
+            state["orchestrator_phase"] = "done"
+            status_events.emit(request_id, state)
             return self._error_response(state, str(e))
         finally:
             llm_cleanup(request_id)
@@ -152,6 +156,7 @@ class AgentOrchestrator:
         todo_manager.set_todos(state, todos)
         state["todo_subtask_lists"] = [[] for _ in todos]
         context_manager.add_message(state, "assistant", json.dumps(response, ensure_ascii=False))
+        status_events.emit(state["request_id"], state)
 
     def _determine_loop_level(self, state: AgentState):
         """Determine if this is a simple (1-loop) or complex (2-loop) request."""
@@ -204,6 +209,7 @@ class AgentOrchestrator:
 
             all_done = todo_manager.advance_todo(state, todo_summary)
             log_orchestrator(f"Todo completed. Progress:\n{todo_manager.get_progress(state)}")
+            status_events.emit(state["request_id"], state)
 
         log_orchestrator("Todo Loop completed.")
 
@@ -212,6 +218,7 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "subtask_loop"
         state["current_subtask"] = todo_item
         state["subtask_status"] = "running"
+        status_events.emit(state["request_id"], state)
 
         system_prompt = self._get_system_prompt(state["intent_type"])
         tool_definitions = self._build_tool_definitions()
@@ -246,6 +253,7 @@ class AgentOrchestrator:
             subtask_status = "completed" if result else "failed"
             if todo_idx < len(todo_subtask_lists):
                 todo_subtask_lists[todo_idx][idx - 1]["status"] = subtask_status
+            status_events.emit(state["request_id"], state)
 
             subtask_summary = self._generate_subtask_summary(state, subtask, result, tool_definitions, system_prompt)
             context_manager.save_subtask_summary(state, subtask, subtask_summary)
@@ -533,6 +541,7 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "done"
 
         log_llm_decision(f"Summary generated ({len(summary)} chars)")
+        status_events.emit(state["request_id"], state)
 
     def cancel_request(self, request_id: str) -> bool:
         """Cancel an active request. Returns True if found and cancelled."""
@@ -543,6 +552,7 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
         log_orchestrator(f"Request {request_id} cancelled by user")
+        status_events.emit(request_id, state)
         return True
 
     def is_cancelled(self, state: AgentState) -> bool:

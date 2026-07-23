@@ -10,10 +10,10 @@
 const STORAGE_KEY = 'qt_state';
 
 let currentRequestId = null;
-let autoRefreshTimer = null;
-let todoPollTimer = null;
 let isProcessing = false;
 let llmEventSource = null;
+let logEventSource = null;
+let statusEventSource = null;
 
 function saveState() {
     const data = {
@@ -41,8 +41,7 @@ function clearState() {
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof i18nReady !== 'undefined') await i18nReady;
     setupTestForm();
-    loadRunLog();
-    startAutoRefreshLog();
+    startLogStream();
     restoreFromStorage();
 });
 
@@ -74,8 +73,7 @@ async function restoreFromStorage() {
         setProcessing(true);
         updateStatus('processing');
         clearFinalResult();
-        startTodoPolling();
-        startFinalResultPolling();
+        startStatusStream(saved.requestId);
     }
 }
 
@@ -108,8 +106,7 @@ function setupTestForm() {
         try {
             await submitWithStreaming(requestType, requestInput);
         } catch (error) {
-            stopTodoPolling();
-            stopFinalResultPolling();
+            stopStatusStream();
             setProcessing(false);
             updateStatus('error');
             showToast(`${__('qt.failure')}: ${error.message}`, 'error');
@@ -120,13 +117,12 @@ function setupTestForm() {
 
     cancelBtn.addEventListener('click', async () => {
         stopLlmStream();
+        stopStatusStream();
         if (currentRequestId) {
             try {
                 await apiCall('agent/cancel', { request_id: currentRequestId });
             } catch (_) {}
         }
-        stopTodoPolling();
-        stopFinalResultPolling();
         setProcessing(false);
         updateStatus('idle');
         document.getElementById('resultIntent').textContent = '';
@@ -151,13 +147,6 @@ function setupTestForm() {
 
 async function submitWithStreaming(requestType, requestInput) {
     const rpcId = `rpc_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-    currentRequestId = rpcId;
-    saveState();
-
-    startTodoPolling();
-    startFinalResultPolling();
-
-    console.log(`[DEBUG] submitWithStreaming called: rpcId=${rpcId}, intent=${requestType}`);
 
     try {
         const response = await fetch('/api/rpc', {
@@ -167,11 +156,9 @@ async function submitWithStreaming(requestType, requestInput) {
                 jsonrpc: '2.0',
                 id: rpcId,
                 method: 'agent/router',
-                params: { request: requestInput, intent: requestType, rpc_id: rpcId },
+                params: { request: requestInput, intent: requestType },
             }),
         });
-
-        console.log(`[DEBUG] fetch response received: status=${response.status}, ok=${response.ok}`);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -183,12 +170,15 @@ async function submitWithStreaming(requestType, requestInput) {
             throw new Error(data.error.message || 'Request failed');
         }
 
+        // Use the backend-assigned request_id, not the frontend rpcId
         const requestId = data.result?.request_id;
         if (requestId) {
+            currentRequestId = requestId;
+            saveState();
             startLlmStream(requestId);
+            startStatusStream(requestId);
         }
     } catch (error) {
-        console.error(`[DEBUG] submitWithStreaming error:`, error);
         throw error;
     }
 }
@@ -317,28 +307,55 @@ function setProcessing(processing) {
     }
 }
 
-// ========== Run Log ==========
+// ========== Run Log (SSE) ==========
 
-async function loadRunLog() {
-    const lines = document.getElementById('logLines').value;
-    const result = await apiCall('logs.get', { lines: parseInt(lines) });
+function startLogStream() {
+    stopLogStream();
+    const es = new EventSource('/api/log-stream');
+    logEventSource = es;
+    es.onmessage = (e) => {
+        try {
+            const event = JSON.parse(e.data);
+            if (event.type === 'log' && event.lines) {
+                appendLogLines(event.lines);
+            }
+        } catch (_) {}
+    };
+    es.onerror = () => {
+        es.close();
+        logEventSource = null;
+    };
+}
+
+function stopLogStream() {
+    if (logEventSource) {
+        logEventSource.close();
+        logEventSource = null;
+    }
+}
+
+function restartLogStream() {
+    stopLogStream();
+    startLogStream();
+}
+
+function appendLogLines(lines) {
     const container = document.getElementById('runLogContainer');
+    if (!container) return;
 
-    if (!result.success) {
-        container.innerHTML = `<div class="log-entry error">${__('qt.logLoadFailed')}${result.error}</div>`;
-        return;
+    if (container.querySelector('.log-entry.info') && container.children.length === 1) {
+        container.innerHTML = '';
     }
 
-    const logs = result.logs || [];
-    if (logs.length === 0) {
-        container.innerHTML = `<div class="log-entry info">${__('qt.noLogs')}</div>`;
-        return;
-    }
+    lines.forEach(line => {
+        const div = document.createElement('div');
+        div.className = `log-entry ${getLogClass(line)}`;
+        div.textContent = line;
+        container.appendChild(div);
+    });
 
-    container.innerHTML = logs.map(line =>
-        `<div class="log-entry ${getLogClass(line)}">${escapeHtml(line)}</div>`
-    ).join('');
-    container.scrollTop = container.scrollHeight;
+    const autoScroll = document.getElementById('autoRefreshLog')?.checked !== false;
+    if (autoScroll) container.scrollTop = container.scrollHeight;
 }
 
 function getLogClass(line) {
@@ -361,35 +378,51 @@ function escapeHtml(text) {
 }
 
 function toggleAutoRefreshLog() {
-    document.getElementById('autoRefreshLog').checked ? startAutoRefreshLog() : stopAutoRefreshLog();
+    // kept for HTML compatibility; log stream is always active
 }
 
-function startAutoRefreshLog() {
-    stopAutoRefreshLog();
-    autoRefreshTimer = setInterval(loadRunLog, 3000);
+// ========== Status Stream (SSE) ==========
+
+function startStatusStream(requestId) {
+    stopStatusStream();
+    const es = new EventSource(`/api/status-stream?request_id=${encodeURIComponent(requestId)}`);
+    statusEventSource = es;
+    es.onmessage = (e) => {
+        try {
+            const event = JSON.parse(e.data);
+            if (event.type === 'status') {
+                handleStatusEvent(event);
+            }
+        } catch (_) {}
+    };
+    es.onerror = () => {
+        es.close();
+        statusEventSource = null;
+    };
 }
 
-function stopAutoRefreshLog() {
-    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+function stopStatusStream() {
+    if (statusEventSource) {
+        statusEventSource.close();
+        statusEventSource = null;
+    }
 }
 
-// ========== Todo Tree ==========
+function handleStatusEvent(state) {
+    renderTodoTree(state);
 
-function startTodoPolling() {
-    stopTodoPolling();
-    todoPollTimer = setInterval(pollTodoState, 2000);
-}
-
-function stopTodoPolling() {
-    if (todoPollTimer) { clearInterval(todoPollTimer); todoPollTimer = null; }
-}
-
-async function pollTodoState() {
-    if (!currentRequestId) return;
-    try {
-        const result = await apiCall('agent/status', { request_id: currentRequestId });
-        if (result.success) renderTodoTree(result);
-    } catch (_) {}
+    if (state.final_result) {
+        updateFinalResult(state.final_result, state.generated_files);
+        stopStatusStream();
+        setProcessing(false);
+        updateStatus('success');
+        saveState();
+    } else if (state.error) {
+        stopStatusStream();
+        setProcessing(false);
+        updateStatus('error');
+        saveState();
+    }
 }
 
 function renderTodoTree(state) {
@@ -439,32 +472,6 @@ function renderTodoTree(state) {
 }
 
 // ========== Final Result ==========
-
-let finalResultPollTimer = null;
-
-function startFinalResultPolling() {
-    stopFinalResultPolling();
-    finalResultPollTimer = setInterval(pollFinalResult, 2000);
-}
-
-function stopFinalResultPolling() {
-    if (finalResultPollTimer) { clearInterval(finalResultPollTimer); finalResultPollTimer = null; }
-}
-
-async function pollFinalResult() {
-    if (!currentRequestId) return;
-    try {
-        const result = await apiCall('agent/status', { request_id: currentRequestId });
-        if (result.success && result.final_result) {
-            updateFinalResult(result.final_result, result.generated_files);
-            stopTodoPolling();
-            stopFinalResultPolling();
-            setProcessing(false);
-            updateStatus('success');
-            saveState();
-        }
-    } catch (_) {}
-}
 
 function clearFinalResult() {
     document.getElementById('finalResultContainer').innerHTML =

@@ -11,6 +11,8 @@ import uuid
 import threading
 from flask import Blueprint, request, jsonify, render_template, send_from_directory, Response
 from modules.llm.llm_events import stream as llm_event_stream
+from modules.core import status_events
+from modules.utils import log_watcher
 
 from modules.core.orchestrator import orchestrator
 from modules.config.config_manager import ConfigManager
@@ -20,14 +22,10 @@ from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
 from modules.utils.logger import log_info, log_error, log_debug
 
-HIGH_FREQ_METHODS = {"agent/status", "logs.get"}
 
 # Blueprints
 api_bp = Blueprint("api", __name__, url_prefix="/api")
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
-
-# rpc_id → req_id mapping (frontend uses rpc_id to track requests)
-_rpc_to_req = {}
 
 
 # ============================================================
@@ -91,10 +89,7 @@ def _agent_router(params):
     if forced_intent != "auto" and forced_intent not in ("ppt", "research", "coding"):
         raise ValueError(f"Invalid intent: {forced_intent}. Must be one of: auto, ppt, research, coding")
 
-    rpc_id = params.get("rpc_id", "")
     request_id = f"req_{uuid.uuid4().hex[:12]}"
-    if rpc_id:
-        _rpc_to_req[rpc_id] = request_id
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
 
     effective = f"[Intent: {forced_intent}] {user_request}" if forced_intent != "auto" else user_request
@@ -117,8 +112,6 @@ def _agent_status(params):
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
     state = orchestrator.get_state(request_id)
-    if not state and request_id in _rpc_to_req:
-        state = orchestrator.get_state(_rpc_to_req[request_id])
     if not state:
         raise ValueError(f"Request '{request_id}' not found")
     return state
@@ -130,8 +123,6 @@ def _agent_cancel(params):
         raise ValueError("Missing 'request_id' in params")
 
     cancelled = orchestrator.cancel_request(request_id)
-    if not cancelled and request_id in _rpc_to_req:
-        cancelled = orchestrator.cancel_request(_rpc_to_req[request_id])
 
     if not cancelled:
         raise ValueError(f"Request '{request_id}' not found or already completed")
@@ -183,26 +174,6 @@ def _intents_delete(params):
         raise ValueError("Missing 'intent_type' in params")
     success = intent_router.delete_intent(intent_type)
     return {"success": success}
-
-
-# ---- Logs ----
-
-def _logs_get(params):
-    log_file = params.get("file", "debugout.log")
-    lines    = int(params.get("lines", 0))
-    log_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        log_file,
-    )
-    if not os.path.exists(log_path):
-        return {"logs": [], "file": log_file, "total_lines": 0}
-    with open(log_path, "r", encoding="utf-8") as f:
-        all_lines = f.readlines()
-    return {
-        "logs": all_lines[-lines:] if lines > 0 else all_lines,
-        "total_lines": len(all_lines),
-        "file": log_file,
-    }
 
 
 def _history_get(params):
@@ -397,7 +368,6 @@ METHODS = {
     "intents.update":      _intents_update,
     "intents.delete":      _intents_delete,
     # Logs / History
-    "logs.get":            _logs_get,
     "history.get":         _history_get,
     # LLM
     "llm.test":            _llm_test,
@@ -462,8 +432,7 @@ def rpc_dispatch():
         return _rpc_error(INVALID_PARAMS, "'params' must be an object", rpc_id)
 
     # --- Dispatch ----------------------------------------------------
-    if method not in HIGH_FREQ_METHODS:
-        log_debug(f"rpc_dispatch method={method}, params_keys={list(params.keys()) if params else []}")
+    log_debug(f"rpc_dispatch method={method}, params_keys={list(params.keys()) if params else []}")
     handler = METHODS.get(method)
     if handler is None:
         available = ", ".join(sorted(METHODS.keys()))
@@ -497,10 +466,6 @@ def create_admin_routes(app):
     @app.route("/config")
     def config_page():
         return render_template("config.html")
-
-    @app.route("/logs")
-    def logs_page():
-        return render_template("logs.html")
 
     @app.route("/history")
     def history_page():
@@ -536,6 +501,34 @@ def create_admin_routes(app):
             return jsonify({"error": "Missing request_id"}), 400
         return Response(
             llm_event_stream(request_id),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.route("/api/log-stream")
+    def log_stream():
+        """SSE endpoint: streams new log lines from debugout.log."""
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        return Response(
+            log_watcher.stream("debugout.log", project_root),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.route("/api/status-stream")
+    def status_stream():
+        """SSE endpoint: streams agent state changes for a request."""
+        request_id = request.args.get("request_id", "")
+        if not request_id:
+            return jsonify({"error": "Missing request_id"}), 400
+        return Response(
+            status_events.stream(request_id),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

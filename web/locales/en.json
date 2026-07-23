@@ -211,15 +211,6 @@
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
 
-  "logs.title": "Logs",
-  "logs.refresh": "🔄 Refresh",
-  "logs.clear": "🗑️ Clear",
-  "logs.showLines": "Show lines:",
-  "logs.autoRefresh": "Auto Refresh",
-  "logs.colorCode": "Color Code",
-  "logs.noLogs": "No logs",
-  "logs.loadFailed": "Failed to load logs: ",
-
   "history.title": "History",
   "history.refresh": "🔄 Refresh",
   "history.requestId": "Request ID",

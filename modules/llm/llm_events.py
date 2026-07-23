@@ -9,14 +9,16 @@ _call_engine() via the StdoutEventEmitter wrapper.
 import json
 import queue
 import threading
+from collections import deque
 from typing import Any, Dict, Generator, Optional
 
 # Per-request event queues: { request_id: [Queue, Queue, ...] }
 _queues: Dict[str, list] = {}
 _lock = threading.Lock()
 
-# Event buffer for events emitted before any consumer connects
-_buffers: Dict[str, list] = {}
+_buf_buffers: Dict[str, deque] = {}
+_buf_counters: Dict[str, int] = {}
+MAX_BUFFER = 500
 
 # Thread-local storage for current request context
 _ctx = threading.local()
@@ -48,27 +50,20 @@ def _get_queues(request_id: str) -> list:
 
 
 def _register_queue(request_id: str) -> queue.Queue:
-    """Register a new consumer queue for a request, flushing any buffered events into it."""
     q: queue.Queue = queue.Queue()
     with _lock:
         _queues.setdefault(request_id, []).append(q)
-        buffered = _buffers.pop(request_id, None)
-    if buffered:
-        for payload in buffered:
-            try:
-                q.put_nowait(payload)
-            except queue.Full:
-                pass
     return q
 
 
 def cleanup(request_id: str) -> None:
-    """Remove all queues for a completed request and send sentinel."""
     with _lock:
         queues = _queues.pop(request_id, [])
+        _buf_buffers.pop(request_id, None)
+        _buf_counters.pop(request_id, None)
     for q in queues:
         try:
-            q.put_nowait(None)  # sentinel: stream is done
+            q.put_nowait(None)
         except queue.Full:
             pass
 
@@ -76,62 +71,51 @@ def cleanup(request_id: str) -> None:
 # ── Emit (called by LLMClient._call_engine) ────────────────────────
 
 def emit(request_id: str, event: Dict[str, Any]) -> None:
-    """Push a single NDJSON event to all consumer queues for this request.
-
-    If no consumer has connected yet, the event is buffered and flushed
-    when the first queue registers.
-    """
     payload = json.dumps(event, ensure_ascii=False)
-    with _lock:
-        queues = _queues.get(request_id, [])
-    if queues:
-        for q in queues:
-            try:
-                q.put_nowait(payload)
-            except queue.Full:
-                pass
-    else:
-        with _lock:
-            _buffers.setdefault(request_id, []).append(payload)
 
-
-def emit_done(request_id: str) -> None:
-    """Signal that all events for this request have been emitted."""
     with _lock:
-        queues = _queues.get(request_id, [])
+        idx = _buf_counters.get(request_id, 0) + 1
+        _buf_counters[request_id] = idx
+        buf = _buf_buffers.setdefault(request_id, deque(maxlen=MAX_BUFFER))
+        buf.append((idx, payload))
+        queues = list(_queues.get(request_id, []))
     for q in queues:
         try:
-            q.put_nowait(None)  # sentinel
+            q.put_nowait(payload)
         except queue.Full:
             pass
 
 
+def emit_done(request_id: str) -> None:
+    with _lock:
+        queues = _queues.get(request_id, [])
+    for q in queues:
+        try:
+            q.put_nowait(None)
+        except queue.Full:
+            pass
+
+
+def _get_buffer_snapshot(request_id: str):
+    with _lock:
+        buf = _buf_buffers.get(request_id)
+        return list(buf) if buf else []
+
+
 # ── SSE stream generator (used by Flask endpoint) ──────────────────
 
-def stream(request_id: str, timeout: float = 120.0) -> Generator[str, None, None]:
-    """Yield SSE-formatted strings for *request_id*.
-
-    Blocks on each queue.get() until an event arrives or *timeout* seconds
-    elapse.  Yields ``None`` sentinel as ``": keepalive\n\n"`` to prevent
-    proxy/browser timeouts.
-
-    Usage in Flask::
-
-        @app.route("/api/llm-stream")
-        def llm_stream():
-            rid = request.args.get("request_id", "")
-            return Response(stream(rid), mimetype="text/event-stream")
-    """
+def stream(request_id: str, cursor: int = 0, timeout: float = 120.0) -> Generator[str, None, None]:
     q = _register_queue(request_id)
-    # Send an initial comment so the client knows the connection is alive
     yield ": connected\n\n"
+
+    for _, payload in _get_buffer_snapshot(request_id):
+        yield f"data: {payload}\n\n"
 
     try:
         while True:
             try:
                 data = q.get(timeout=timeout)
             except queue.Empty:
-                # No event within timeout — send keepalive comment
                 yield ": keepalive\n\n"
                 continue
 
@@ -140,7 +124,6 @@ def stream(request_id: str, timeout: float = 120.0) -> Generator[str, None, None
 
             yield f"data: {data}\n\n"
     finally:
-        # Remove this queue from the consumer list
         with _lock:
             queues = _queues.get(request_id, [])
             try:

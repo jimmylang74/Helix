@@ -499,8 +499,9 @@ def create_admin_routes(app):
         request_id = request.args.get("request_id", "")
         if not request_id:
             return jsonify({"error": "Missing request_id"}), 400
+        cursor = int(request.args.get("cursor", 0))
         return Response(
-            llm_event_stream(request_id),
+            llm_event_stream(request_id, cursor=cursor),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -510,10 +511,10 @@ def create_admin_routes(app):
 
     @app.route("/api/log-stream")
     def log_stream():
-        """SSE endpoint: streams new log lines from debugout.log."""
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cursor = int(request.args.get("cursor", 0))
         return Response(
-            log_watcher.stream("debugout.log", project_root),
+            log_watcher.stream("debugout.log", project_root, cursor=cursor),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -523,12 +524,12 @@ def create_admin_routes(app):
 
     @app.route("/api/status-stream")
     def status_stream():
-        """SSE endpoint: streams agent state changes for a request."""
         request_id = request.args.get("request_id", "")
         if not request_id:
             return jsonify({"error": "Missing request_id"}), 400
+        cursor = int(request.args.get("cursor", 0))
         return Response(
-            status_events.stream(request_id),
+            status_events.stream(request_id, cursor=cursor),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

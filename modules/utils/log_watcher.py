@@ -4,13 +4,20 @@ Background log file watcher with SSE push support.
 A daemon thread polls the log file for new lines and pushes them
 to all connected consumer queues.  Each SSE endpoint registers a
 queue via ``subscribe()``; the background thread handles the rest.
+
+A per-file ring buffer stores recent payloads so that SSE clients
+can reconnect with a ``cursor`` and replay missed events.
 """
 
+import json
 import os
 import queue
 import threading
 import time
+from collections import deque
 from typing import Dict, Generator, List
+
+MAX_BUFFER = 500
 
 # Per-file state
 _watchers: Dict[str, "_LogWatcher"] = {}
@@ -25,10 +32,12 @@ class _LogWatcher:
         self.interval = interval
         self._queues: List[queue.Queue] = []
         self._q_lock = threading.Lock()
-        self._offset = 0          # file byte offset for next read
+        self._offset = 0
         self._initialized = False
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._buffer: deque = deque(maxlen=MAX_BUFFER)
+        self._buf_idx: int = 0
 
     # ── Consumer management ──────────────────────────────────────
 
@@ -95,8 +104,9 @@ class _LogWatcher:
 
     def _broadcast(self, lines: List[str]):
         payload_lines = [line.rstrip("\n") for line in lines]
-        import json
-        payload = json.dumps({"type": "log", "lines": payload_lines}, ensure_ascii=False)
+        self._buf_idx += 1
+        payload = json.dumps({"type": "log", "cursor": self._buf_idx, "lines": payload_lines}, ensure_ascii=False)
+        self._buffer.append((self._buf_idx, payload))
         with self._q_lock:
             queues = list(self._queues)
         for q in queues:
@@ -104,6 +114,13 @@ class _LogWatcher:
                 q.put_nowait(payload)
             except queue.Full:
                 pass
+
+    def get_buffer_since(self, cursor: int) -> List[str]:
+        result = []
+        for idx, payload in self._buffer:
+            if idx > cursor:
+                result.append(payload)
+        return result
 
 
 # ── Public API ──────────────────────────────────────────────────────
@@ -140,20 +157,25 @@ def unsubscribe(q: queue.Queue, log_file: str = "debugout.log", project_root: st
 
 
 def stream(log_file: str = "debugout.log", project_root: str = "",
-           timeout: float = 120.0) -> Generator[str, None, None]:
-    """SSE stream generator for a log file.
+           cursor: int = 0, timeout: float = 120.0) -> Generator[str, None, None]:
+    if os.path.isabs(log_file):
+        log_path = log_file
+    else:
+        log_path = os.path.join(project_root, log_file) if project_root else log_file
 
-    Usage in Flask::
+    with _lock:
+        watcher = _watchers.get(log_path)
+    if watcher is None:
+        q = subscribe(log_file, project_root)
+        with _lock:
+            watcher = _watchers.get(log_path)
+    else:
+        q = watcher.subscribe()
 
-        @app.route("/api/log-stream")
-        def log_stream():
-            return Response(
-                stream("debugout.log", project_root),
-                mimetype="text/event-stream",
-            )
-    """
-    q = subscribe(log_file, project_root)
     yield ": connected\n\n"
+
+    for payload in watcher.get_buffer_since(0):
+        yield f"data: {payload}\n\n"
 
     try:
         while True:

@@ -14,6 +14,8 @@ let isProcessing = false;
 let llmEventSource = null;
 let logEventSource = null;
 let statusEventSource = null;
+let logCursor = 0;
+let statusCursor = 0;
 
 function saveState() {
     const data = {
@@ -74,6 +76,7 @@ async function restoreFromStorage() {
         updateStatus('processing');
         clearFinalResult();
         startStatusStream(saved.requestId);
+        startLlmStream(saved.requestId);
     }
 }
 
@@ -174,6 +177,8 @@ async function submitWithStreaming(requestType, requestInput) {
         const requestId = data.result?.request_id;
         if (requestId) {
             currentRequestId = requestId;
+            logCursor = 0;
+            statusCursor = 0;
             saveState();
             startLlmStream(requestId);
             startStatusStream(requestId);
@@ -311,12 +316,16 @@ function setProcessing(processing) {
 
 function startLogStream() {
     stopLogStream();
-    const es = new EventSource('/api/log-stream');
+    const url = logCursor > 0
+        ? `/api/log-stream?cursor=${logCursor}`
+        : '/api/log-stream';
+    const es = new EventSource(url);
     logEventSource = es;
     es.onmessage = (e) => {
         try {
             const event = JSON.parse(e.data);
             if (event.type === 'log' && event.lines) {
+                if (event.cursor) logCursor = event.cursor;
                 appendLogLines(event.lines);
             }
         } catch (_) {}
@@ -385,12 +394,14 @@ function toggleAutoRefreshLog() {
 
 function startStatusStream(requestId) {
     stopStatusStream();
-    const es = new EventSource(`/api/status-stream?request_id=${encodeURIComponent(requestId)}`);
+    const cursorParam = statusCursor > 0 ? `&cursor=${statusCursor}` : '';
+    const es = new EventSource(`/api/status-stream?request_id=${encodeURIComponent(requestId)}${cursorParam}`);
     statusEventSource = es;
     es.onmessage = (e) => {
         try {
             const event = JSON.parse(e.data);
             if (event.type === 'status') {
+                if (event.cursor) statusCursor = event.cursor;
                 handleStatusEvent(event);
             }
         } catch (_) {}

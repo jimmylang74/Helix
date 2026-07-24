@@ -3,7 +3,6 @@ debugout.log
 output/
 download/
 __pycache__/
-Helix.json
 .env
 .git-credential-helper.sh
 llm_engine.log

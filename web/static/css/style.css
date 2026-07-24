@@ -324,6 +324,44 @@ select.form-control {
     display: none;
 }
 
+/* Tabs */
+.tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 20px;
+    border-bottom: 2px solid var(--border);
+}
+
+.tab-btn {
+    padding: 10px 24px;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    font-size: 14px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    color: var(--primary);
+}
+
+.tab-btn.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+}
+
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+}
+
 /* Tables */
 .table {
     width: 100%;
@@ -672,17 +710,6 @@ select.form-control {
     max-width: 140px;
     height: auto;
 }
-
-/* LLM Interaction Log Color Coding */
-.llm-log-recv { color: #81c784; }
-.llm-log-recv-tag { color: #a5d6a7; font-weight: bold; }
-.llm-log-send { color: #64b5f6; }
-.llm-log-send-tag { color: #90caf9; font-weight: bold; }
-.llm-log-error { color: #ff5252; }
-.llm-log-error-tag { color: #ff8a80; font-weight: bold; }
-.llm-log-stdin { color: #ba68c8; }
-.llm-log-stdin-tag { color: #ce93d8; font-weight: bold; }
-.llm-log-default { color: #e0e0e0; }
 
 /* ============================================
    Quick Test Page Styles

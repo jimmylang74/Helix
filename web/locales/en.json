@@ -208,6 +208,8 @@
   "config.server.languageLabel": "Interface Language",
   "config.server.langZh": "中文 (Chinese)",
   "config.server.langEn": "English",
+  "config.server.defaultCity": "Default City",
+  "config.server.defaultCityPlaceholder": "Nanjing",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
 

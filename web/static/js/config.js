@@ -66,6 +66,9 @@ async function loadConfig() {
     document.getElementById('serverHost').value = server.host || '0.0.0.0';
     const langSelect = document.getElementById('languageSelect');
     if (langSelect) langSelect.value = server.language || 'zh-CN';
+
+    const defaultLocation = config.default_location || {};
+    document.getElementById('defaultLocationCity').value = defaultLocation.city || 'Nanjing';
 }
 
 function onProviderChange() {
@@ -603,6 +606,8 @@ async function saveServerConfig() {
         debug: true,
         language: selectedLang,
     };
+    const defaultCity = document.getElementById('defaultLocationCity').value.trim() || 'Nanjing';
+    await apiCall('config.update', { settings: { 'default_location.city': defaultCity } });
     const result = await apiCall('config.update', { section: 'server', values: serverConfig });
     if (result.success) {
         showToast(__('config.server.saveSuccess'), 'success');

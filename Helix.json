@@ -1,0 +1,216 @@
+{
+  "server": {
+    "rpc_port": 11555,
+    "admin_port": 11556,
+    "host": "0.0.0.0",
+    "debug": true,
+    "language": "zh-CN"
+  },
+  "llm": {
+    "provider": "ollama_native",
+    "model": "qwen3.5:27b",
+    "endpoint": "http://192.168.10.39:11434",
+    "api_key": "",
+    "verbose": true,
+    "log_file": "llm_engine.log"
+  },
+  "intents": {
+    "ppt": {
+      "enabled": true,
+      "name": "PPT生成",
+      "description": "根据用户提供的资料，智能生成PPT排版、背景设计和信息补全"
+    },
+    "research": {
+      "enabled": true,
+      "name": "智能搜索",
+      "description": "根据用户的问题，搜索网络内容，筛选和清洗内容，进行最终回答"
+    },
+    "coding": {
+      "enabled": true,
+      "name": "代码生成",
+      "description": "根据用户要求生成代码，并进行简单测试和验证"
+    }
+  },
+  "mcp_servers": {
+    "searxng": {
+      "type": "local",
+      "enabled": true,
+      "command": "python3",
+      "args": [
+        "mcp/searxng_server.py"
+      ],
+      "env": {
+        "SEARXNG_BASE_URL": "http://192.168.10.39:8080/",
+        "SEARXNG_MAX_RESULTS": "10"
+      }
+    },
+    "image_search": {
+      "type": "local",
+      "enabled": true,
+      "command": "python3",
+      "args": [
+        "mcp/image_search_server.py"
+      ],
+      "intent_categories": [
+        "ppt",
+        "research"
+      ],
+      "env": {
+        "IMAGE_PROVIDER": "pexels",
+        "PEXELS_API_KEY": "QUqfnqcgCmjzpbCQdvubaZkaJbWR83uOfACGvS5nbnAoEz5DxojpwJVq",
+        "UNSPLASH_API_KEY": "j-uq5eNF_zDFTudMwFT-x4g3RRfO6GvChjqnj_FS_WA"
+      }
+    },
+    "pyWinBots": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://192.168.10.34:8000/mcp"
+    },
+    "webmail": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://192.168.10.39:5555/api/mcp"
+    }
+  },
+  "default_location": {
+    "city": "南京"
+  },
+  "plugins": {
+    "run_code": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "save_code": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "image_download": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "create_ppt": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "bash": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "delete_file": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "grep": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "ls": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "read_file": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "write_file": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "web_fetch_batch": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "web_search": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "image_search": {
+      "enabled": true,
+      "intents": [
+        "ppt",
+        "research",
+        "coding"
+      ]
+    },
+    "calculator": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "weather": {
+      "enabled": true,
+      "intents": [
+        "research"
+      ]
+    },
+    "weixin_send_message": {
+      "enabled": true,
+      "intents": []
+    },
+    "login": {
+      "enabled": true,
+      "intents": []
+    },
+    "list_server": {
+      "enabled": true,
+      "intents": []
+    },
+    "send_mail": {
+      "enabled": true,
+      "intents": []
+    },
+    "receive_mails": {
+      "enabled": true,
+      "intents": []
+    }
+  }
+}

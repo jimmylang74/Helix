@@ -7,3 +7,4 @@ langgraph>=1.2
 python-pptx>=1.0
 requests>=2.30
 Pillow>=10.0
+pypinyin>=0.50

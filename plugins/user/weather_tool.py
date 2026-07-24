@@ -8,6 +8,7 @@ weather_tool.py - 天气查询示例外部插件
 
 import json
 import urllib.request
+import urllib.parse
 
 from modules.agents.tool_base import BaseTool
 from modules.utils.logger import log_tool_call
@@ -33,7 +34,7 @@ class WeatherTool(BaseTool):
     def execute(self, city: str = "", **kwargs) -> str:
         log_tool_call(f"weather(city='{city}')")
         try:
-            url = f"https://wttr.in/{city}?format=j1"
+            url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
             req = urllib.request.Request(
                 url,
                 headers={"User-Agent": "Helix-Agent/1.0"},

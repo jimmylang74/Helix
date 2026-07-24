@@ -81,7 +81,7 @@ def main():
     debug = args.debug if args.debug is not None else config.is_debug()
 
     # Initialize logger
-    init_logger("debugout.log", console=True)
+    init_logger("debugout.log", console=debug)
     log_info(f"Starting AI Hybrid Agent Service...")
     log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 
@@ -110,7 +110,7 @@ def main():
     # Run admin app in a separate thread
     def run_admin():
         log_info(f"Admin UI starting on http://{host}:{admin_port}")
-        admin_app.run(host=host, port=admin_port, debug=debug, use_reloader=False)
+        admin_app.run(host=host, port=admin_port, debug=False, use_reloader=False)
 
     admin_thread = threading.Thread(target=run_admin, daemon=True)
     admin_thread.start()
@@ -122,7 +122,7 @@ def main():
     log_orchestrator(f"RPC endpoint: POST http://{host}:{rpc_port}/api/rpc")
 
     try:
-        service_app.run(host=host, port=rpc_port, debug=debug, use_reloader=False)
+        service_app.run(host=host, port=rpc_port, debug=False, use_reloader=False)
     except KeyboardInterrupt:
         log_info("Shutting down...")
     except Exception as e:

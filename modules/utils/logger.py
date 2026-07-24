@@ -60,7 +60,8 @@ def _now() -> str:
 def _write(msg: str, color: str = Colors.WHITE, tag: str = "INFO"):
     """Write log message to console (with color) and file."""
     timestamp = _now()
-    colored = f"{color}{msg}{Colors.RESET}" if color and _LOG_TO_CONSOLE else msg
+    truncated = msg[:100] + "..." if len(msg) > 100 else msg
+    colored = f"{color}{truncated}{Colors.RESET}" if color and _LOG_TO_CONSOLE else truncated
     plain = f"[{timestamp}] [{tag}] {msg}"
     
     # Remove color codes for file output

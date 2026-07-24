@@ -5,7 +5,6 @@
 
 let currentEditServer = null;
 let llmProviderInfo = {};
-let llmLogPollTimer = null;
 let confirmModalResolve = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -136,62 +135,6 @@ async function testLLM() {
     }
     btn.disabled = false;
     btn.textContent = __('config.llm.test');
-}
-
-async function refreshLLMLogs() {
-    const viewer = document.getElementById('llmLogViewer');
-    const result = await apiCall('llm.logs', { lines: 300 });
-    if (!result.success || !result.logs || result.logs.length === 0) {
-        viewer.innerHTML = '<span class="text-muted">' + __('config.llm.noLogs') + '</span>';
-        return;
-    }
-    
-    // Color code log lines based on [RECV], [SEND], [ERROR], [STDIN] prefixes
-    // Supports both formats:
-    //   - Old: [SEND] content
-    //   - New: [2026-07-13 15:19:41.391] [SEND] content
-    // Multi-line logs: indented lines inherit color from previous [TAG] line
-    const logLineRegex = /^(\[[\d\-:\. ]+\]\s*)?\[(RECV|SEND|ERROR|STDIN)\]\s*/;
-    
-    let lastCssClass = '';
-    
-    viewer.innerHTML = result.logs.map(line => {
-        const match = line.match(logLineRegex);
-        if (match) {
-            const prefix = match[1] || '';
-            const tag = match[2];
-            if (tag === 'RECV') lastCssClass = 'llm-log-recv';
-            else if (tag === 'SEND') lastCssClass = 'llm-log-send';
-            else if (tag === 'ERROR') lastCssClass = 'llm-log-error';
-            else if (tag === 'STDIN') lastCssClass = 'llm-log-stdin';
-            
-            const content = line.substring(match[0].length);
-            return `<span class="${lastCssClass}">${escapeHtml(prefix)}<span class="${lastCssClass}-tag">[${tag}]</span> ${escapeHtml(content)}</span>`;
-        }
-        
-        if (lastCssClass && !match) {
-            return `<span class="${lastCssClass}">${escapeHtml(line)}</span>`;
-        }
-        
-        return `<span class="llm-log-default">${escapeHtml(line)}</span>`;
-    }).join('\n');
-    
-    viewer.scrollTop = viewer.scrollHeight;
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-function startLLMLogPoll() {
-    stopLLMLogPoll();
-    llmLogPollTimer = setInterval(refreshLLMLogs, 10000);
-}
-
-function stopLLMLogPoll() {
-    if (llmLogPollTimer) { clearInterval(llmLogPollTimer); llmLogPollTimer = null; }
 }
 
 // ============================================================

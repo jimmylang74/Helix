@@ -208,6 +208,8 @@
   "config.server.languageLabel": "界面语言",
   "config.server.langZh": "中文",
   "config.server.langEn": "英文",
+  "config.server.defaultCity": "默认城市",
+  "config.server.defaultCityPlaceholder": "Nanjing",
   "config.server.saveSuccess": "服务设置已保存（部分设置需重启生效）",
   "config.server.saveFailed": "保存失败",
 

@@ -72,6 +72,9 @@ class ConfigManager:
                 "debug": True,
                 "language": "zh-CN"
             },
+            "default_location": {
+                "city": "Nanjing"
+            },
             "llm": {
                 "provider": "ollama_native",
                 "model": "qwen2.5:7b",

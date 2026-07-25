@@ -21,6 +21,7 @@ class Colors:
     GRAY = "\033[90m"
     BOLD = "\033[1m"
     DIM = "\033[2m"
+    DARK_GOLD = "\033[38;5;136m"  # 暗金色
     
     # Semantic colors
     AGENT_TO_LLM = BLUE       # Agent sending to LLM
@@ -31,7 +32,7 @@ class Colors:
     ERROR = RED               # Errors
     WARNING = YELLOW          # Warnings
     INFO = WHITE              # General info
-    TOOL_CALL = CYAN          # Tool calling
+    TOOL_CALL = DARK_GOLD     # Tool calling (暗金色)
     STATE = GRAY              # State transitions
 
 _LOG_FILE: Optional[str] = None

@@ -533,17 +533,17 @@ function addLlmLogEntry(entry) {
 
         switch (entry.type) {
             case 'sending':
-                div.innerHTML = `<span class="llm-log-sending-label">📤 Sending to LLM:</span> <span class="llm-log-sending-model">${escapeHtml(entry.provider)}/${escapeHtml(entry.model)}</span>`;
+                div.innerHTML = `<span class="llm-log-sending-label">📤 Sending to LLM:</span> <span class="llm-log-sending-model">${escapeHtml(entry.provider)}/${escapeHtml(entry.model)}</span><br>`;
                 if (entry.system_prompt) {
                     const spDiv = document.createElement('div');
                     spDiv.className = 'llm-log-sending-detail';
-                    spDiv.innerHTML = `<span class="llm-log-sending-detail-label">System:</span> ${escapeHtml(entry.system_prompt)}`;
+                    spDiv.innerHTML = `<span class="llm-log-sending-detail-label">System:</span><br>${escapeHtml(entry.system_prompt)}`;
                     div.appendChild(spDiv);
                 }
                 if (entry.user_message) {
                     const umDiv = document.createElement('div');
                     umDiv.className = 'llm-log-sending-detail';
-                    umDiv.innerHTML = `<span class="llm-log-sending-detail-label">User:</span> ${escapeHtml(entry.user_message)}`;
+                    umDiv.innerHTML = `<span class="llm-log-sending-detail-label">User:</span><br>${escapeHtml(entry.user_message)}`;
                     div.appendChild(umDiv);
                 }
                 break;
@@ -607,7 +607,7 @@ function exportLlmLog() {
 
     const lines = [];
     container.querySelectorAll('.llm-log-entry').forEach(el => {
-        lines.push(el.textContent.trim());
+        lines.push(el.innerText.trim());
     });
     const content = lines.join('\n');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

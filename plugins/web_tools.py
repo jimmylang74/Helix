@@ -40,7 +40,8 @@ class WebFetchBatchTool(BaseTool):
                 if resp.status_code == 200:
                     content_type = resp.headers.get("Content-Type", "")
                     if any(t in content_type for t in ("text/html", "text/plain", "application/json")):
-                        text = self._extract_text(resp.text)
+                        text = self._decode_content(resp)
+                        text = self._extract_text(text)
                         combined.append(f"=== URL [{i+1}/{len(urls)}]: {url} ===\n{text[:3000]}\n")
                     else:
                         combined.append(f"=== URL [{i+1}/{len(urls)}]: {url} ===\n[Non-text content: {content_type}, {len(resp.content)} bytes]\n")
@@ -51,6 +52,38 @@ class WebFetchBatchTool(BaseTool):
                 combined.append(f"=== URL [{i+1}/{len(urls)}]: {url} ===\n[Error: {e}]\n")
                 log_error(f"Failed to fetch {url}: {e}")
         return "\n".join(combined)
+
+    @staticmethod
+    def _decode_content(resp: requests.Response) -> str:
+        """Decode response content with proper charset detection."""
+        content_type = resp.headers.get("Content-Type", "")
+        
+        # 1. Try charset from Content-Type header
+        charset = None
+        if "charset=" in content_type:
+            charset = content_type.split("charset=")[-1].split(";")[0].strip()
+        
+        if charset:
+            try:
+                return resp.content.decode(charset)
+            except (UnicodeDecodeError, LookupError):
+                pass
+        
+        # 2. Try UTF-8 first (most common)
+        try:
+            return resp.content.decode('utf-8')
+        except UnicodeDecodeError:
+            pass
+        
+        # 3. Try common Chinese encodings
+        for encoding in ('gbk', 'gb2312', 'gb18030', 'big5', 'euc-cn'):
+            try:
+                return resp.content.decode(encoding)
+            except (UnicodeDecodeError, LookupError):
+                continue
+        
+        # 4. Fallback: replace errors
+        return resp.content.decode('utf-8', errors='replace')
 
     @staticmethod
     def _extract_text(html: str) -> str:

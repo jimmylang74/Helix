@@ -446,20 +446,11 @@ class AgentOrchestrator:
                 urls = [r["url"] for r in results if r.get("url")]
                 state["urls_to_fetch"] = urls
 
-                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 条结果，获取 {len(urls)} 个网页...")
+                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 条结果")
 
                 formatted = json.dumps(results, ensure_ascii=False)
                 context_manager.add_message(state, "assistant",
                     f"[web_search results for '{query}']\n{formatted}")
-
-                if urls:
-                    log_agent_action(f"Auto-fetching {len(urls)} URLs...")
-                    fetched = tool_registry.call_tool("web_fetch_batch", {"urls": urls})
-                    state["fetched_content"].append(fetched)
-                    state["collected_data"].append(fetched)
-                    context_manager.add_message(state, "assistant",
-                        f"[Auto-fetched {len(urls)} URLs from web_search results]\n{fetched[:2000]}")
-                    result_text = fetched
 
             elif name == "image_search":
                 query = arguments.get("query", "")

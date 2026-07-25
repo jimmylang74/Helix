@@ -458,7 +458,7 @@ class AgentOrchestrator:
                     state["fetched_content"].append(fetched)
                     state["collected_data"].append(fetched)
                     context_manager.add_message(state, "assistant",
-                        f"[web_fetch_batch completed: {len(urls)} URLs]")
+                        f"[Auto-fetched {len(urls)} URLs from web_search results]\n{fetched[:2000]}")
                     result_text = fetched
 
             elif name == "image_search":

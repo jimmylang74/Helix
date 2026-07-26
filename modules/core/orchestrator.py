@@ -304,7 +304,7 @@ class AgentOrchestrator:
     ) -> str:
         """Execute one subtask with tool-calling support."""
         subtask_result = ""
-        max_iterations = 5
+        max_iterations = ConfigManager().get("server.max_subtask_iterations", 20)
 
         context_manager.reset_conversation(state)
 
@@ -323,12 +323,14 @@ class AgentOrchestrator:
             if previous_subtask_summary:
                 context_parts.append(f"## Previous Subtask Result\n{previous_subtask_summary}\n")
 
+            remaining = max_iterations - iteration
             prompt = SUBTASK_DECISION_PROMPT.format(
                 user_request=state.get("user_request", ""),
                 subtask_index=subtask_index,
                 subtask_count=subtask_count,
                 subtask=subtask,
                 collected_data=collected_summary,
+                remaining_iterations=remaining,
             )
             if context_parts:
                 prompt = "\n\n".join(context_parts) + "\n\n" + prompt

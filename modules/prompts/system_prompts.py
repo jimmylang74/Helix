@@ -96,6 +96,12 @@ You are executing a specific subtask within a larger task.
 2. If you have enough data or can answer directly → use the `response` field
 3. Always set `subtask_complete: true` when providing a direct response (no tools needed)
 
+## Iteration Budget
+⚠️ You have **{remaining_iterations}** iteration(s) remaining. When iterations run out, the subtask ends with whatever result you have.
+- If you already have sufficient data from tool results, **stop calling tools** and return your final answer with `"subtask_complete": true`.
+- Do NOT call tools if you can synthesize an answer from the collected data.
+- Prioritize quality summaries over additional data gathering.
+
 Respond in JSON:
 {{
   "thinking": "<your reasoning>",

@@ -212,6 +212,8 @@
   "config.server.defaultCityPlaceholder": "Nanjing",
   "config.server.subtaskThreshold": "子任务摘要阈值 (字节)",
   "config.server.subtaskThresholdHint": "当子任务响应超过此阈值时自动生成摘要（默认 1024 = 1K）",
+  "config.server.maxIterations": "子任务最大迭代次数",
+  "config.server.maxIterationsHint": "每个子任务在工具调用循环中的最大迭代次数（默认 20）",
   "config.server.saveSuccess": "服务设置已保存（部分设置需重启生效）",
   "config.server.saveFailed": "保存失败",
 

@@ -70,6 +70,7 @@ async function loadConfig() {
     const defaultLocation = config.default_location || {};
     document.getElementById('defaultLocationCity').value = defaultLocation.city || 'Nanjing';
     document.getElementById('subtaskSummaryThreshold').value = server.subtask_summary_threshold || 1024;
+    document.getElementById('maxSubtaskIterations').value = server.max_subtask_iterations || 20;
 }
 
 function onProviderChange() {
@@ -607,6 +608,7 @@ async function saveServerConfig() {
         debug: true,
         language: selectedLang,
         subtask_summary_threshold: parseInt(document.getElementById('subtaskSummaryThreshold').value) || 1024,
+        max_subtask_iterations: parseInt(document.getElementById('maxSubtaskIterations').value) || 20,
     };
     const defaultCity = document.getElementById('defaultLocationCity').value.trim() || 'Nanjing';
     await apiCall('config.update', { settings: { 'default_location.city': defaultCity } });

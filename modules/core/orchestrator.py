@@ -594,10 +594,12 @@ class AgentOrchestrator:
         todo_results = todo_manager.get_completed_summary(state)
         generated = state.get("generated_files", [])
 
+        language = ConfigManager().get("server.language", "zh-CN")
         prompt = SUMMARIZATION_PROMPT.format(
             user_request=state["user_request"],
             todo_results=todo_results,
-            generated_files="\n".join(generated) if generated else "None"
+            generated_files="\n".join(generated) if generated else "None",
+            language=language,
         )
 
         log_agent_to_llm("Requesting final summary from LLM...")

@@ -82,6 +82,11 @@ def main():
 
     # Initialize logger
     init_logger("debugout.log", console=debug)
+
+    # Suppress Flask/werkzeug access logs (GET / 200, etc.)
+    import logging
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
     log_info(f"Starting AI Hybrid Agent Service...")
     log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 

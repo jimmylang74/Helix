@@ -79,14 +79,8 @@ class ContextManager:
             "subtask": subtask,
             "summary": summary,
         })
-
-    def get_previous_subtask_summary(self, state: AgentState) -> str:
-        """Get the most recent subtask's summary (for next subtask's input)."""
-        request_id = state.get("request_id", "unknown")
-        contexts = self._get_state(request_id).get("subtask_contexts", [])
-        if contexts:
-            return contexts[-1].get("summary", "")
-        return ""
+        from modules.utils.logger import log_orchestrator
+        log_orchestrator(f"save_subtask_summary: saved, total={len(s['subtask_contexts'])}")
 
     def get_all_subtask_summaries(self, state: AgentState) -> str:
         """Get all completed subtask summaries (for todo summary)."""
@@ -94,6 +88,8 @@ class ContextManager:
         contexts = self._get_state(request_id).get("subtask_contexts", [])
         if not contexts:
             return "(no subtask results)"
+        from modules.utils.logger import log_orchestrator
+        log_orchestrator(f"get_all_subtask_summaries: {len(contexts)} subtask(s) found")
         parts = []
         for i, ctx in enumerate(contexts, 1):
             parts.append(f"### Subtask {i}: {ctx['subtask']}\n{ctx['summary']}")

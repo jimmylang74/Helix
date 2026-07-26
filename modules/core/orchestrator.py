@@ -31,6 +31,7 @@ from modules.utils.logger import (
 from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
 from modules.core import status_events
 from modules.utils.file_ops import FileOps
+from modules.config.config_manager import ConfigManager
 
 
 class AgentOrchestrator:
@@ -243,20 +244,15 @@ class AgentOrchestrator:
                 todo_subtask_lists[todo_idx][idx - 1]["status"] = "running"
             log_orchestrator(f"  Subtask [{idx}/{len(subtasks)}]: {subtask}")
 
-            previous_subtask_summary = context_manager.get_previous_subtask_summary(state)
-
             result = self._execute_single_subtask(
                 state, subtask, idx, len(subtasks),
-                previous_subtask_summary, tool_definitions, system_prompt
+                "", tool_definitions, system_prompt
             )
 
             subtask_status = "completed" if result else "failed"
             if todo_idx < len(todo_subtask_lists):
                 todo_subtask_lists[todo_idx][idx - 1]["status"] = subtask_status
             status_events.emit(state["request_id"], state)
-
-            subtask_summary = self._generate_subtask_summary(state, subtask, result, tool_definitions, system_prompt)
-            context_manager.save_subtask_summary(state, subtask, subtask_summary)
 
         all_summaries = context_manager.get_all_subtask_summaries(state)
         state["subtask_status"] = "completed"
@@ -317,8 +313,11 @@ class AgentOrchestrator:
                 log_orchestrator("Subtask loop cancelled by user")
                 break
 
-            collected = state.get("collected_data", [])
-            collected_summary = "\n".join(d[:500] for d in collected[-3:]) if collected else "(none)"
+            collected = state.get("collected_data", {})
+            todo_idx = str(state.get("current_todo_idx", 0))
+            todo_entry = collected.get(todo_idx, {})
+            todo_results = todo_entry.get("results", [])
+            collected_summary = "\n".join(todo_results) if todo_results else "(none)"
 
             context_parts = []
             if previous_subtask_summary:
@@ -354,7 +353,32 @@ class AgentOrchestrator:
                 continue
 
             subtask_result = response_data.get("response") or ""
+            subtask_complete = response_data.get("subtask_complete", False)
             log_llm_decision(f"Subtask {subtask_index} result: {subtask_result[:200]}")
+
+            if subtask_complete and subtask_result:
+                threshold = ConfigManager().get("server.subtask_summary_threshold", 1024)
+                if len(subtask_result.encode("utf-8")) > threshold:
+                    log_orchestrator(f"Subtask {subtask_index} response ({len(subtask_result)} chars) exceeds threshold ({threshold} bytes), generating summary...")
+                    subtask_result = self._generate_subtask_summary(
+                        state, subtask, subtask_result, tool_definitions, system_prompt
+                    )
+
+                collected_data = state.get("collected_data", {})
+                todo_idx = str(state.get("current_todo_idx", 0))
+                if todo_idx not in collected_data:
+                    todo_list = state.get("todo_list", [])
+                    todo_idx_int = int(todo_idx) if todo_idx.isdigit() else 0
+                    title = todo_list[todo_idx_int] if todo_idx_int < len(todo_list) else ""
+                    collected_data[todo_idx] = {"title": title, "results": []}
+                entry = f"[{subtask_index}/{subtask_count}] {subtask}\n{subtask_result}"
+                collected_data[todo_idx]["results"].append(entry)
+                state["collected_data"] = collected_data
+                context_manager.save_subtask_summary(state, subtask, subtask_result)
+                log_orchestrator(f"Subtask {subtask_index} written to collected_data[{todo_idx}] and subtask_contexts")
+            else:
+                log_orchestrator(f"Subtask {subtask_index} NOT saved (subtask_complete={subtask_complete}, result_empty={not subtask_result})")
+
             break
 
         return subtask_result
@@ -373,7 +397,7 @@ class AgentOrchestrator:
 
         prompt = SUBTASK_SUMMARY_PROMPT.format(
             subtask=subtask,
-            work_performed=result[:2000],
+            work_performed=result,
         )
 
         log_agent_to_llm(f"Generating summary for subtask: {subtask[:50]}...")
@@ -414,20 +438,76 @@ class AgentOrchestrator:
 
         return tool_definitions
 
+    def _fix_llm_json(self, content: str) -> str:
+        """Fix common LLM JSON formatting issues before parsing."""
+        import re
+
+        # Fix 1: Escape invalid backslash sequences (\** \</ etc.)
+        # Valid JSON escapes: " \ / b f n r t uXXXX
+        fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content)
+
+        # Fix 2: Escape unescaped double quotes inside string values
+        # Strategy: Find string values and escape quotes that aren't already escaped
+        result = []
+        in_string = False
+        i = 0
+        while i < len(fixed):
+            ch = fixed[i]
+            if ch == '\\' and in_string:
+                # Escaped character - keep as-is
+                result.append(ch)
+                i += 1
+                if i < len(fixed):
+                    result.append(fixed[i])
+                    i += 1
+            elif ch == '"':
+                if not in_string:
+                    in_string = True
+                    result.append(ch)
+                else:
+                    # Check if this is end of string or unescaped quote inside
+                    # Look ahead for typical JSON delimiters after closing quote
+                    rest = fixed[i+1:i+20].lstrip()
+                    if rest and rest[0] in ',}]: \n\r\t':
+                        in_string = False
+                        result.append(ch)
+                    else:
+                        # Unescaped quote inside string - escape it
+                        result.append('\\"')
+                i += 1
+            else:
+                result.append(ch)
+                i += 1
+
+        return ''.join(result)
+
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM JSON response."""
+        """Parse LLM JSON response, handling common LLM JSON formatting issues."""
+        import re
+
+        # Step 1: Try direct parse
         try:
             return json.loads(content)
         except json.JSONDecodeError:
-            # Try to find JSON in the content
-            import re
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(0))
-                except json.JSONDecodeError:
-                    pass
-            return {"response": content}
+            pass
+
+        # Step 2: Extract JSON block and fix formatting issues
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+            # Step 3: Fix common LLM JSON issues and retry
+            fixed = self._fix_llm_json(json_match.group(0))
+            try:
+                return json.loads(fixed)
+            except json.JSONDecodeError:
+                pass
+
+        log_orchestrator(f"_parse_llm_response: FALLBACK to raw content, content_len={len(content)}")
+        return {"response": content}
 
     def _execute_tool_call(self, state: AgentState, tool_call: Dict[str, Any]) -> str:
         """Execute a tool call from LLM decision. Returns the result string."""

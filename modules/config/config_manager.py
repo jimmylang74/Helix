@@ -70,7 +70,8 @@ class ConfigManager:
                 "admin_port": 11556,
                 "host": "0.0.0.0",
                 "debug": True,
-                "language": "zh-CN"
+                "language": "zh-CN",
+                "subtask_summary_threshold": 1024
             },
             "default_location": {
                 "city": "Nanjing"

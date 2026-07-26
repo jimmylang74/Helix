@@ -169,6 +169,10 @@ Please provide a comprehensive summary of what was accomplished, including:
 3. Any files generated and their locations
 4. Overall conclusion
 
+## Language Requirement
+You MUST respond in the following language: {language}.
+All text in the "summary" field must be written entirely in this language.
+
 Respond in pure JSON with three fields: thinking (str), summary (str), generated_files (list of str).
 """
 

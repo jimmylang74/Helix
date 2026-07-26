@@ -11,7 +11,7 @@ class SubtaskResult(TypedDict, total=False):
     subtask: str
     status: str  # "completed", "failed", "skipped"
     result: str
-    collected_data: List[str]
+    collected_data: Dict[str, Dict[str, Any]]
     generated_files: List[str]
     tool_calls: List[Dict[str, Any]]
 
@@ -40,7 +40,7 @@ class AgentState(TypedDict, total=False):
     subtask_loop_count: int
 
     # Data collection
-    collected_data: List[str]
+    collected_data: Dict[str, Dict[str, Any]]  # {todo_idx: {"title": str, "results": [str]}}
     urls_to_fetch: List[str]
     fetched_content: List[str]
 
@@ -81,7 +81,7 @@ def create_initial_state(user_request: str, request_id: str) -> AgentState:
         "subtask_history": [],
         "subtask_loop_count": 0,
 
-        "collected_data": [],
+        "collected_data": {},
         "urls_to_fetch": [],
         "fetched_content": [],
 
@@ -132,6 +132,21 @@ def get_todo_progress(state: AgentState) -> str:
     return "\n".join(lines)
 
 
+def _format_collected_data(data: Dict[str, Dict[str, Any]]) -> str:
+    """Format collected_data dict for display."""
+    if not data:
+        return "(none)"
+    parts = []
+    for todo_idx in sorted(data.keys(), key=lambda x: int(x) if x.isdigit() else 0):
+        entry = data[todo_idx]
+        title = entry.get("title", "")
+        results = entry.get("results", [])
+        header = f"### Todo {todo_idx}: {title}" if title else f"### Todo {todo_idx}"
+        parts.append(header + "\n" + "\n".join(results))
+    result = "\n\n".join(parts)
+    return result[-2000:] if len(result) > 2000 else result
+
+
 def state_to_context(state: AgentState) -> str:
     """Serialize state for LLM context window."""
     parts = [
@@ -142,7 +157,7 @@ def state_to_context(state: AgentState) -> str:
         f"\n## Todo Progress\n{get_todo_progress(state)}",
         f"\n## Current Subtask\n{state.get('current_subtask', '')}",
         f"\n## Subtask Status: {state.get('subtask_status', 'idle')}",
-        f"\n## Collected Data\n{chr(10).join(state.get('collected_data', []))[-2000:] if state.get('collected_data') else '(none)'}",
+        f"\n## Collected Data\n{_format_collected_data(state.get('collected_data', {}))}",
         f"\n## Generated Files\n{chr(10).join(state.get('generated_files', [])) if state.get('generated_files') else '(none)'}",
         f"\n## Subtask Loop Count: {state.get('subtask_loop_count', 0)}",
     ]

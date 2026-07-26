@@ -210,6 +210,8 @@
   "config.server.langEn": "English",
   "config.server.defaultCity": "Default City",
   "config.server.defaultCityPlaceholder": "Nanjing",
+  "config.server.subtaskThreshold": "Subtask Summary Threshold (bytes)",
+  "config.server.subtaskThresholdHint": "Auto-summarize when subtask response exceeds this threshold (default 1024 = 1K)",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
 

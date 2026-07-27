@@ -440,76 +440,100 @@ class AgentOrchestrator:
 
         return tool_definitions
 
-    def _fix_llm_json(self, content: str) -> str:
-        """Fix common LLM JSON formatting issues before parsing."""
-        import re
+#   def _fix_llm_json(self, content: str) -> str:
+#       """Fix common LLM JSON formatting issues before parsing."""
+#       import re
+#
+#        # Fix 1: Escape invalid backslash sequences (\** \</ etc.)
+#        # Valid JSON escapes: " \ / b f n r t uXXXX
+#        fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content)
+#
+#        # Fix 2: Escape unescaped double quotes inside string values
+#        # Strategy: Find string values and escape quotes that aren't already escaped
+#        result = []
+#        in_string = False
+#        i = 0
+#        while i < len(fixed):
+#            ch = fixed[i]
+#            if ch == '\\' and in_string:
+#                # Escaped character - keep as-is
+#                result.append(ch)
+#                i += 1
+#                if i < len(fixed):
+#                    result.append(fixed[i])
+#                    i += 1
+#            elif ch == '"':
+#                if not in_string:
+#                    in_string = True
+#                    result.append(ch)
+#                else:
+#                    # Check if this is end of string or unescaped quote inside
+#                    # Look ahead for typical JSON delimiters after closing quote
+#                    rest = fixed[i+1:i+20].lstrip()
+#                    if rest and rest[0] in ',}]: \n\r\t':
+#                        in_string = False
+#                        result.append(ch)
+#                    else:
+#                        # Unescaped quote inside string - escape it
+#                        result.append('\\"')
+#                i += 1
+#            else:
+#                result.append(ch)
+#                i += 1
+#
+#        return ''.join(result)
 
-        # Fix 1: Escape invalid backslash sequences (\** \</ etc.)
-        # Valid JSON escapes: " \ / b f n r t uXXXX
-        fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content)
-
-        # Fix 2: Escape unescaped double quotes inside string values
-        # Strategy: Find string values and escape quotes that aren't already escaped
-        result = []
-        in_string = False
-        i = 0
-        while i < len(fixed):
-            ch = fixed[i]
-            if ch == '\\' and in_string:
-                # Escaped character - keep as-is
-                result.append(ch)
-                i += 1
-                if i < len(fixed):
-                    result.append(fixed[i])
-                    i += 1
-            elif ch == '"':
-                if not in_string:
-                    in_string = True
-                    result.append(ch)
-                else:
-                    # Check if this is end of string or unescaped quote inside
-                    # Look ahead for typical JSON delimiters after closing quote
-                    rest = fixed[i+1:i+20].lstrip()
-                    if rest and rest[0] in ',}]: \n\r\t':
-                        in_string = False
-                        result.append(ch)
-                    else:
-                        # Unescaped quote inside string - escape it
-                        result.append('\\"')
-                i += 1
-            else:
-                result.append(ch)
-                i += 1
-
-        return ''.join(result)
+#    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
+#        """Parse LLM JSON response, handling common LLM JSON formatting issues."""
+#        import re
+#
+#        # Step 1: Try direct parse
+#        try:
+#            return json.loads(content)
+#        except json.JSONDecodeError:
+#            pass
+#
+#        # Step 2: Extract JSON block and fix formatting issues
+#        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+#        if json_match:
+#            try:
+#                return json.loads(json_match.group(0))
+#            except json.JSONDecodeError:
+#                pass
+#
+#            # Step 3: Fix common LLM JSON issues and retry
+#            fixed = self._fix_llm_json(json_match.group(0))
+#            try:
+#                return json.loads(fixed)
+#            except json.JSONDecodeError:
+#                pass
+#
+#        log_orchestrator(f"_parse_llm_response: FALLBACK to raw content, content_len={len(content)}")
+#        return {"response": content}
 
     def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        """Parse LLM JSON response, handling common LLM JSON formatting issues."""
-        import re
+        import json
+        import json_repair
 
-        # Step 1: Try direct parse
+        # 1. 严格标准解析优先
         try:
-            return json.loads(content)
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 
-        # Step 2: Extract JSON block and fix formatting issues
-        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group(0))
-            except json.JSONDecodeError:
-                pass
-
-            # Step 3: Fix common LLM JSON issues and retry
-            fixed = self._fix_llm_json(json_match.group(0))
-            try:
-                return json.loads(fixed)
-            except json.JSONDecodeError:
-                pass
+        # 2. json-repair兜底修复解析
+        try:
+            parsed = json_repair.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
 
         log_orchestrator(f"_parse_llm_response: FALLBACK to raw content, content_len={len(content)}")
         return {"response": content}
+
 
     def _execute_tool_call(self, state: AgentState, tool_call: Dict[str, Any]) -> str:
         """Execute a tool call from LLM decision. Returns the result string."""

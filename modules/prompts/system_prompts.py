@@ -19,6 +19,7 @@ You MUST always respond in JSON format:
   "response": "<your direct response if no tools needed>"
 }
 ```
+`thinking and `response must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 
 ## Decision Flow
 1. If the task needs information you don't have → use `web_search`
@@ -53,6 +54,7 @@ For Coding, typical todos:
 User request: {user_request}
 
 Respond in pure JSON with fields: thinking, todos (list), intent_type (ppt|research|coding)
+`thinking and each todo item  must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 SUBTASK_DECOMPOSE_PROMPT = """# Subtask Decomposition
@@ -76,6 +78,7 @@ Respond in pure JSON:
   "thinking": "<your reasoning>",
   "subtasks": ["subtask 1", "subtask 2", ...]
 }}
+`thinking and each subtask must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 SUBTASK_DECISION_PROMPT = """# Subtask Execution
@@ -109,6 +112,7 @@ Respond in JSON:
   "response": "<your analysis or answer if no tools needed>",
   "subtask_complete": false
 }}
+`thinking and `response must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 SUBTASK_SUMMARY_PROMPT = """# Subtask Summary
@@ -132,6 +136,7 @@ Respond in pure JSON:
   "thinking": "<your reasoning>",
   "summary": "<concise summary of this subtask's work and findings>"
 }}
+`thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 TODO_SUMMARY_PROMPT = """# Todo Summary
@@ -154,6 +159,7 @@ Respond in pure JSON:
   "thinking": "<your reasoning>",
   "summary": "<concise summary of this todo's overall results>"
 }}
+`thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 SUMMARIZATION_PROMPT = """# Task Summarization
@@ -180,6 +186,7 @@ You MUST respond in the following language: {language}.
 All text in the "summary" field must be written entirely in this language.
 
 Respond in pure JSON with three fields: thinking (str), summary (str), generated_files (list of str).
+`thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
 AGENT_SYSTEM_PROMPT = """You are an AI Agent assistant. Your job is to help users accomplish tasks by:

@@ -228,7 +228,8 @@ class AgentOrchestrator:
         context_manager.reset_conversation(state)
 
         subtasks = self._decompose_todo(state, todo_item, previous_todo_summary, system_prompt)
-        log_orchestrator(f"  Decomposed into {len(subtasks)} subtask(s)")
+        subtask_list = "\n".join(f"    {i}. {s}" for i, s in enumerate(subtasks, 1))
+        log_orchestrator(f"  Decomposed into {len(subtasks)} subtask(s):\n{subtask_list}")
 
         todo_idx = state.get("current_todo_idx", 0)
         todo_subtask_lists = state.get("todo_subtask_lists", [])

@@ -105,14 +105,35 @@ You are executing a specific subtask within a larger task.
 - Do NOT call tools if you can synthesize an answer from the collected data.
 - Prioritize quality summaries over additional data gathering.
 
-Respond in JSON:
+【强制输出铁则，违反任意一条视为失败】
+1. 你只能输出单一、完整、标准RFC8259合法JSON。禁止JSON前后附带任何解释文字、markdown标记。
+2. 两种模式严格互斥，**不能混合字段**：
+模式一：需要调用工具
 {{
-  "thinking": "<your reasoning>",
-  "tool_calls": [{{"name": "tool_name", "arguments": {{...}}}}],
-  "response": "<your analysis or answer if no tools needed>",
-  "subtask_complete": false
+  "thinking": "推理内容",
+  "tool_calls": [{{"name":"xxx","arguments":{{}}}}]
 }}
-`thinking and `response must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
+模式二：停止工具、直接给出最终回答
+{{
+  "thinking": "推理内容",
+  "response": "最终回答文本",
+  "subtask_complete": true
+}}
+3. 绝对禁止同时出现 tool_calls 和 response；
+4. 整个JSON仅有唯一一对最外层 {{}}，禁止提前闭合对象，禁止顶层出现游离键；
+❌【错误范例，严禁模仿】
+{{
+  "thinking":"...",
+  "response":"..."
+}},
+"subtask_complete":true
+}}
+5. 禁止任何尾随逗号：数组、对象最后一项后面不能加逗号；
+6. 字段固定顺序：
+  工具模式：thinking → tool_calls
+  应答模式：thinking → response → subtask_complete
+7. thinking、response是完整单个字符串，字符串内部换行保留，但是**不能破坏外层JSON括号平衡**；
+8. 布尔值严格使用 true / false（小写，不加引号）。
 """
 
 SUBTASK_SUMMARY_PROMPT = """# Subtask Summary

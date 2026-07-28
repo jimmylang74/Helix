@@ -2,7 +2,7 @@
 Web Search / Research Prompts
 """
 
-RESEARCH_SYSTEM_PROMPT = """# Research Intelligence Agent
+SYSTEM_PROMPT_RESEARCH = """# Research Intelligence Agent
 
 You are a professional research analyst. Your role is to:
 1. Understand the user's research question deeply
@@ -23,7 +23,7 @@ You are a professional research analyst. Your role is to:
 - Analyze the available tool definitions and select the best match.
 """
 
-RESEARCH_TODO_PROMPT = """# Research Todo Planning
+USER_PROMPT_RESEARCH_TODO_PLANNING = """# Research Todo Planning
 
 Analyze the user's research request and create a detailed research plan.
 
@@ -38,7 +38,7 @@ Create a todo list for research. Consider:
 Respond in pure JSON with fields: thinking (str), todos (list of str), intent_type must be "research".
 """
 
-URL_ANALYSIS_PROMPT = """# URL Analysis & Selection
+USER_PROMPT_URL_ANALYSIS = """# URL Analysis & Selection
 
 You received search results. Analyze these URLs and select the most relevant ones to fetch.
 
@@ -62,7 +62,7 @@ Return a JSON list of selected URLs with reasoning:
 }
 """
 
-CONTENT_ANALYSIS_PROMPT = """# Content Analysis
+USER_PROMPT_CONTENT_ANALYSIS = """# Content Analysis
 
 Analyze the fetched content and extract key information.
 
@@ -90,7 +90,7 @@ Respond in JSON:
 }
 """
 
-FINAL_ANSWER_PROMPT = """# Final Answer Generation
+USER_PROMPT_FINAL_ANSWER = """# Final Answer Generation
 
 Based on all research conducted, generate a comprehensive final answer.
 

@@ -77,14 +77,14 @@ class IntentRouter:
 
     def get_intent_prompt(self, intent_type: str) -> str:
         """Get the prompt template for an intent type."""
-        from modules.prompts.ppt_prompts import PPT_SYSTEM_PROMPT
-        from modules.prompts.search_prompts import RESEARCH_SYSTEM_PROMPT
-        from modules.prompts.coding_prompts import CODING_SYSTEM_PROMPT
+        from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT
+        from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH
+        from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING
 
-        prompts = {
-            "ppt": PPT_SYSTEM_PROMPT,
-            "research": RESEARCH_SYSTEM_PROMPT,
-            "coding": CODING_SYSTEM_PROMPT,
+        system_prompts = {
+            "ppt": SYSTEM_PROMPT_PPT,
+            "research": SYSTEM_PROMPT_RESEARCH,
+            "coding": SYSTEM_PROMPT_CODING,
         }
         return prompts.get(intent_type, "")
 

@@ -2,7 +2,7 @@
 System-level prompts for the AI Agent framework.
 """
 
-ORCHESTRATOR_SYSTEM_PROMPT = """# AI Agent Orchestrator System
+SYSTEM_PROMPT_TASK = """# AI Agent Orchestrator System
 
 You are the decision-making core of a hybrid AI Agent system. Your role is to:
 1. **Plan**: Break down user requests into actionable todo items
@@ -29,7 +29,7 @@ You MUST always respond in JSON format:
 5. If all todos are done → set "all_complete": true
 """
 
-TODO_PLANNING_PROMPT = """# Todo Planning
+USER_PROMPT_INTENT_TODO_PLANNING = """# Todo Planning
 
 Break down the user's request into a numbered list of actionable todo items.
 Each todo should be specific, measurable, and independently completable.
@@ -57,7 +57,7 @@ Respond in pure JSON with fields: thinking, todos (list), intent_type (ppt|resea
 `thinking and each todo item  must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
-SUBTASK_DECOMPOSE_PROMPT = """# Subtask Decomposition
+USER_PROMPT_SUBTASK_DECOMPOSE = """# Subtask Decomposition
 
 Break down the following todo item into a numbered list of concrete, executable subtasks.
 
@@ -81,7 +81,7 @@ Respond in pure JSON:
 `thinking and each subtask must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
-SUBTASK_DECISION_PROMPT = """# Subtask Execution
+USER_PROMPT_SUBTASK_DECISION_WITHTOOLS = """# Subtask Execution
 
 You are executing a specific subtask within a larger task.
 
@@ -136,7 +136,7 @@ You are executing a specific subtask within a larger task.
 8. 布尔值严格使用 true / false（小写，不加引号）。
 """
 
-SUBTASK_SUMMARY_PROMPT = """# Subtask Summary
+USER_PROMPT_SUBTASK_SUMMARY = """# Subtask Summary
 
 Summarize the work done in this subtask into a concise paragraph.
 
@@ -160,7 +160,7 @@ Respond in pure JSON:
 `thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
-TODO_SUMMARY_PROMPT = """# Todo Summary
+USER_PROMPT_TODO_SUMMARY = """# Todo Summary
 
 Summarize the overall results of this todo item.
 
@@ -183,7 +183,7 @@ Respond in pure JSON:
 `thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
-SUMMARIZATION_PROMPT = """# Task Summarization
+USER_PROMPT_TASK_SUMMARY = """# Task Summarization
 
 All subtasks have been completed. Here are the results:
 
@@ -210,7 +210,7 @@ Respond in pure JSON with three fields: thinking (str), summary (str), generated
 `thinking and `summary must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
 """
 
-AGENT_SYSTEM_PROMPT = """You are an AI Agent assistant. Your job is to help users accomplish tasks by:
+SYSTEM_PROMPT_AGENT = """You are an AI Agent assistant. Your job is to help users accomplish tasks by:
 1. Understanding their request
 2. Breaking down complex tasks
 3. Using available tools when needed

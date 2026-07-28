@@ -92,10 +92,8 @@ def _agent_router(params):
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
 
-    effective = f"[Intent: {forced_intent}] {user_request}" if forced_intent != "auto" else user_request
-
     def _run():
-        orchestrator.process_request(effective, request_id)
+        orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
 
     threading.Thread(target=_run, daemon=True).start()
 

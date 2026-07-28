@@ -2,7 +2,7 @@
 PPT Generation Prompts
 """
 
-PPT_SYSTEM_PROMPT = """# PPT Generation Expert
+SYSTEM_PROMPT_PPT = """# PPT Generation Expert
 
 You are a professional presentation designer and content strategist. Your role is to:
 1. Analyze user-provided materials and requirements
@@ -19,7 +19,7 @@ You are a professional presentation designer and content strategist. Your role i
 - Accessible and readable typography
 """
 
-PPT_TODO_PROMPT = """# PPT Generation Todo Planning
+USER_PROMPT_PPT_TODO_PLANNING = """# PPT Generation Todo Planning
 
 Analyze the user's PPT request and create a detailed plan.
 
@@ -35,7 +35,7 @@ Create a todo list for PPT generation. Consider:
 Respond in pure JSON with fields: thinking (str), todos (list of str), intent_type must be "ppt".
 """
 
-PPT_SLIDE_TEMPLATE = """You are designing a single slide. Here's the context:
+USER_PROMPT_PPT_SLIDE_TEMPLATE = """You are designing a single slide. Here's the context:
 
 ## Overall Task
 {user_request}
@@ -72,7 +72,7 @@ Provide the slide configuration in JSON format for the PPT generator:
 }
 """
 
-PPT_FULL_DESIGN_PROMPT = """# Full PPT Design
+USER_PROMPT_PPT_FULL_DESIGN = """# Full PPT Design
 
 You are designing a complete PowerPoint presentation.
 

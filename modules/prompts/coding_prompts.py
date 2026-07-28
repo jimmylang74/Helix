@@ -2,7 +2,7 @@
 Coding Generation Prompts
 """
 
-CODING_SYSTEM_PROMPT = """# Coding & Development Agent
+SYSTEM_PROMPT_CODING = """# Coding & Development Agent
 
 You are a senior software engineer. Your role is to:
 1. Understand the user's coding requirements thoroughly
@@ -19,7 +19,7 @@ You are a senior software engineer. Your role is to:
 - Write tests to verify functionality
 """
 
-CODING_TODO_PROMPT = """# Coding Todo Planning
+USER_PROMPT_CODING_TODO_PLANNING = """# Coding Todo Planning
 
 Analyze the user's coding request and create a development plan.
 
@@ -34,7 +34,7 @@ Create a todo list for coding. Consider:
 Respond in pure JSON with fields: thinking (str), todos (list of str), intent_type must be "coding".
 """
 
-CODE_ANALYSIS_PROMPT = """# Code Analysis & Planning
+USER_PROMPT_CODE_ANALYSIS = """# Code Analysis & Planning
 
 Analyze the coding request and plan the implementation.
 
@@ -64,7 +64,7 @@ Respond in JSON:
 }
 """
 
-CODE_REVIEW_PROMPT = """# Code Review & Fix
+USER_PROMPT_CODE_REVIEW = """# Code Review & Fix
 
 Review the generated code for issues.
 
@@ -92,7 +92,7 @@ Respond in JSON:
 }
 """
 
-TEST_VALIDATION_PROMPT = """# Test Validation
+USER_PROMPT_TEST_VALIDATION = """# Test Validation
 
 Analyze if the code has been properly tested and is working.
 

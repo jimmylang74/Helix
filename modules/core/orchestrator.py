@@ -17,13 +17,13 @@ from modules.core.todo_manager import todo_manager
 from modules.agents.tool_base import tool_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
 from modules.prompts.system_prompts import (
-    ORCHESTRATOR_SYSTEM_PROMPT, TODO_PLANNING_PROMPT,
-    SUBTASK_DECOMPOSE_PROMPT, SUBTASK_DECISION_PROMPT, SUBTASK_SUMMARY_PROMPT,
-    TODO_SUMMARY_PROMPT, SUMMARIZATION_PROMPT, AGENT_SYSTEM_PROMPT
+    SYSTEM_PROMPT_TASK, USER_PROMPT_INTENT_TODO_PLANNING,
+    USER_PROMPT_SUBTASK_DECOMPOSE, USER_PROMPT_SUBTASK_DECISION_WITHTOOLS, USER_PROMPT_SUBTASK_SUMMARY,
+    USER_PROMPT_TODO_SUMMARY, USER_PROMPT_TASK_SUMMARY, SYSTEM_PROMPT_AGENT
 )
-from modules.prompts.ppt_prompts import PPT_SYSTEM_PROMPT, PPT_TODO_PROMPT, PPT_FULL_DESIGN_PROMPT
-from modules.prompts.search_prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_TODO_PROMPT, CONTENT_ANALYSIS_PROMPT, FINAL_ANSWER_PROMPT
-from modules.prompts.coding_prompts import CODING_SYSTEM_PROMPT, CODING_TODO_PROMPT, CODE_ANALYSIS_PROMPT
+from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT, USER_PROMPT_PPT_TODO_PLANNING, USER_PROMPT_PPT_FULL_DESIGN
+from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH, USER_PROMPT_RESEARCH_TODO_PLANNING, USER_PROMPT_CONTENT_ANALYSIS, USER_PROMPT_FINAL_ANSWER
+from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING, USER_PROMPT_CODING_TODO_PLANNING, USER_PROMPT_CODE_ANALYSIS
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -45,23 +45,27 @@ class AgentOrchestrator:
     def _get_system_prompt(self, intent_type: str) -> str:
         """Get the appropriate system prompt for the intent type."""
         prompts = {
-            "ppt": PPT_SYSTEM_PROMPT,
-            "research": RESEARCH_SYSTEM_PROMPT,
-            "coding": CODING_SYSTEM_PROMPT,
+            "ppt": SYSTEM_PROMPT_PPT,
+            "research": SYSTEM_PROMPT_RESEARCH,
+            "coding": SYSTEM_PROMPT_CODING,
         }
-        return prompts.get(intent_type, ORCHESTRATOR_SYSTEM_PROMPT)
+        return prompts.get(intent_type, SYSTEM_PROMPT_TASK)
 
     def _get_todo_prompt(self, intent_type: str) -> str:
         """Get the appropriate todo planning prompt."""
         prompts = {
-            "ppt": PPT_TODO_PROMPT,
-            "research": RESEARCH_TODO_PROMPT,
-            "coding": CODING_TODO_PROMPT,
+            "ppt": USER_PROMPT_PPT_TODO_PLANNING,
+            "research": USER_PROMPT_RESEARCH_TODO_PLANNING,
+            "coding": USER_PROMPT_CODING_TODO_PLANNING,
         }
-        return prompts.get(intent_type, TODO_PLANNING_PROMPT)
+        return prompts.get(intent_type, USER_PROMPT_INTENT_TODO_PLANNING)
 
-    def process_request(self, user_request: str, request_id: Optional[str] = None) -> Dict[str, Any]:
-        """Main entry point - process a user request end-to-end."""
+    def process_request(self, user_request: str, request_id: Optional[str] = None, forced_intent: str = "auto") -> Dict[str, Any]:
+        """Main entry point - process a user request end-to-end.
+
+        Args:
+            forced_intent: "auto" for LLM classification, or "ppt"/"research"/"coding" to skip classification.
+        """
         if not request_id:
             request_id = f"req_{uuid.uuid4().hex[:12]}"
 
@@ -71,6 +75,7 @@ class AgentOrchestrator:
 
         # Create initial state
         state = create_initial_state(user_request, request_id)
+        state["forced_intent"] = forced_intent
         self._active_states[request_id] = state
         context_manager.initialize(state)
 
@@ -131,14 +136,22 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "planning"
         log_section("Phase 1: Planning")
 
-        # Get LLM to determine intent and create todos
         context = context_manager.build_llm_context(state, include_history=False)
-        system_prompt = ORCHESTRATOR_SYSTEM_PROMPT
+        forced_intent = state.get("forced_intent", "auto")
 
-        log_agent_to_llm("Sending request to LLM for intent routing and planning...")
+        if forced_intent != "auto":
+            # Intent already known — use intent-specific prompt, skip classification
+            system_prompt = self._get_system_prompt(forced_intent)
+            todo_prompt = self._get_todo_prompt(forced_intent)
+            log_agent_to_llm(f"Forced intent={forced_intent}, sending request for todo planning only...")
+        else:
+            # Auto-detect intent + plan todos in one LLM call
+            system_prompt = SYSTEM_PROMPT_TASK
+            todo_prompt = USER_PROMPT_INTENT_TODO_PLANNING
+            log_agent_to_llm("Sending request to LLM for intent routing and planning...")
 
         response = self.llm.decide_json(
-            prompt=context + "\n\n" + TODO_PLANNING_PROMPT.format(user_request=state["user_request"]),
+            prompt=context + "\n\n" + todo_prompt.format(user_request=state["user_request"]),
             system_prompt=system_prompt
         )
 
@@ -276,7 +289,7 @@ class AgentOrchestrator:
         if previous_todo_summary:
             context_parts.append(f"## Previous Todo Result\n{previous_todo_summary}\n")
 
-        prompt = SUBTASK_DECOMPOSE_PROMPT.format(
+        prompt = USER_PROMPT_SUBTASK_DECOMPOSE.format(
             user_request=state.get("user_request", ""),
             todo_item=todo_item,
         )
@@ -325,7 +338,7 @@ class AgentOrchestrator:
                 context_parts.append(f"## Previous Subtask Result\n{previous_subtask_summary}\n")
 
             remaining = max_iterations - iteration
-            prompt = SUBTASK_DECISION_PROMPT.format(
+            prompt = USER_PROMPT_SUBTASK_DECISION_WITHTOOLS.format(
                 user_request=state.get("user_request", ""),
                 subtask_index=subtask_index,
                 subtask_count=subtask_count,
@@ -398,7 +411,7 @@ class AgentOrchestrator:
         if not result:
             return ""
 
-        prompt = SUBTASK_SUMMARY_PROMPT.format(
+        prompt = USER_PROMPT_SUBTASK_SUMMARY.format(
             subtask=subtask,
             work_performed=result,
         )
@@ -415,7 +428,7 @@ class AgentOrchestrator:
         if not subtask_results:
             return ""
 
-        prompt = TODO_SUMMARY_PROMPT.format(
+        prompt = USER_PROMPT_TODO_SUMMARY.format(
             todo=todo,
             subtask_results=subtask_results[:3000],
         )
@@ -622,7 +635,7 @@ class AgentOrchestrator:
         generated = state.get("generated_files", [])
 
         language = ConfigManager().get("server.language", "zh-CN")
-        prompt = SUMMARIZATION_PROMPT.format(
+        prompt = USER_PROMPT_TASK_SUMMARY.format(
             user_request=state["user_request"],
             todo_results=todo_results,
             generated_files="\n".join(generated) if generated else "None",

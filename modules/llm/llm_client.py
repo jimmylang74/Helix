@@ -164,28 +164,6 @@ class LLMClient:
 
         combined_system = f"{system_prompt or ''}\n{tool_descriptions}"
 
-        combined_system += """
-
-You MUST respond in JSON format. If you need to use a tool, include a "tool_calls" field:
-```json
-{
-  "thinking": "your reasoning",
-  "tool_calls": [{"name": "tool_name", "arguments": {...}}]
-}
-```
-`thinking  must  be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
-
-If you want to respond directly without tools:
-```json
-{
-  "thinking": "your reasoning",
-  "response": "your answer here",
-  "subtask_complete": true
-}
-```
-`thinking and `response must each be a single string value. Never split one string into multiple separate string literals with extra commas.All line breaks inside string content belong within the single string, do not separate text into multiple quoted segments.
-"""
-
         # Flatten context messages + prompt into a single text
         parts: List[str] = []
         if context_messages:

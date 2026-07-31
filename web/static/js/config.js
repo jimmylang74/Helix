@@ -58,6 +58,8 @@ async function loadConfig() {
     document.getElementById('llmApiKey').value = llm.api_key || '';
     document.getElementById('llmVerbose').checked = llm.verbose !== false;
     document.getElementById('llmLogFile').value = llm.log_file || 'llm_engine.log';
+    document.getElementById('llmMaxInputTokens').value = llm.max_input_tokens || 32768;
+    document.getElementById('llmMaxGraphUpdates').value = llm.max_graph_updates || 5;
     onProviderChange();
 
     // Server
@@ -71,6 +73,7 @@ async function loadConfig() {
     document.getElementById('defaultLocationCity').value = defaultLocation.city || 'Nanjing';
     document.getElementById('subtaskSummaryThreshold').value = server.subtask_summary_threshold || 1024;
     document.getElementById('maxSubtaskIterations').value = server.max_subtask_iterations || 20;
+    document.getElementById('nodeParallelCount').value = server.node_parallel_count || 1;
 }
 
 function onProviderChange() {
@@ -114,6 +117,8 @@ function getLLMConfig() {
         api_key: document.getElementById('llmApiKey').value,
         verbose: document.getElementById('llmVerbose').checked,
         log_file: document.getElementById('llmLogFile').value,
+        max_input_tokens: parseInt(document.getElementById('llmMaxInputTokens').value) || 32768,
+        max_graph_updates: parseInt(document.getElementById('llmMaxGraphUpdates').value) || 5,
     };
 }
 
@@ -609,6 +614,7 @@ async function saveServerConfig() {
         language: selectedLang,
         subtask_summary_threshold: parseInt(document.getElementById('subtaskSummaryThreshold').value) || 1024,
         max_subtask_iterations: parseInt(document.getElementById('maxSubtaskIterations').value) || 20,
+        node_parallel_count: parseInt(document.getElementById('nodeParallelCount').value) || 1,
     };
     const defaultCity = document.getElementById('defaultLocationCity').value.trim() || 'Nanjing';
     await apiCall('config.update', { settings: { 'default_location.city': defaultCity } });

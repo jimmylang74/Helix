@@ -214,12 +214,8 @@
   "config.server.langEn": "English",
   "config.server.defaultCity": "Default City",
   "config.server.defaultCityPlaceholder": "Nanjing",
-  "config.server.subtaskThreshold": "Subtask Summary Threshold (bytes)",
   "config.server.nodeParallelCount": "Node Parallel Count",
   "config.server.nodeParallelCountHint": "Number of task graph nodes to execute in parallel (default 1)",
-  "config.server.subtaskThresholdHint": "Auto-summarize when subtask response exceeds this threshold (default 1024 = 1K)",
-  "config.server.maxIterations": "Max Subtask Iterations",
-  "config.server.maxIterationsHint": "Maximum iterations per subtask in the tool-calling loop (default 20)",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
 

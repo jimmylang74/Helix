@@ -71,8 +71,6 @@ async function loadConfig() {
 
     const defaultLocation = config.default_location || {};
     document.getElementById('defaultLocationCity').value = defaultLocation.city || 'Nanjing';
-    document.getElementById('subtaskSummaryThreshold').value = server.subtask_summary_threshold || 1024;
-    document.getElementById('maxSubtaskIterations').value = server.max_subtask_iterations || 20;
     document.getElementById('nodeParallelCount').value = server.node_parallel_count || 1;
 }
 
@@ -612,8 +610,6 @@ async function saveServerConfig() {
         host: document.getElementById('serverHost').value || '0.0.0.0',
         debug: true,
         language: selectedLang,
-        subtask_summary_threshold: parseInt(document.getElementById('subtaskSummaryThreshold').value) || 1024,
-        max_subtask_iterations: parseInt(document.getElementById('maxSubtaskIterations').value) || 20,
         node_parallel_count: parseInt(document.getElementById('nodeParallelCount').value) || 1,
     };
     const defaultCity = document.getElementById('defaultLocationCity').value.trim() || 'Nanjing';

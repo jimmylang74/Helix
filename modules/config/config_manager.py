@@ -71,7 +71,9 @@ class ConfigManager:
                 "host": "0.0.0.0",
                 "debug": True,
                 "language": "zh-CN",
-                "subtask_summary_threshold": 1024
+                "subtask_summary_threshold": 1024,
+                "max_subtask_iterations": 20,
+                "node_parallel_count": 1
             },
             "default_location": {
                 "city": "Nanjing"
@@ -82,7 +84,9 @@ class ConfigManager:
                 "endpoint": "http://localhost:11434",
                 "api_key": "",
                 "verbose": True,
-                "log_file": "llm_engine.log"
+                "log_file": "llm_engine.log",
+                "max_input_tokens": 32768,
+                "max_graph_updates": 5
             },
             "intents": {
                 "ppt": {
@@ -186,6 +190,8 @@ class ConfigManager:
             "api_key": self.get("llm.api_key", ""),
             "verbose": self.get("llm.verbose", True),
             "log_file": self.get("llm.log_file", "llm_engine.log"),
+            "max_input_tokens": self.get("llm.max_input_tokens", 32768),
+            "max_graph_updates": self.get("llm.max_graph_updates", 5),
         }
 
     def get_rpc_port(self) -> int:

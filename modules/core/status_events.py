@@ -56,7 +56,8 @@ def cleanup(request_id: str) -> None:
 # ── Emit (called by orchestrator on state transitions) ──────────────
 
 def emit(request_id: str, state: Dict[str, Any],
-         graph_nodes: Optional[List[Dict[str, Any]]] = None) -> None:
+         graph_nodes: Optional[List[Dict[str, Any]]] = None,
+         node_result: Optional[Dict[str, Any]] = None) -> None:
     with _lock:
         idx = _buf_counters.get(request_id, 0) + 1
         _buf_counters[request_id] = idx
@@ -72,6 +73,8 @@ def emit(request_id: str, state: Dict[str, Any],
     }
     if graph_nodes is not None:
         snapshot["task_graph_nodes"] = graph_nodes
+    if node_result is not None:
+        snapshot["node_result"] = node_result
     payload = json.dumps(snapshot, ensure_ascii=False)
 
     with _lock:

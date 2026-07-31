@@ -104,6 +104,10 @@ class AgentOrchestrator:
                 state["final_result"] = self._collect_node_results(state)
 
             state["orchestrator_phase"] = "done"
+            # 推送最终结果（finalizer 的 final_answer 或拼接结果）到前端
+            graph = self._get_graph(request_id)
+            graph_nodes = graph.to_dict_list() if graph else None
+            status_events.emit(request_id, state, graph_nodes=graph_nodes)
             result = self._build_success_result(state)
             log_section(f"Request completed: {request_id}")
             return result
@@ -174,6 +178,10 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "planning"
         log_section("Phase 1: Task Planning")
 
+        # 注入可用工具列表，让 LLM 在拆分节点时只选择真实存在的工具
+        tool_definitions = self._build_tool_definitions()
+        tools_section = LLMClient.format_tools_section(tool_definitions)
+
         forced_intent = state.get("forced_intent", "auto")
         if forced_intent != "auto":
             # 已知 intent，直接用对应 system prompt 规划
@@ -190,14 +198,15 @@ class AgentOrchestrator:
             log_agent_to_llm("Sending request to LLM for task planning...")
 
         # 检查 token 预算
-        if not self._check_token_budget(system_prompt, user_prompt):
+        if not self._check_token_budget(system_prompt, user_prompt, tools_section):
             state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
             log_error(state["error"])
             return {"task_complete": True, "response": state["error"]}
 
-        response = self.llm.decide_json(
+        response = self.llm.ask_json(
             prompt=user_prompt,
             system_prompt=system_prompt,
+            tools=tool_definitions,
         )
 
         # 解析结果
@@ -355,6 +364,24 @@ class AgentOrchestrator:
         # 重置节点的 conversation history
         node.node_conversation_history = []
 
+        # planning 阶段预计划的初始 tool calls：直接执行，再进入 LLM 迭代
+        if node.initial_tool_calls and not node.tool_results:
+            for i, tc in enumerate(node.initial_tool_calls):
+                name = tc.get("name", "")
+                arguments = tc.get("arguments", {})
+                fake_tc = dict(tc)
+                fake_tc.setdefault("id", f"node_{node.id}_pre{i}")
+                result = self._execute_tool_call(state, fake_tc)
+                node.tool_results.append({
+                    "tool": name,
+                    "arguments": arguments,
+                    "result": result[:1000] if result else "",
+                })
+            log_orchestrator(
+                f"Node {node.id}: executed {len(node.initial_tool_calls)} "
+                "pre-planned tool call(s)"
+            )
+
         iteration = 0
         while True:
             iteration += 1
@@ -397,7 +424,7 @@ class AgentOrchestrator:
             )
 
             # 调用 LLM（带工具）
-            llm_response = self.llm.with_tools(
+            llm_response = self.llm.ask_with_tools(
                 prompt=user_prompt,
                 tools=tool_definitions,
                 system_prompt=system_prompt,
@@ -451,14 +478,17 @@ class AgentOrchestrator:
                 log_llm_decision(
                     f"Node {node.id} completed: {node_response[:100]}"
                 )
-                # 向前端 emit 完成事件（非流式节点也需要通知）
-                if not emit_stream:
-                    _emit_llm_event(request_id, {
-                        "type": "node_completed",
+                # 节点结果（LLM response 字段）推送到前端"最终结果"窗口
+                status_events.emit(
+                    request_id,
+                    state,
+                    graph_nodes=graph.to_dict_list(),
+                    node_result={
                         "node_id": node.id,
                         "node_title": node.title,
-                        "response": node_response[:200],
-                    })
+                        "response": node_response,
+                    },
+                )
                 break
 
             # 检查是否需要更新图
@@ -532,7 +562,7 @@ class AgentOrchestrator:
             return
 
         log_agent_to_llm("Requesting final summary from LLM...")
-        response = self.llm.decide_json(
+        response = self.llm.ask_json(
             prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT_FINALIZER,
         )

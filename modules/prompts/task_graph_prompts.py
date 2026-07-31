@@ -25,6 +25,16 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 - 工具列表是建议性的，LLM 实际使用工具时可以灵活选择
 - 将最大的依赖链放在前面，减少等待
 
+## 工具选择
+- 每个节点的 `tools` 字段必须从下方 **Available Tools** 列表中选择真实存在的工具名
+- 只列出与节点目标相关的工具；若没有合适工具，`tools` 可留空
+- 不要编造 Available Tools 中不存在的工具名
+
+## 初始工具调用 (initial_tool_calls)
+- 对于**简单节点**（工具参数可以预先确定的），在 `initial_tool_calls` 中提供完整的工具调用，格式为 `{"name": "...", "arguments": {...}}`
+- 系统会在节点执行时**直接执行**这些调用，再把结果交给 LLM 分析，避免多余的往返
+- 对于**复杂节点**（参数依赖中间结果，如搜索词依赖前序节点的输出），必须将 `initial_tool_calls` 留空，执行阶段再决定
+
 ## 可用的意图类型
 - `ppt`: PPT 生成
 - `research`: 搜索研究
@@ -47,6 +57,9 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
       "id": "node_1",
       "title": "节点的明确任务描述",
       "tools": ["web_search", "web_fetch"],
+      "initial_tool_calls": [
+        {{"name": "web_search", "arguments": {{"query": "..."}}}}
+      ],
       "depends": [],
       "can_parallel": false
     }},
@@ -54,6 +67,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
       "id": "node_2",
       "title": "节点2描述",
       "tools": ["read_file", "write_file"],
+      "initial_tool_calls": [],
       "depends": ["node_1"],
       "can_parallel": false
     }}
@@ -70,7 +84,8 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 - `task_graph_nodes`: 任务节点列表
   - `id`: 节点唯一标识 (node_1, node_2, ...)
   - `title`: 节点任务描述（LLM 执行时理解）
-  - `tools`: 建议使用的工具列表（可为空，LLM 执行时可自由选择）
+  - `tools`: 建议使用的工具列表（必须从 Available Tools 中选择，可为空，LLM 执行时可自由选择）
+  - `initial_tool_calls`: 节点的初始工具调用（可选）。仅当参数可预先确定时填写完整的 `{{"name", "arguments"}}`，系统会先直接执行再进入 LLM 迭代；复杂节点必须留空 `[]`
   - `depends`: 依赖的节点 ID 列表
   - `can_parallel`: 是否可以与其他无依赖节点并行
 - `task_complete`: 如果用户的问题可以直接回答（不需要工具），设为 true

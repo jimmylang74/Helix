@@ -4,7 +4,8 @@
     "admin_port": 11556,
     "host": "0.0.0.0",
     "debug": true,
-    "language": "zh-CN"
+    "language": "zh-CN",
+    "node_parallel_count": 1
   },
   "llm": {
     "provider": "ollama_native",

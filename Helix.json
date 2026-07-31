@@ -4,9 +4,7 @@
     "admin_port": 11556,
     "host": "0.0.0.0",
     "debug": true,
-    "language": "zh-CN",
-    "subtask_summary_threshold": 2048,
-    "max_subtask_iterations": 20
+    "language": "zh-CN"
   },
   "llm": {
     "provider": "ollama_native",

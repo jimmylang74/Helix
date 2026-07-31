@@ -71,8 +71,6 @@ class ConfigManager:
                 "host": "0.0.0.0",
                 "debug": True,
                 "language": "zh-CN",
-                "subtask_summary_threshold": 1024,
-                "max_subtask_iterations": 20,
                 "node_parallel_count": 1
             },
             "default_location": {

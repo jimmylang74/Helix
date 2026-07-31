@@ -1,71 +1,74 @@
 """
-Agent Orchestrator - Core dual-loop architecture.
-Loop 1 (Todo Loop): Iterates through todo_list items.
-Loop 2 (Subtask Loop): For each todo, handles research/tool execution.
+Agent Orchestrator — Three-phase LLM call chain architecture.
+
+Phase 1: _task_planning()      LLM 将用户请求分解为 DAG 节点图
+Phase 2: _task_graph_node_loop() 按依赖顺序执行所有节点（支持并行）
+Phase 3: _task_finalizer()    可选：将所有节点结果汇总
+
+Option B — 同一时刻只有一个 Running 节点 emit 流式事件到前端，
+其余并行节点静默执行，节点完成后 emit 一条结构化完成事件。
 """
 
 import json
+import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
 from modules.core.agent_state import (
-    AgentState, create_initial_state, is_subtask_complete,
-    all_todos_complete, get_current_todo, get_todo_progress
+    AgentState, create_initial_state
 )
-from modules.core.context_manager import context_manager
-from modules.core.todo_manager import todo_manager
+from modules.core.task_graph import TaskGraph, NodeState
 from modules.agents.tool_base import tool_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
-from modules.prompts.system_prompts import (
-    SYSTEM_PROMPT_TASK, USER_PROMPT_INTENT_TODO_PLANNING,
-    USER_PROMPT_SUBTASK_DECOMPOSE, USER_PROMPT_SUBTASK_DECISION_WITHTOOLS, USER_PROMPT_SUBTASK_SUMMARY,
-    USER_PROMPT_TODO_SUMMARY, USER_PROMPT_TASK_SUMMARY, SYSTEM_PROMPT_AGENT
+from modules.prompts.system_prompts import SYSTEM_PROMPT_TASK
+from modules.prompts.task_graph_prompts import (
+    SYSTEM_PROMPT_TASK_PLANNING,
+    USER_PROMPT_TASK_PLANNING,
+    SYSTEM_PROMPT_FINALIZER,
+    USER_PROMPT_FINALIZER,
+    get_node_system_prompt,
+    USER_PROMPT_NODE_EXECUTION,
 )
-from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT, USER_PROMPT_PPT_TODO_PLANNING, USER_PROMPT_PPT_FULL_DESIGN
-from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH, USER_PROMPT_RESEARCH_TODO_PLANNING, USER_PROMPT_CONTENT_ANALYSIS, USER_PROMPT_FINAL_ANSWER
-from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING, USER_PROMPT_CODING_TODO_PLANNING, USER_PROMPT_CODE_ANALYSIS
+from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT
+from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH
+from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
 )
-from modules.llm.llm_events import set_request_context, clear_request_context, cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
+from modules.llm.llm_events import (
+    set_request_context, clear_request_context,
+    cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
+)
 from modules.core import status_events
 from modules.utils.file_ops import FileOps
 from modules.config.config_manager import ConfigManager
 
 
 class AgentOrchestrator:
-    """Main orchestrator with dual-loop architecture."""
+    """Three-phase orchestrator with DAG task graph."""
 
     def __init__(self):
         self.llm = LLMClient()
         self.file_ops = FileOps()
         self._active_states: Dict[str, AgentState] = {}
+        self._graphs: Dict[str, TaskGraph] = {}
+        self._graphs_lock = threading.Lock()
+        # Option B: which node is currently allowed to stream to frontend
+        self._stream_node_id: Dict[str, str] = {}
+        self._stream_lock = threading.Lock()
 
-    def _get_system_prompt(self, intent_type: str) -> str:
-        """Get the appropriate system prompt for the intent type."""
-        prompts = {
-            "ppt": SYSTEM_PROMPT_PPT,
-            "research": SYSTEM_PROMPT_RESEARCH,
-            "coding": SYSTEM_PROMPT_CODING,
-        }
-        return prompts.get(intent_type, SYSTEM_PROMPT_TASK)
+    # ═══════════════════════════════════════════════════════════════
+    # Public API (backward-compatible)
+    # ═══════════════════════════════════════════════════════════════
 
-    def _get_todo_prompt(self, intent_type: str) -> str:
-        """Get the appropriate todo planning prompt."""
-        prompts = {
-            "ppt": USER_PROMPT_PPT_TODO_PLANNING,
-            "research": USER_PROMPT_RESEARCH_TODO_PLANNING,
-            "coding": USER_PROMPT_CODING_TODO_PLANNING,
-        }
-        return prompts.get(intent_type, USER_PROMPT_INTENT_TODO_PLANNING)
-
-    def process_request(self, user_request: str, request_id: Optional[str] = None, forced_intent: str = "auto") -> Dict[str, Any]:
-        """Main entry point - process a user request end-to-end.
-
-        Args:
-            forced_intent: "auto" for LLM classification, or "ppt"/"research"/"coding" to skip classification.
-        """
+    def process_request(
+        self,
+        user_request: str,
+        request_id: Optional[str] = None,
+        forced_intent: str = "auto",
+    ) -> Dict[str, Any]:
+        """Main entry point — process a user request end-to-end."""
         if not request_id:
             request_id = f"req_{uuid.uuid4().hex[:12]}"
 
@@ -73,39 +76,36 @@ class AgentOrchestrator:
         log_section(f"Processing Request: {request_id}")
         log_info(f"User request: {user_request[:200]}")
 
-        # Create initial state
         state = create_initial_state(user_request, request_id)
         state["forced_intent"] = forced_intent
         self._active_states[request_id] = state
-        context_manager.initialize(state)
 
         try:
-            # Step 1: Intent Routing & Todo Planning
-            self._planning_phase(state)
+            # ── Phase 1: Task Planning ────────────────────────────
+            planning_result = self._task_planning(state)
             if state.get("error"):
                 return self._error_response(state)
 
-            # Step 2: Determine loop level (simple vs complex)
-            self._determine_loop_level(state)
+            if planning_result.get("task_complete"):
+                # 直接回答，不需要节点执行
+                state["final_result"] = planning_result.get("response", "")
+                state["orchestrator_phase"] = "done"
+                status_events.emit(request_id, state)
+                log_section(f"Request completed (direct): {request_id}")
+                return self._build_success_result(state)
 
-            # Step 3: Todo Loop (Loop 1)
-            self._todo_loop(state)
+            # ── Phase 2: Task Graph Node Loop ─────────────────────
+            self._task_graph_node_loop(state)
 
-            # Step 4: Summarization
-            self._summarization_phase(state)
+            # ── Phase 3: Finalizer (optional) ─────────────────────
+            if planning_result.get("need_finalizer", True):
+                self._task_finalizer(state)
+            else:
+                # 不需要 finalizer，从节点结果拼接最终结果
+                state["final_result"] = self._collect_node_results(state)
 
-            # Final result
-            result = {
-                "success": True,
-                "request_id": request_id,
-                "intent_type": state.get("intent_type"),
-                "final_result": state.get("final_result", ""),
-                "generated_files": state.get("generated_files", []),
-                "todos_completed": len(state.get("todos_completed", [])),
-                "subtask_loops": sum(
-                    h.get("loop_count", 0) for h in state.get("subtask_history", [])
-                ),
-            }
+            state["orchestrator_phase"] = "done"
+            result = self._build_success_result(state)
             log_section(f"Request completed: {request_id}")
             return result
 
@@ -119,545 +119,14 @@ class AgentOrchestrator:
             return self._error_response(state, str(e))
         finally:
             llm_cleanup(request_id)
+            with self._graphs_lock:
+                self._graphs.pop(request_id, None)
+            with self._stream_lock:
+                self._stream_node_id.pop(request_id, None)
             clear_request_context()
 
-    def _error_response(self, state: AgentState, error_msg: Optional[str] = None) -> Dict[str, Any]:
-        """Build error response."""
-        return {
-            "success": False,
-            "request_id": state.get("request_id", ""),
-            "error": error_msg or state.get("error", "Unknown error"),
-            "final_result": state.get("final_result", ""),
-            "generated_files": state.get("generated_files", []),
-        }
-
-    def _planning_phase(self, state: AgentState):
-        """Phase 1: Intent routing and todo planning."""
-        state["orchestrator_phase"] = "planning"
-        log_section("Phase 1: Planning")
-
-        context = context_manager.build_llm_context(state, include_history=False)
-        forced_intent = state.get("forced_intent", "auto")
-
-        if forced_intent != "auto":
-            # Intent already known — use intent-specific prompt, skip classification
-            system_prompt = self._get_system_prompt(forced_intent)
-            todo_prompt = self._get_todo_prompt(forced_intent)
-            log_agent_to_llm(f"Forced intent={forced_intent}, sending request for todo planning only...")
-        else:
-            # Auto-detect intent + plan todos in one LLM call
-            system_prompt = SYSTEM_PROMPT_TASK
-            todo_prompt = USER_PROMPT_INTENT_TODO_PLANNING
-            log_agent_to_llm("Sending request to LLM for intent routing and planning...")
-
-        response = self.llm.decide_json(
-            prompt=context + "\n\n" + todo_prompt.format(user_request=state["user_request"]),
-            system_prompt=system_prompt
-        )
-
-        # Extract intent and todos
-        intent_type = response.get("intent_type", "research")
-        if intent_type not in ("ppt", "research", "coding"):
-            intent_type = "research"
-
-        todos = response.get("todos", [])
-        if not todos:
-            todos = [f"Process: {state['user_request'][:100]}"]
-
-        state["intent_type"] = intent_type
-        log_llm_decision(f"Intent: {intent_type}, Todos: {len(todos)}")
-
-        todo_manager.set_todos(state, todos)
-        state["todo_subtask_lists"] = [[] for _ in todos]
-        context_manager.add_message(state, "assistant", json.dumps(response, ensure_ascii=False))
-        status_events.emit(state["request_id"], state)
-
-    def _determine_loop_level(self, state: AgentState):
-        """Determine if this is a simple (1-loop) or complex (2-loop) request."""
-        todo_count = len(state.get("todo_list", []))
-        complexity = len(state["user_request"])
-
-        # Simple = research-only or coding with just 1-2 clear todos
-        # Complex = PPT generation or research with 3+ todos
-        if state["intent_type"] == "ppt":
-            state["loop_level"] = "complex"
-        elif todo_count <= 2:
-            state["loop_level"] = "simple"
-        else:
-            state["loop_level"] = "complex"
-
-        log_orchestrator(f"Loop level: {state['loop_level']} ({todo_count} todos)")
-
-    def _todo_loop(self, state: AgentState):
-        """Loop 1: Iterate through todo items."""
-        state["orchestrator_phase"] = "todo_loop"
-        log_section("Phase 2: Todo Loop (Loop 1)")
-
-        loop_count = 0
-        while not todo_manager.is_finished(state):
-            if self.is_cancelled(state):
-                log_orchestrator("Todo loop cancelled by user")
-                break
-
-            loop_count += 1
-            if loop_count > state.get("max_todo_loops", 50):
-                state["error"] = "Max todo loops exceeded"
-                log_error("Max todo loops exceeded")
-                break
-
-            current_todo = todo_manager.get_current_todo(state)
-            if not current_todo:
-                break
-
-            log_orchestrator(f"\n{'='*50}")
-            log_orchestrator(f"Todo [{state['current_todo_idx'] + 1}/{len(state['todo_list'])}]: {current_todo}")
-
-            previous_todo_summary = context_manager.get_previous_todo_summary(state)
-            if previous_todo_summary:
-                log_orchestrator(f"  Previous todo summary available ({len(previous_todo_summary)} chars)")
-
-            result = self._subtask_loop(state, current_todo, previous_todo_summary)
-
-            todo_summary = self._generate_todo_summary(state, current_todo, result)
-            context_manager.save_todo_summary(state, current_todo, todo_summary)
-
-            all_done = todo_manager.advance_todo(state, todo_summary)
-            log_orchestrator(f"Todo completed. Progress:\n{todo_manager.get_progress(state)}")
-            status_events.emit(state["request_id"], state)
-
-        log_orchestrator("Todo Loop completed.")
-
-    def _subtask_loop(self, state: AgentState, todo_item: str, previous_todo_summary: str = "") -> str:
-        """Execute a todo by decomposing it into subtasks, then running each independently."""
-        state["orchestrator_phase"] = "subtask_loop"
-        state["current_subtask"] = todo_item
-        state["subtask_status"] = "running"
-        status_events.emit(state["request_id"], state)
-
-        system_prompt = self._get_system_prompt(state["intent_type"])
-        tool_definitions = self._build_tool_definitions()
-
-        context_manager.reset_subtask_contexts(state)
-        context_manager.reset_conversation(state)
-
-        subtasks = self._decompose_todo(state, todo_item, previous_todo_summary, system_prompt)
-        subtask_list = "\n".join(f"    {i}. {s}" for i, s in enumerate(subtasks, 1))
-        log_orchestrator(f"  Decomposed into {len(subtasks)} subtask(s):\n{subtask_list}")
-
-        todo_idx = state.get("current_todo_idx", 0)
-        todo_subtask_lists = state.get("todo_subtask_lists", [])
-        if todo_idx < len(todo_subtask_lists):
-            todo_subtask_lists[todo_idx] = [
-                {"subtask": s, "status": "pending"} for s in subtasks
-            ]
-
-        for idx, subtask in enumerate(subtasks, 1):
-            state["subtask_loop_count"] = idx
-            state["current_subtask_idx"] = idx - 1
-            if todo_idx < len(todo_subtask_lists):
-                todo_subtask_lists[todo_idx][idx - 1]["status"] = "running"
-            log_orchestrator(f"  Subtask [{idx}/{len(subtasks)}]: {subtask}")
-
-            result = self._execute_single_subtask(
-                state, subtask, idx, len(subtasks),
-                "", tool_definitions, system_prompt
-            )
-
-            subtask_status = "completed" if result else "failed"
-            if todo_idx < len(todo_subtask_lists):
-                todo_subtask_lists[todo_idx][idx - 1]["status"] = subtask_status
-            status_events.emit(state["request_id"], state)
-
-        all_summaries = context_manager.get_all_subtask_summaries(state)
-        state["subtask_status"] = "completed"
-
-        history = state.get("subtask_history", [])
-        history.append({
-            "subtask": todo_item,
-            "status": "completed",
-            "loop_count": len(subtasks),
-            "tool_calls": [],
-            "result": all_summaries,
-        })
-        state["subtask_history"] = history
-
-        return all_summaries or todo_item
-
-    def _decompose_todo(self, state: AgentState, todo_item: str, previous_todo_summary: str, system_prompt: str) -> List[str]:
-        """Ask LLM to break a todo into concrete subtasks."""
-        context_parts = []
-        if previous_todo_summary:
-            context_parts.append(f"## Previous Todo Result\n{previous_todo_summary}\n")
-
-        prompt = USER_PROMPT_SUBTASK_DECOMPOSE.format(
-            user_request=state.get("user_request", ""),
-            todo_item=todo_item,
-        )
-        if context_parts:
-            prompt = "\n\n".join(context_parts) + "\n\n" + prompt
-
-        log_agent_to_llm("Decomposing todo into subtasks...")
-        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
-
-        subtasks = response.get("subtasks", [])
-        if not subtasks:
-            subtasks = [todo_item]
-
-        context_manager.add_message(state, "assistant", json.dumps(response, ensure_ascii=False))
-        return subtasks
-
-    def _execute_single_subtask(
-        self,
-        state: AgentState,
-        subtask: str,
-        subtask_index: int,
-        subtask_count: int,
-        previous_subtask_summary: str,
-        tool_definitions: List[ToolDefinition],
-        system_prompt: str,
-    ) -> str:
-        """Execute one subtask with tool-calling support."""
-        subtask_result = ""
-        max_iterations = ConfigManager().get("server.max_subtask_iterations", 20)
-
-        context_manager.reset_conversation(state)
-
-        for iteration in range(1, max_iterations + 1):
-            if self.is_cancelled(state):
-                log_orchestrator("Subtask loop cancelled by user")
-                break
-
-            collected = state.get("collected_data", {})
-            todo_idx = str(state.get("current_todo_idx", 0))
-            todo_entry = collected.get(todo_idx, {})
-            todo_results = todo_entry.get("results", [])
-            collected_summary = "\n".join(todo_results) if todo_results else "(none)"
-
-            context_parts = []
-            if previous_subtask_summary:
-                context_parts.append(f"## Previous Subtask Result\n{previous_subtask_summary}\n")
-
-            remaining = max_iterations - iteration
-            prompt = USER_PROMPT_SUBTASK_DECISION_WITHTOOLS.format(
-                user_request=state.get("user_request", ""),
-                subtask_index=subtask_index,
-                subtask_count=subtask_count,
-                subtask=subtask,
-                collected_data=collected_summary,
-                remaining_iterations=remaining,
-            )
-            if context_parts:
-                prompt = "\n\n".join(context_parts) + "\n\n" + prompt
-
-            history = context_manager.get_conversation(state)
-
-            log_agent_to_llm(f"Subtask {subtask_index} iter {iteration}: decision...")
-            llm_response = self.llm.with_tools(
-                prompt=prompt,
-                tools=tool_definitions,
-                system_prompt=system_prompt,
-                context_messages=history[-10:] if history else None,
-            )
-
-            response_data = self._parse_llm_response(llm_response.content)
-            context_manager.add_message(state, "assistant", llm_response.content)
-
-            tool_calls = response_data.get("tool_calls", [])
-            if tool_calls:
-                for tc in tool_calls:
-                    self._execute_tool_call(state, tc)
-                continue
-
-            subtask_result = response_data.get("response") or ""
-            subtask_complete = response_data.get("subtask_complete", False)
-            log_llm_decision(f"Subtask {subtask_index} result: {subtask_result[:200]}")
-
-            if subtask_complete and subtask_result:
-                threshold = ConfigManager().get("server.subtask_summary_threshold", 1024)
-                if len(subtask_result.encode("utf-8")) > threshold:
-                    log_orchestrator(f"Subtask {subtask_index} response ({len(subtask_result)} chars) exceeds threshold ({threshold} bytes), generating summary...")
-                    subtask_result = self._generate_subtask_summary(
-                        state, subtask, subtask_result, tool_definitions, system_prompt
-                    )
-
-                collected_data = state.get("collected_data", {})
-                todo_idx = str(state.get("current_todo_idx", 0))
-                if todo_idx not in collected_data:
-                    todo_list = state.get("todo_list", [])
-                    todo_idx_int = int(todo_idx) if todo_idx.isdigit() else 0
-                    title = todo_list[todo_idx_int] if todo_idx_int < len(todo_list) else ""
-                    collected_data[todo_idx] = {"title": title, "results": []}
-                entry = f"[{subtask_index}/{subtask_count}] {subtask}\n{subtask_result}"
-                collected_data[todo_idx]["results"].append(entry)
-                state["collected_data"] = collected_data
-                context_manager.save_subtask_summary(state, subtask, subtask_result)
-                log_orchestrator(f"Subtask {subtask_index} written to collected_data[{todo_idx}] and subtask_contexts")
-            else:
-                log_orchestrator(f"Subtask {subtask_index} NOT saved (subtask_complete={subtask_complete}, result_empty={not subtask_result})")
-
-            break
-
-        return subtask_result
-
-    def _generate_subtask_summary(
-        self,
-        state: AgentState,
-        subtask: str,
-        result: str,
-        tool_definitions: List[ToolDefinition],
-        system_prompt: str,
-    ) -> str:
-        """Generate a concise summary of a completed subtask."""
-        if not result:
-            return ""
-
-        prompt = USER_PROMPT_SUBTASK_SUMMARY.format(
-            subtask=subtask,
-            work_performed=result,
-        )
-
-        log_agent_to_llm(f"Generating summary for subtask: {subtask[:50]}...")
-        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
-
-        summary = response.get("summary", result[:500])
-        log_llm_decision(f"Subtask summary: {summary[:150]}...")
-        return summary
-
-    def _generate_todo_summary(self, state: AgentState, todo: str, subtask_results: str) -> str:
-        """Generate a summary of a completed todo from its subtask results."""
-        if not subtask_results:
-            return ""
-
-        prompt = USER_PROMPT_TODO_SUMMARY.format(
-            todo=todo,
-            subtask_results=subtask_results[:3000],
-        )
-
-        system_prompt = self._get_system_prompt(state["intent_type"])
-        log_agent_to_llm(f"Generating summary for todo: {todo[:50]}...")
-        response = self.llm.decide_json(prompt=prompt, system_prompt=system_prompt)
-
-        summary = response.get("summary", subtask_results[:500])
-        log_llm_decision(f"Todo summary: {summary[:150]}...")
-        return summary
-
-    def _build_tool_definitions(self) -> List[ToolDefinition]:
-        """Collect all available tool definitions from ToolRegistry."""
-        tool_definitions = []
-
-        for tool in tool_registry.get_enabled_tools():
-            tool_definitions.append(ToolDefinition(
-                name=tool.name,
-                description=tool.description,
-                parameters=tool.parameters,
-            ))
-
-        return tool_definitions
-
-#   def _fix_llm_json(self, content: str) -> str:
-#       """Fix common LLM JSON formatting issues before parsing."""
-#       import re
-#
-#        # Fix 1: Escape invalid backslash sequences (\** \</ etc.)
-#        # Valid JSON escapes: " \ / b f n r t uXXXX
-#        fixed = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', content)
-#
-#        # Fix 2: Escape unescaped double quotes inside string values
-#        # Strategy: Find string values and escape quotes that aren't already escaped
-#        result = []
-#        in_string = False
-#        i = 0
-#        while i < len(fixed):
-#            ch = fixed[i]
-#            if ch == '\\' and in_string:
-#                # Escaped character - keep as-is
-#                result.append(ch)
-#                i += 1
-#                if i < len(fixed):
-#                    result.append(fixed[i])
-#                    i += 1
-#            elif ch == '"':
-#                if not in_string:
-#                    in_string = True
-#                    result.append(ch)
-#                else:
-#                    # Check if this is end of string or unescaped quote inside
-#                    # Look ahead for typical JSON delimiters after closing quote
-#                    rest = fixed[i+1:i+20].lstrip()
-#                    if rest and rest[0] in ',}]: \n\r\t':
-#                        in_string = False
-#                        result.append(ch)
-#                    else:
-#                        # Unescaped quote inside string - escape it
-#                        result.append('\\"')
-#                i += 1
-#            else:
-#                result.append(ch)
-#                i += 1
-#
-#        return ''.join(result)
-
-#    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-#        """Parse LLM JSON response, handling common LLM JSON formatting issues."""
-#        import re
-#
-#        # Step 1: Try direct parse
-#        try:
-#            return json.loads(content)
-#        except json.JSONDecodeError:
-#            pass
-#
-#        # Step 2: Extract JSON block and fix formatting issues
-#        json_match = re.search(r'\{.*\}', content, re.DOTALL)
-#        if json_match:
-#            try:
-#                return json.loads(json_match.group(0))
-#            except json.JSONDecodeError:
-#                pass
-#
-#            # Step 3: Fix common LLM JSON issues and retry
-#            fixed = self._fix_llm_json(json_match.group(0))
-#            try:
-#                return json.loads(fixed)
-#            except json.JSONDecodeError:
-#                pass
-#
-#        log_orchestrator(f"_parse_llm_response: FALLBACK to raw content, content_len={len(content)}")
-#        return {"response": content}
-
-    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
-        import json
-        import json_repair
-
-        # 1. 严格标准解析优先
-        try:
-            parsed = json.loads(content)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-
-        # 2. json-repair兜底修复解析
-        try:
-            parsed = json_repair.loads(content)
-            if isinstance(parsed, dict):
-                return parsed
-        except Exception:
-            pass
-
-        log_orchestrator(f"_parse_llm_response: FALLBACK to raw content, content_len={len(content)}")
-        return {"response": content}
-
-
-    def _execute_tool_call(self, state: AgentState, tool_call: Dict[str, Any]) -> str:
-        """Execute a tool call from LLM decision. Returns the result string."""
-        name = tool_call.get("name", "")
-        arguments = tool_call.get("arguments", {})
-        tc_id = tool_call.get("id", "")
-        log_tool_call(f"Executing tool: {name}({json.dumps(arguments, ensure_ascii=False)})")
-
-        result_text = ""
-        try:
-            if name == "web_search":
-                query = arguments.get("query", "")
-                result_text = tool_registry.call_tool("web_search", {"query": query})
-                results = json.loads(result_text) if result_text else []
-
-                urls = [r["url"] for r in results if r.get("url")]
-                state["urls_to_fetch"] = urls
-
-                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 条结果")
-
-                formatted = json.dumps(results, ensure_ascii=False)
-                context_manager.add_message(state, "assistant",
-                    f"[web_search results for '{query}']\n{formatted}")
-
-            elif name == "image_search":
-                query = arguments.get("query", "")
-                max_results = arguments.get("max_results", 5)
-                result_text = tool_registry.call_tool("image_search", {"query": query, "max_results": max_results})
-                results = json.loads(result_text) if result_text else []
-
-                urls = [r["url"] for r in results if r.get("url")]
-                state["urls_to_fetch"].extend(urls)
-
-                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 张图片")
-
-                if state.get("intent_type") == "ppt" and urls:
-                    log_agent_action(f"Auto-downloading {len(urls)} images...")
-                    saved = tool_registry.call_tool("image_download", {"urls": urls})
-                    state["generated_files"].extend(saved)
-
-                context_manager.add_message(state, "assistant",
-                    f"[image_search results for '{query}']\n{json.dumps(results, ensure_ascii=False)}")
-
-            else:
-                try:
-                    result_text = tool_registry.call_tool(name, arguments)
-                    preview = result_text[:500] + "..." if len(result_text) > 500 else result_text
-                    self._emit_tool_result(tc_id, name, preview)
-                    context_manager.add_message(state, "assistant",
-                        f"[{name} results]\n{json.dumps(result_text, ensure_ascii=False, default=str)}")
-                except Exception:
-                    log_error(f"Unknown tool: {name}")
-                    self._emit_tool_result(tc_id, name, f"错误: 未知工具 {name}")
-                    context_manager.add_message(state, "assistant",
-                        f"[tool error] Unknown tool: {name}")
-                    result_text = f"Unknown tool: {name}"
-
-        except Exception as e:
-            log_error(f"Tool execution failed: {name}: {e}")
-            self._emit_tool_result(tc_id, name, f"错误: {e}")
-            context_manager.add_message(state, "assistant",
-                f"[tool error] {name}: {e}")
-            result_text = f"Error: {e}"
-
-        return result_text
-
-    def _emit_tool_result(self, tc_id: str, name: str, result_preview: str):
-        """Emit a tool_call_result event to the SSE stream for the frontend."""
-        request_id = get_request_context()
-        if request_id:
-            _emit_llm_event(request_id, {
-                "type": "tool_call_result",
-                "id": tc_id,
-                "name": name,
-                "result": result_preview,
-            })
-
-    def _summarization_phase(self, state: AgentState):
-        """Phase 3: Summarize all results."""
-        state["orchestrator_phase"] = "summarizing"
-        log_section("Phase 3: Summarization")
-
-        # Build summarization context
-        todo_results = todo_manager.get_completed_summary(state)
-        generated = state.get("generated_files", [])
-
-        language = ConfigManager().get("server.language", "zh-CN")
-        prompt = USER_PROMPT_TASK_SUMMARY.format(
-            user_request=state["user_request"],
-            todo_results=todo_results,
-            generated_files="\n".join(generated) if generated else "None",
-            language=language,
-        )
-
-        log_agent_to_llm("Requesting final summary from LLM...")
-
-        response = self.llm.decide_json(
-            prompt=prompt,
-            system_prompt=self._get_system_prompt(state["intent_type"])
-        )
-
-        summary = response.get("summary", response.get("response", ""))
-        state["final_result"] = summary
-        state["orchestrator_phase"] = "done"
-
-        log_llm_decision(f"Summary generated ({len(summary)} chars)")
-        status_events.emit(state["request_id"], state)
-
     def cancel_request(self, request_id: str) -> bool:
-        """Cancel an active request. Returns True if found and cancelled."""
+        """Cancel an active request."""
         state = self._active_states.get(request_id)
         if not state:
             return False
@@ -669,27 +138,20 @@ class AgentOrchestrator:
         return True
 
     def is_cancelled(self, state: AgentState) -> bool:
-        """Check if a request has been cancelled."""
         return state.get("cancelled", False)
 
     def get_state(self, request_id: str) -> Optional[Dict[str, Any]]:
-        """Get current state for a request."""
         state = self._active_states.get(request_id)
         if not state:
             return None
+
+        graph = self._get_graph(request_id)
         return {
             "request_id": request_id,
             "intent_type": state.get("intent_type"),
             "orchestrator_phase": state.get("orchestrator_phase"),
-            "todo_progress": get_todo_progress(state),
-            "current_todo": get_current_todo(state),
-            "todo_list": state.get("todo_list", []),
-            "current_todo_idx": state.get("current_todo_idx", 0),
-            "todos_completed": state.get("todos_completed", []),
-            "todo_subtask_lists": state.get("todo_subtask_lists", []),
-            "current_subtask_idx": state.get("current_subtask_idx", 0),
-            "subtask_status": state.get("subtask_status"),
-            "subtask_history": state.get("subtask_history", []),
+            "task_graph_nodes": graph.to_dict_list() if graph else [],
+            "all_done": graph.is_all_done() if graph else False,
             "final_result": state.get("final_result", ""),
             "generated_files": state.get("generated_files", []),
             "error": state.get("error"),
@@ -699,6 +161,583 @@ class AgentOrchestrator:
     def refresh_llm(self):
         """Refresh LLM client (call after config change)."""
         self.llm.refresh()
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 1 — Task Planning
+    # ═══════════════════════════════════════════════════════════════
+
+    def _task_planning(self, state: AgentState) -> Dict[str, Any]:
+        """Phase 1: LLM 分解任务为 DAG 节点图。"""
+        state["orchestrator_phase"] = "planning"
+        log_section("Phase 1: Task Planning")
+
+        forced_intent = state.get("forced_intent", "auto")
+        if forced_intent != "auto":
+            # 已知 intent，直接用对应 system prompt 规划
+            system_prompt = self._get_system_prompt(forced_intent)
+            user_prompt = USER_PROMPT_TASK_PLANNING.format(
+                user_request=state["user_request"]
+            )
+            log_agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
+        else:
+            system_prompt = SYSTEM_PROMPT_TASK_PLANNING
+            user_prompt = USER_PROMPT_TASK_PLANNING.format(
+                user_request=state["user_request"]
+            )
+            log_agent_to_llm("Sending request to LLM for task planning...")
+
+        # 检查 token 预算
+        if not self._check_token_budget(system_prompt, user_prompt):
+            state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
+            log_error(state["error"])
+            return {"task_complete": True, "response": state["error"]}
+
+        response = self.llm.decide_json(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+        )
+
+        # 解析结果
+        intent_type = response.get("intent_type", "research")
+        if intent_type not in ("ppt", "research", "coding"):
+            intent_type = "research"
+
+        state["intent_type"] = intent_type
+        log_llm_decision(f"Intent: {intent_type}")
+
+        task_complete = response.get("task_complete", False)
+        if task_complete:
+            direct_response = response.get("response", "")
+            log_llm_decision(f"Task complete (direct): {direct_response[:100]}")
+            state["final_result"] = direct_response
+            return {
+                "task_complete": True,
+                "response": direct_response,
+                "intent_type": intent_type,
+                "need_finalizer": False,
+            }
+
+        # 创建 TaskGraph
+        nodes = response.get("task_graph_nodes", [])
+        if not nodes:
+            # 保底：创建一个默认节点
+            nodes = [{
+                "id": "node_1",
+                "title": f"Process: {state['user_request'][:100]}",
+                "tools": [],
+                "depends": [],
+                "can_parallel": False,
+            }]
+
+        max_updates = ConfigManager().get("llm.max_graph_updates", 5)
+        graph = TaskGraph(nodes=nodes, max_graph_updates=max_updates)
+
+        with self._graphs_lock:
+            self._graphs[state["request_id"]] = graph
+
+        need_finalizer = response.get("need_finalizer", True)
+        reason = response.get("reason", "")
+
+        log_llm_decision(
+            f"Graph created: {len(nodes)} nodes, "
+            f"need_finalizer={need_finalizer}, reason={reason[:100]}"
+        )
+
+        status_events.emit(state["request_id"], state)
+
+        return {
+            "task_complete": False,
+            "intent_type": intent_type,
+            "need_finalizer": need_finalizer,
+            "reason": reason,
+        }
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 2 — Task Graph Node Loop
+    # ═══════════════════════════════════════════════════════════════
+
+    def _task_graph_node_loop(self, state: AgentState):
+        """Phase 2: 循环执行 DAG 节点，直到全部完成。"""
+        state["orchestrator_phase"] = "node_loop"
+        log_section("Phase 2: Task Graph Node Loop")
+
+        graph = self._get_graph(state["request_id"])
+        if not graph:
+            state["error"] = "No task graph found"
+            return
+
+        parallel_count = ConfigManager().get("server.node_parallel_count", 1)
+
+        while not graph.is_all_done():
+            if self.is_cancelled(state):
+                log_orchestrator("Node loop cancelled by user")
+                break
+
+            # 找出所有 Ready 节点
+            ready_nodes = graph.get_ready_nodes()
+            if not ready_nodes:
+                # 没有 Ready 节点但也没全部完成 → 检查是否卡死
+                if graph.get_running_count() == 0:
+                    log_orchestrator("No ready or running nodes — graph may be stuck or all done")
+                    break
+                # 有 Running 但还没 Ready → 等下一个循环
+                log_orchestrator(f"Waiting for {graph.get_running_count()} running node(s)...")
+                status_events.emit(state["request_id"], state)
+                # 没有 Ready 节点会无限空转，加个安全等待
+                import time
+                time.sleep(0.1)
+                continue
+
+            # 根据并行配置选择执行节点
+            nodes_to_run = ready_nodes[:parallel_count]
+
+            # 对没有 can_parallel 标记的，只跑一个
+            all_non_parallel = all(not n.can_parallel for n in nodes_to_run)
+            if all_non_parallel and len(nodes_to_run) > 1:
+                nodes_to_run = nodes_to_run[:1]
+
+            log_orchestrator(
+                f"Running {len(nodes_to_run)} node(s): "
+                + ", ".join(f"{n.id}[{n.title[:30]}]" for n in nodes_to_run)
+            )
+
+            # 串行执行或启动线程执行
+            if len(nodes_to_run) == 1:
+                node = nodes_to_run[0]
+                self._set_stream_node(state["request_id"], node.id)
+                graph.set_node_running(node.id)
+                status_events.emit(state["request_id"], state)
+                self._execute_node(state, node)
+            else:
+                threads = []
+                for node in nodes_to_run:
+                    graph.set_node_running(node.id)
+
+                # 第一个节点流式，其他静默
+                nodes_to_run[0].can_parallel = True  # 确保被标记
+                self._set_stream_node(state["request_id"], nodes_to_run[0].id)
+                status_events.emit(state["request_id"], state)
+
+                for i, node in enumerate(nodes_to_run):
+                    is_stream = (i == 0)
+                    t = threading.Thread(
+                        target=self._execute_node,
+                        args=(state, node),
+                        kwargs={"emit_stream": is_stream},
+                        daemon=True,
+                    )
+                    threads.append(t)
+                    t.start()
+
+                for t in threads:
+                    t.join()
+
+            self._clear_stream_node(state["request_id"])
+            status_events.emit(state["request_id"], state)
+
+        log_orchestrator("Task Graph Node Loop completed.")
+
+    def _execute_node(
+        self,
+        state: AgentState,
+        node: Any,
+        emit_stream: bool = True,
+    ):
+        """执行单个节点（内部 tool-calling 循环）。"""
+        request_id = state["request_id"]
+        tool_definitions = self._build_tool_definitions()
+        system_prompt = get_node_system_prompt(state["intent_type"])
+
+        # 重置节点的 conversation history
+        node.node_conversation_history = []
+
+        iteration = 0
+        while True:
+            iteration += 1
+            if self.is_cancelled(state):
+                break
+
+            graph = self._get_graph(request_id)
+            if not graph:
+                break
+
+            # 检查 token 预算
+            graph_state_str = graph.get_graph_state_string(node.id)
+            conv = self._format_node_conversation(node)
+            tool_results_str = self._format_tool_results(node)
+
+            if not self._check_token_budget(
+                system_prompt,
+                graph_state_str,
+                conv,
+                tool_results_str,
+            ):
+                err = f"Node {node.id}: prompt exceeds max_input_tokens limit"
+                log_error(err)
+                graph.set_node_failed(node.id, err)
+                break
+
+            # 构造 prompt
+            user_prompt = USER_PROMPT_NODE_EXECUTION.format(
+                node_id=node.id,
+                node_title=node.title,
+                node_tools=", ".join(node.tools) if node.tools else "(no suggestion)",
+                tool_results=tool_results_str,
+                conversation_history=conv,
+                graph_state=graph_state_str,
+            )
+
+            log_agent_to_llm(
+                f"Node {node.id} iter {iteration}: calling LLM "
+                f"{'(streaming)' if emit_stream else '(silent)'}..."
+            )
+
+            # 调用 LLM（带工具）
+            llm_response = self.llm.with_tools(
+                prompt=user_prompt,
+                tools=tool_definitions,
+                system_prompt=system_prompt,
+                emit_stream=emit_stream,
+            )
+
+            # 解析响应
+            response_data = self._parse_llm_response(llm_response.content)
+            node.node_conversation_history.append({
+                "role": "assistant",
+                "content": llm_response.content,
+            })
+
+            # 检查 tool_calls（LLM 可能通过 OpenAI 原生 tool calling 返回）
+            tool_calls = llm_response.tool_calls or response_data.get("tool_calls", [])
+            if tool_calls:
+                for tc in tool_calls:
+                    name = tc.get("name", "")
+                    arguments = tc.get("arguments", {})
+                    result = self._execute_tool_call(state, tc)
+                    node.tool_results.append({
+                        "tool": name,
+                        "arguments": arguments,
+                        "result": result[:1000] if result else "",
+                    })
+                continue
+
+            # 通过 JSON 协议工具调用
+            json_tools = response_data.get("tools", [])
+            if json_tools:
+                # 批量执行所有工具
+                for tc in json_tools:
+                    name = tc.get("name", "")
+                    arguments = tc.get("arguments", {})
+                    fake_tc = {"name": name, "arguments": arguments, "id": f"node_{node.id}_t{iteration}_{len(node.tool_results)}"}
+                    result = self._execute_tool_call(state, fake_tc)
+                    node.tool_results.append({
+                        "tool": name,
+                        "arguments": arguments,
+                        "result": result[:1000] if result else "",
+                    })
+                continue
+
+            # 判断节点完成情况
+            node_complete = response_data.get("node_complete", False)
+            node_response = response_data.get("response", "")
+
+            if node_complete:
+                node.reason = response_data.get("reason", "")
+                graph.set_node_done(node.id, node_response)
+                log_llm_decision(
+                    f"Node {node.id} completed: {node_response[:100]}"
+                )
+                # 向前端 emit 完成事件（非流式节点也需要通知）
+                if not emit_stream:
+                    _emit_llm_event(request_id, {
+                        "type": "node_completed",
+                        "node_id": node.id,
+                        "node_title": node.title,
+                        "response": node_response[:200],
+                    })
+                break
+
+            # 检查是否需要更新图
+            need_update = response_data.get("need_update_node", False)
+            if need_update:
+                new_nodes = response_data.get("task_graph_nodes", [])
+                if new_nodes and not graph.has_reached_max_updates():
+                    log_llm_decision(
+                        f"Node {node.id}: updating graph with {len(new_nodes)} nodes"
+                    )
+                    graph.update_from_nodes(new_nodes)
+
+                    # 检查当前节点在新图中是否还存在
+                    # update_from_nodes 将消失的节点设为 FAILED，但仍保留在 _nodes 中
+                    current = graph.get_node(node.id)
+                    if current is None or current.state == NodeState.FAILED:
+                        if current is None:
+                            graph.set_node_failed(
+                                node.id,
+                                "Node removed during graph update"
+                            )
+                        log_orchestrator(
+                            f"Node {node.id} removed by graph update → Failed"
+                        )
+                        break
+                elif not new_nodes:
+                    log_error(
+                        f"Node {node.id}: need_update_node=true but no nodes provided"
+                    )
+                    graph.set_node_failed(node.id, "Graph update with no nodes")
+                    break
+                else:
+                    log_error(f"Node {node.id}: max graph updates reached")
+                    graph.set_node_failed(node.id, "Max graph updates reached")
+                    break
+
+            # 既没有 tools、node_complete、need_update_node → 视为失败
+            log_error(
+                f"Node {node.id} iter {iteration}: no tools/complete/update "
+                f"— marking failed"
+            )
+            graph.set_node_failed(
+                node.id,
+                "No tool calls or completion from LLM"
+            )
+            break
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 3 — Finalizer
+    # ═══════════════════════════════════════════════════════════════
+
+    def _task_finalizer(self, state: AgentState):
+        """Phase 3: 将所有节点结果汇总为最终答案。"""
+        state["orchestrator_phase"] = "finalizing"
+        log_section("Phase 3: Finalizer")
+
+        graph = self._get_graph(state["request_id"])
+        if not graph:
+            state["final_result"] = self._collect_node_results(state)
+            return
+
+        graph_summary = graph.get_summary_for_finalizer()
+        user_prompt = USER_PROMPT_FINALIZER.format(
+            user_request=state["user_request"],
+            graph_summary=graph_summary,
+        )
+
+        if not self._check_token_budget(SYSTEM_PROMPT_FINALIZER, user_prompt):
+            log_error("Finalizer prompt exceeds max_input_tokens limit, using raw results")
+            state["final_result"] = self._collect_node_results(state)
+            return
+
+        log_agent_to_llm("Requesting final summary from LLM...")
+        response = self.llm.decide_json(
+            prompt=user_prompt,
+            system_prompt=SYSTEM_PROMPT_FINALIZER,
+        )
+
+        final_answer = response.get("final_answer", response.get("response", ""))
+        state["final_result"] = final_answer or self._collect_node_results(state)
+        log_llm_decision(f"Final summary generated ({len(state['final_result'])} chars)")
+
+    # ═══════════════════════════════════════════════════════════════
+    # Helpers
+    # ═══════════════════════════════════════════════════════════════
+
+    def _get_graph(self, request_id: str) -> Optional[TaskGraph]:
+        with self._graphs_lock:
+            return self._graphs.get(request_id)
+
+    def _set_stream_node(self, request_id: str, node_id: str):
+        with self._stream_lock:
+            self._stream_node_id[request_id] = node_id
+
+    def _clear_stream_node(self, request_id: str):
+        with self._stream_lock:
+            self._stream_node_id.pop(request_id, None)
+
+    def _get_system_prompt(self, intent_type: str) -> str:
+        prompts = {
+            "ppt": SYSTEM_PROMPT_PPT,
+            "research": SYSTEM_PROMPT_RESEARCH,
+            "coding": SYSTEM_PROMPT_CODING,
+        }
+        return prompts.get(intent_type, SYSTEM_PROMPT_TASK)
+
+    def _build_tool_definitions(self) -> List[ToolDefinition]:
+        tool_definitions = []
+        for tool in tool_registry.get_enabled_tools():
+            tool_definitions.append(ToolDefinition(
+                name=tool.name,
+                description=tool.description,
+                parameters=tool.parameters,
+            ))
+        return tool_definitions
+
+    def _check_token_budget(self, *text_parts: str) -> bool:
+        """估算 token 是否超过限制。超过返回 False。"""
+        max_tokens = ConfigManager().get("llm.max_input_tokens", 32768)
+        total_chars = sum(len(p) for p in text_parts)
+        estimated = total_chars // 3  # 混合中英文的粗略估计
+        if estimated > max_tokens:
+            log_error(
+                f"Token budget exceeded: ~{estimated} estimated > {max_tokens} max"
+            )
+            return False
+        return True
+
+    def _parse_llm_response(self, content: str) -> Dict[str, Any]:
+        import json_repair
+
+        # 1. 严格解析
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+        # 2. json-repair 兜底
+        try:
+            parsed = json_repair.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        log_orchestrator(
+            f"_parse_llm_response: FALLBACK, content_len={len(content)}"
+        )
+        return {"response": content}
+
+    def _execute_tool_call(
+        self,
+        state: AgentState,
+        tool_call: Dict[str, Any],
+    ) -> str:
+        """执行单个工具调用，返回结果文本。"""
+        name = tool_call.get("name", "")
+        arguments = tool_call.get("arguments", {})
+        tc_id = tool_call.get("id", "")
+        log_tool_call(
+            f"Executing tool: {name}({json.dumps(arguments, ensure_ascii=False)})"
+        )
+
+        result_text = ""
+        try:
+            # 特殊处理 web_search / image_search（保持向后兼容）
+            if name == "web_search":
+                query = arguments.get("query", "")
+                result_text = tool_registry.call_tool(
+                    "web_search", {"query": query}
+                )
+                results = json.loads(result_text) if result_text else []
+                urls = [r["url"] for r in results if r.get("url")]
+                state["urls_to_fetch"] = urls
+                self._emit_tool_result(tc_id, name, f"搜索到 {len(results)} 条结果")
+            elif name == "image_search":
+                query = arguments.get("query", "")
+                max_results = arguments.get("max_results", 5)
+                result_text = tool_registry.call_tool(
+                    "image_search",
+                    {"query": query, "max_results": max_results},
+                )
+                results = json.loads(result_text) if result_text else []
+                urls = [r["url"] for r in results if r.get("url")]
+                state["urls_to_fetch"].extend(urls)
+                self._emit_tool_result(
+                    tc_id, name, f"搜索到 {len(results)} 张图片"
+                )
+                if state.get("intent_type") == "ppt" and urls:
+                    log_agent_action(f"Auto-downloading {len(urls)} images...")
+                    saved = tool_registry.call_tool("image_download", {"urls": urls})
+                    state["generated_files"].extend(saved)
+            else:
+                result_text = tool_registry.call_tool(name, arguments)
+                preview = (
+                    result_text[:500] + "..."
+                    if len(result_text) > 500
+                    else result_text
+                )
+                self._emit_tool_result(tc_id, name, preview)
+        except Exception as e:
+            log_error(f"Tool execution failed: {name}: {e}")
+            self._emit_tool_result(tc_id, name, f"错误: {e}")
+            result_text = f"Error: {e}"
+
+        return result_text
+
+    def _emit_tool_result(
+        self, tc_id: str, name: str, result_preview: str
+    ):
+        """Emit a tool_call_result event to the SSE stream."""
+        request_id = get_request_context()
+        if request_id:
+            _emit_llm_event(request_id, {
+                "type": "tool_call_result",
+                "id": tc_id,
+                "name": name,
+                "result": result_preview,
+            })
+
+    def _format_node_conversation(self, node: Any) -> str:
+        """格式化节点的 conversation history 用于 prompt。"""
+        history = getattr(node, "node_conversation_history", [])
+        if not history:
+            return "(no conversation yet)"
+        parts = []
+        for msg in history[-6:]:  # 只保留最近 6 条
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            parts.append(f"[{role}]: {content[:800]}")
+        return "\n\n".join(parts)
+
+    def _format_tool_results(self, node: Any) -> str:
+        """格式化节点上最近的 tool 执行结果。"""
+        results = getattr(node, "tool_results", [])
+        if not results:
+            return "(no tool results yet)"
+        parts = []
+        for r in results[-10:]:  # 最近 10 条
+            tool_name = r.get("tool", "?")
+            result = r.get("result", "")
+            parts.append(f"[{tool_name}]: {result[:500]}")
+        return "\n\n".join(parts)
+
+    def _collect_node_results(self, state: AgentState) -> str:
+        """当不需要 finalizer 时，从图节点收集结果。"""
+        graph = self._get_graph(state["request_id"])
+        if not graph:
+            return ""
+        lines = []
+        for node in graph.to_dict_list():
+            status = node.get("state", "")
+            resp = node.get("response", "")
+            err = node.get("error", "")
+            if resp:
+                lines.append(f"## {node.get('title', '')}\n{resp}")
+            if err:
+                lines.append(f"## {node.get('title', '')} (Failed)\n{err}")
+        return "\n\n".join(lines)
+
+    def _build_success_result(self, state: AgentState) -> Dict[str, Any]:
+        return {
+            "success": True,
+            "request_id": state.get("request_id", ""),
+            "intent_type": state.get("intent_type"),
+            "final_result": state.get("final_result", ""),
+            "generated_files": state.get("generated_files", []),
+        }
+
+    def _error_response(
+        self,
+        state: AgentState,
+        error_msg: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return {
+            "success": False,
+            "request_id": state.get("request_id", ""),
+            "error": error_msg or state.get("error", "Unknown error"),
+            "final_result": state.get("final_result", ""),
+            "generated_files": state.get("generated_files", []),
+        }
 
 
 # Global orchestrator instance

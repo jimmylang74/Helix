@@ -42,27 +42,32 @@ class _StdoutEventEmitter:
     Wraps the underlying ``StringIO`` buffer.  Each ``write()`` call
     forwards complete JSON lines to ``llm_events.emit()`` while still
     accumulating data for the caller's buffer.
+
+    When ``enabled=False``, LLM stream output is captured but NOT forwarded
+    to the frontend (used for silent parallel node execution — Option B).
     """
 
-    def __init__(self, buf: io.StringIO):
+    def __init__(self, buf: io.StringIO, enabled: bool = True):
         self._buf = buf
         self._partial = ""
+        self._enabled = enabled
 
     def write(self, s: str) -> int:
         self._buf.write(s)
-        request_id = get_request_context()
-        if request_id:
-            self._partial += s
-            while "\n" in self._partial:
-                line, self._partial = self._partial.split("\n", 1)
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                    _emit_event(request_id, event)
-                except json.JSONDecodeError:
-                    pass
+        if self._enabled:
+            request_id = get_request_context()
+            if request_id:
+                self._partial += s
+                while "\n" in self._partial:
+                    line, self._partial = self._partial.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                        _emit_event(request_id, event)
+                    except json.JSONDecodeError:
+                        pass
         return len(s)
 
     def flush(self):
@@ -150,11 +155,16 @@ class LLMClient:
         tools: List[ToolDefinition],
         system_prompt: Optional[str] = None,
         context_messages: Optional[List[Dict[str, str]]] = None,
+        emit_stream: bool = True,
     ) -> LLMResponse:
         """Chat with tool-calling support via JSON-based protocol.
 
         Tool descriptions are injected into the system prompt so the LLM
         can respond with ``{"tool_calls": [...]}`` when appropriate.
+
+        Args:
+            emit_stream: Whether to emit LLM streaming events to frontend.
+                         Set to False for silent parallel node execution.
         """
         # Build combined system prompt with tool descriptions
         tool_descriptions = "\n\nAvailable tools (respond with JSON that includes tool_calls if needed):\n"
@@ -180,6 +190,7 @@ class LLMClient:
             system_prompt=combined_system,
             no_stream=False,
             expect_json=True,
+            emit_stream=emit_stream,
         )
 
     def refresh(self):
@@ -237,8 +248,14 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         no_stream: bool = False,
         expect_json: bool = True,
+        emit_stream: bool = True,
     ) -> LLMResponse:
-        """Run ai_engine and parse NDJSON events into an LLMResponse."""
+        """Run ai_engine and parse NDJSON events into an LLMResponse.
+
+        Args:
+            emit_stream: If False, LLM streaming events are NOT forwarded
+                         to the frontend (silent execution for parallel nodes).
+        """
         args = self._build_engine_args(text, system_prompt, no_stream)
 
         log_agent_to_llm(
@@ -248,7 +265,7 @@ class LLMClient:
         )
 
         request_id = get_request_context()
-        if request_id:
+        if emit_stream and request_id:
             _emit_event(request_id, {
                 "type": "sending",
                 "provider": args.provider,
@@ -269,7 +286,7 @@ class LLMClient:
         thinking_content = ""
 
         try:
-            emitter = _StdoutEventEmitter(buf)
+            emitter = _StdoutEventEmitter(buf, enabled=emit_stream)
             with redirect_stdout(emitter):
                 try:
                     _run_engine(args)

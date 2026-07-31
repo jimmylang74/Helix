@@ -422,6 +422,11 @@ function stopStatusStream() {
 function handleStatusEvent(state) {
     renderTaskGraph(state);
 
+    // 节点完成时，将节点执行结果实时显示在最终结果窗口
+    if (state.node_result && state.node_result.response) {
+        updateFinalResult(state.node_result.response);
+    }
+
     if (state.final_result) {
         updateFinalResult(state.final_result, state.generated_files);
         stopStatusStream();

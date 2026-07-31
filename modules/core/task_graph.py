@@ -31,6 +31,7 @@ class TaskNode:
         tools: Optional[List[str]] = None,
         depends: Optional[List[str]] = None,
         can_parallel: bool = False,
+        initial_tool_calls: Optional[List[Dict[str, Any]]] = None,
     ):
         self.id = node_id
         self.title = title
@@ -45,12 +46,17 @@ class TaskNode:
 
         # 独立的 tool-calling 对话历史（LLM ↔ system 往复）
         self.node_conversation_history: List[Dict[str, str]] = []
+        # 本节点最近的 tool 执行结果（tool 调用后由 orchestrator 追加）
+        self.tool_results: List[Dict[str, Any]] = []
+        # planning 阶段预计划的初始 tool calls（执行节点时先直接执行）
+        self.initial_tool_calls: List[Dict[str, Any]] = initial_tool_calls or []
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "title": self.title,
             "tools": list(self.tools),
+            "initial_tool_calls": list(self.initial_tool_calls),
             "depends": list(self.depends),
             "can_parallel": self.can_parallel,
             "state": self.state.value,
@@ -88,6 +94,7 @@ class TaskGraph:
             tools=node_data.get("tools", []),
             depends=node_data.get("depends", []),
             can_parallel=node_data.get("can_parallel", False),
+            initial_tool_calls=node_data.get("initial_tool_calls") or [],
         )
         with self._lock:
             self._nodes[node_id] = node
@@ -112,6 +119,9 @@ class TaskGraph:
                     existing.tools = n.get("tools", existing.tools)
                     existing.depends = n.get("depends", existing.depends)
                     existing.can_parallel = n.get("can_parallel", existing.can_parallel)
+                    existing.initial_tool_calls = (
+                        n.get("initial_tool_calls") or existing.initial_tool_calls
+                    )
                 else:
                     self._nodes[nid] = TaskNode(
                         node_id=nid,
@@ -119,6 +129,7 @@ class TaskGraph:
                         tools=n.get("tools", []),
                         depends=n.get("depends", []),
                         can_parallel=n.get("can_parallel", False),
+                        initial_tool_calls=n.get("initial_tool_calls") or [],
                     )
 
             # 在新图中消失的旧节点 → Failed

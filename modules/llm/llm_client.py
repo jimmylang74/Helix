@@ -140,8 +140,20 @@ class LLMClient:
         )
         return response.content
 
-    def decide_json(self, prompt: str, system_prompt: Optional[str] = None) -> Dict[str, Any]:
-        """Send prompt and expect JSON response."""
+    def ask_json(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[ToolDefinition]] = None,
+    ) -> Dict[str, Any]:
+        """Send prompt and expect a JSON document.
+
+        If ``tools`` is given, the tool catalog is injected into the system
+        prompt as context so the LLM can reference real tool names — but the
+        response contract stays a JSON document (no tool-calling channel).
+        """
+        if tools:
+            system_prompt = f"{system_prompt or ''}\n\n{self.format_tools_section(tools)}"
         response = self.chat(
             messages=[{"role": "user", "content": prompt}],
             system_prompt=system_prompt,
@@ -149,7 +161,7 @@ class LLMClient:
         )
         return self._extract_json(response.content)
 
-    def with_tools(
+    def ask_with_tools(
         self,
         prompt: str,
         tools: List[ToolDefinition],
@@ -167,12 +179,10 @@ class LLMClient:
                          Set to False for silent parallel node execution.
         """
         # Build combined system prompt with tool descriptions
-        tool_descriptions = "\n\nAvailable tools (respond with JSON that includes tool_calls if needed):\n"
-        for t in tools:
-            tool_descriptions += f"\n- {t.name}: {t.description}"
-            tool_descriptions += f"\n  Parameters: {json.dumps(t.parameters, ensure_ascii=False)}"
-
-        combined_system = f"{system_prompt or ''}\n{tool_descriptions}"
+        combined_system = (
+            f"{system_prompt or ''}\n\n"
+            f"{self.format_tools_section(tools, heading='Available tools (respond with JSON that includes tool_calls if needed):')}"
+        )
 
         # Flatten context messages + prompt into a single text
         parts: List[str] = []
@@ -192,6 +202,20 @@ class LLMClient:
             expect_json=True,
             emit_stream=emit_stream,
         )
+
+    @staticmethod
+    def format_tools_section(
+        tools: List[ToolDefinition],
+        heading: str = "## Available Tools",
+    ) -> str:
+        """Format tool definitions as a prompt block: heading + one entry per tool."""
+        parts = [heading]
+        for t in tools:
+            parts.append(f"- {t.name}: {t.description}")
+            parts.append(
+                f"  Parameters: {json.dumps(t.parameters, ensure_ascii=False)}"
+            )
+        return "\n".join(parts)
 
     def refresh(self):
         """Re-read configuration (call after config change)."""

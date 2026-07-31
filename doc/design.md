@@ -171,7 +171,7 @@ sequenceDiagram
             Orch->>Graph: set_node_running(node)
             Orch->>Orch: 串行执行 / ThreadPool 并行<br/>(node_parallel_count)
 
-            Orch->>LLM: with_tools(get_node_system_prompt(node),<br/>node.tools, USER_PROMPT_NODE_EXECUTION,<br/>context_messages=history[-10:])
+            Orch->>LLM: with_tools(get_node_system_prompt(node),<br/>node.tools, USER_PROMPT_NODE_EXECUTION<br/>(conversation_history 内联最近6条))
             LLM-->>Orch: {tools[], node_complete?,<br/>response?, need_update_node?}
 
             alt 有 tool_calls

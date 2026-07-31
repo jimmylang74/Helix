@@ -3,33 +3,34 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-混合驱动AI Agent服务，基于 LangChain + LangGraph + python-pptx + ai_engine 构建。
+混合驱动AI Agent服务，基于 Python / Flask / python-pptx / ai_engine 构建。
 
 ## 架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    接入层 (Flask REST API)            │
-│              POST /api/agent/router                  │
+│                    接入层 (Flask API)                 │
+│           POST /api/rpc (JSON-RPC 2.0 单入口)         │
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
 │              Agent Intent Router                     │
-│           意图路由分发 (LLM分类)                       │
+│           意图路由分发 (配置化 + 强制指定)               │
 └──────────────────────┬──────────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────────┐
-│            Agent Orchestrator                        │
+│            Agent Orchestrator (三阶段 DAG)            │
 │     ┌─────────────────────────────────────┐         │
-│     │  Loop 1: Todo List (总体任务循环)    │         │
-│     │     ┌─────────────────────────┐    │         │
-│     │     │ Loop 2: Subtask (子任务)  │    │         │
-│     │     │  分解 → 独立执行 → 摘要   │    │         │
-│     │     │  ┌───────────────────┐  │    │         │
-│     │     │  │ Loop 3: 工具执行   │  │    │         │
-│     │     │  │  LLM决策 → Tool   │  │    │         │
-│     │     │  └───────────────────┘  │    │         │
-│     │     └─────────────────────────┘    │         │
+│     │ Phase 1: Task Planning              │         │
+│     │  LLM 分解请求为 DAG 节点图             │         │
+│     │  ┌─────────────────────────────┐    │         │
+│     │  │ Phase 2: Node Loop           │    │         │
+│     │  │  依赖解析 → 并行/串行执行节点   │    │         │
+│     │  │  ┌───────────────────────┐  │    │         │
+│     │  │  │ 节点内: LLM决策→Tool   │  │    │         │
+│     │  │  └───────────────────────┘  │    │         │
+│     │  └─────────────────────────────┘    │         │
+│     │ Phase 3: Finalizer (可选汇总)         │         │
 │     └─────────────────────────────────────┘         │
 └──────────────────────┬──────────────────────────────┘
                        │
@@ -42,15 +43,16 @@
 
 ## 核心特性
 
-- **三循环架构**: 总体任务循环(Todo Loop) → 子任务分解(Subtask Loop) → 工具执行(Iteration Loop)
-- **分层上下文管理**: Todo摘要 → Subtask摘要 → 对话历史，逐层传递避免上下文污染
-- **LLM驱动决策**: LLM负责意图识别、任务分解、工具调用判断、数据分析、结果总结
-- **三种预置Agent**: PPT生成、智能搜索、代码生成
+- **三阶段 DAG 架构**: 任务规划(Phase 1) → 节点循环(Phase 2) → 总结(Phase 3)，任务被分解为带依赖关系的 DAG 节点图，无依赖节点可并行执行
+- **动态任务图**: 执行中 LLM 可更新节点图（`need_update_node`），失败路径自动标记并规避，支持 `max_graph_updates` 次更新
+- **节点级上下文隔离**: 每个节点维护独立的对话历史与工具结果，避免上下文污染；节点间通过 `depends` 依赖传递结果
+- **LLM驱动决策**: LLM负责任务分解、工具调用判断、节点完成判定、结果总结
+- **三种预置Agent**: PPT生成、智能搜索、代码生成（按 intent 使用对应的规划与节点执行提示词）
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
-- **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash)
-- **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看
+- **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash) 及外部 SSE MCP Server
+- **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看、任务 DAG 状态实时可视化（SSE 流）
 
 ## 快速开始
 
@@ -117,12 +119,15 @@ curl -X POST http://localhost:11555/api/rpc \
 |--------|------|--------|
 | server.rpc_port | RPC API端口 | 11555 |
 | server.admin_port | 管理端口 | 11556 |
+| server.node_parallel_count | DAG 节点并行执行数 (0/1=串行) | 1 |
 | llm.provider | LLM提供商 (ai_engine provider key) | ollama_native |
 | llm.model | 模型名称 | qwen2.5:7b |
 | llm.endpoint | API 地址 | http://localhost:11434 |
 | llm.api_key | API 密钥 (可选) | (空) |
 | llm.verbose | 启用详细日志 | true |
 | llm.log_file | LLM 交互日志文件 | llm_engine.log |
+| llm.max_input_tokens | 任务规划阶段输入上限 (超限报错) | 32768 |
+| llm.max_graph_updates | 执行中任务图最大更新次数 | 5 |
 
 
 可通过 Web 管理控制台的 LLM 配置页面动态切换 Provider 和填写连接参数，无需手动编辑 JSON。
@@ -146,23 +151,23 @@ curl -X POST http://localhost:11555/api/rpc \
 │   └── design.md              #   系统架构设计文档 (Mermaid)
 ├── modules/                   # 核心模块
 │   ├── core/                  #   核心编排
-│   │   ├── agent_state.py     #     LangGraph 状态定义 (AgentState)
-│   │   ├── orchestrator.py    #     三循环编排器 (Todo→Subtask分解→工具执行)
-│   │   ├── context_manager.py #     分层上下文管理 (todo/subtask/conversation)
-│   │   └── todo_manager.py    #     任务清单管理 (进度追踪)
+│   │   ├── orchestrator.py    #     三阶段编排器 (规划→节点循环→总结)
+│   │   ├── task_graph.py      #     DAG 任务图 (TaskNode/NodeState 状态机)
+│   │   ├── agent_state.py     #     请求状态定义 (AgentState TypedDict)
+│   │   └── status_events.py   #     SSE 事件总线 (状态推送/断线回放)
 │   ├── llm/                   #   LLM 层
 │   │   └── llm_client.py      #     统一 LLM 客户端 (通过 ai_engine 接入所有 Provider)
 │   ├── agents/                #   Agent 层
-│   │   ├── intent_router.py   #     意图路由 (LLM分类 + 配置化注册)
+│   │   ├── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
 │   │   ├── agent_tools.py     #     Agent 工具集 (兼容层)
 │   │   └── tool_base.py       #     BaseTool 抽象基类 + ToolRegistry
 │   ├── mcp/                   #   MCP 协议层
 │   │   ├── mcp_client.py      #     MCP 客户端 (stdio/SSE 双传输)
 │   │   └── mcp_registry.py    #     MCP 注册中心 (生命周期/意图路由)
 │   ├── app/                   #   应用层
-│   │   └── routes.py          #     Flask 路由 (API + Admin + Web UI)
+│   │   └── routes.py          #     Flask 路由 (JSON-RPC API + Admin + Web UI)
 │   ├── prompts/               #   提示词模板
-│   │   ├── task_graph_prompts.py #   DAG 任务图提示词 (规划/节点执行/总结)
+│   │   ├── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结)
 │   │   ├── ppt_prompts.py     #     PPT 生成提示词
 │   │   ├── search_prompts.py  #     搜索研究提示词
 │   │   └── coding_prompts.py  #     代码生成提示词

@@ -1,9 +1,9 @@
 # Helix AI Agent - 系统设计文档
 
-> **版本**: 1.2  
-> **最后更新**: 2026-07-13  
+> **版本**: 1.3  
+> **最后更新**: 2026-07-31  
 > **项目代号**: Helix  
-> **技术栈**: Python 3.12+ / Flask / LangChain / LangGraph / python-pptx / ai_engine / MCP Protocol
+> **技术栈**: Python 3.12+ / Flask / python-pptx / ai_engine / MCP Protocol
 
 ---
 
@@ -12,8 +12,8 @@
 1. [系统概述](#1-系统概述)
 2. [架构层设计](#2-架构层设计)
 3. [主流程时序图](#3-主流程时序图)
-4. [三循环架构 - Todo循环时序图](#4-三循环架构---todo循环时序图)
-5. [三循环架构 - 子任务编排详解](#5-三循环架构---子任务编排详解)
+4. [DAG节点循环设计](#4-dag节点循环设计)
+5. [节点执行编排详解](#5-节点执行编排详解)
 6. [MCP支持设计](#6-mcp支持设计)
 7. [Tool插件化设计](#7-tool插件化设计)
 8. [数据模型与状态管理](#8-数据模型与状态管理)
@@ -24,14 +24,15 @@
 
 ## 1. 系统概述
 
-Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决策，工具负责执行**。系统采用三循环架构（Triple-Loop Architecture），通过 LLM 进行意图识别、任务分解、工具调用判断、数据分析和结果总结，同时支持 MCP（Model Context Protocol）协议实现外部工具的标准化接入。
+Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决策，工具负责执行**。系统采用三阶段 DAG 架构（Three-Phase DAG Architecture）：Phase 1 由 LLM 将请求分解为带依赖关系的 DAG 节点图，Phase 2 按依赖顺序执行各节点（无依赖节点可并行），Phase 3 汇总节点结果生成最终答案。同时支持 MCP（Model Context Protocol）协议实现外部工具的标准化接入。
 
 ### 1.1 核心设计原则
 
 | 原则 | 说明 |
 |------|------|
-| **LLM 驱动决策** | LLM 是系统的"大脑"，负责任务分解、工具选择、结果分析 |
-| **三循环编排** | 外层 Todo 循环管理任务进度，中层 Subtask 循环负责分解与独立执行，内层工具循环驱动具体执行 |
+| **LLM 驱动决策** | LLM 是系统的"大脑"，负责任务分解、工具选择、节点完成判定、结果总结 |
+| **三阶段 DAG 编排** | Phase 1 任务规划（生成节点图）→ Phase 2 节点循环（依赖解析 + 并行执行）→ Phase 3 总结（可选） |
+| **动态任务图** | 执行中 LLM 可更新节点图（`need_update_node`），失败节点自动标记 FAILED 并跳过其下游 |
 | **插件化工具** | 所有工具通过 BaseTool 抽象 + ToolRegistry 自动发现 |
 | **MCP 标准化** | 外部工具通过 MCP 协议接入，支持 stdio 和 SSE 两种传输模式 |
 | **多模型支持** | 通过 [ai_engine](../ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ Provider |
@@ -45,21 +46,21 @@ Helix 是一个混合驱动的 AI Agent 服务，核心理念是**LLM 负责决�
 ```mermaid
 graph TB
     subgraph L1["🌐 接入层 (Access Layer)"]
-        A1["Flask REST API<br/>POST /api/agent/router"]
+        A1["Flask API<br/>POST /api/rpc<br/>(JSON-RPC 2.0 单入口)"]
         A2["Admin Web UI<br/>管理控制台"]
         A3["Admin REST API<br/>/api/admin/*"]
     end
 
     subgraph L2["🧭 路由层 (Routing Layer)"]
-        B1["IntentRouter<br/>意图分类 (LLM驱动)"]
+        B1["IntentRouter<br/>意图路由 (配置化)"]
         B2["Intent Registry<br/>意图注册表 (配置化)"]
     end
 
     subgraph L3["🔄 编排层 (Orchestration Layer)"]
-        C1["AgentOrchestrator<br/>三循环编排器"]
-        C2["TodoManager<br/>任务进度管理"]
-        C3["ContextManager<br/>上下文管理"]
-        C4["AgentState<br/>LangGraph 状态机"]
+        C1["AgentOrchestrator<br/>三阶段 DAG 编排器"]
+        C2["TaskGraph<br/>DAG 任务图 (节点状态机)"]
+        C3["StatusEvents<br/>SSE 事件总线"]
+        C4["AgentState<br/>请求状态 (TypedDict)"]
     end
 
     subgraph L4["🔧 工具层 (Tool Layer)"]
@@ -116,9 +117,9 @@ graph TB
 
 | 层级 | 模块 | 职责 |
 |------|------|------|
-| **接入层** | `Helix.py`, `routes.py` | HTTP 端点暴露、请求解析、响应封装、Admin UI |
-| **路由层** | `intent_router.py` | LLM 驱动的意图分类，配置化的意图注册与启停 |
-| **编排层** | `orchestrator.py`, `todo_manager.py`, `context_manager.py`, `agent_state.py` | 三循环编排（Todo→Subtask分解→工具执行）、任务状态追踪、分层上下文管理 |
+| **接入层** | `Helix.py`, `routes.py` | HTTP 端点暴露、JSON-RPC 2.0 请求解析与分发、SSE 流、Admin UI |
+| **路由层** | `intent_router.py` | 配置化的意图注册与启停，按请求分发到对应 orchestrator |
+| **编排层** | `orchestrator.py`, `task_graph.py`, `agent_state.py`, `status_events.py` | 三阶段 DAG 编排（规划→节点循环→总结）、任务图状态机、请求状态、SSE 状态推送 |
 | **工具层** | `tool_base.py`, `plugins/*`, `mcp_client.py`, `mcp_registry.py` | 插件化工具管理、MCP 协议通信 |
 | **模型层** | `llm_client.py` + `ai_engine/` | 通过 ai_engine 子模块统一接入所有 LLM Provider，事件驱动输出格式，verbose 日志采集 |
 | **基础设施层** | `config_manager.py`, `logger.py`, `file_ops.py` | 配置读写、日志、文件 IO |
@@ -137,266 +138,290 @@ sequenceDiagram
     participant Router as IntentRouter
     participant Orch as Orchestrator
     participant LLM as LLMClient
+    participant Graph as TaskGraph
     participant Tools as Tool Layer<br/>(Plugin + MCP)
-    participant Ctx as ContextManager
+    participant SSE as StatusEvents<br/>(SSE 总线)
 
-    User->>API: POST /api/agent/router<br/>{request, intent?}
+    User->>API: POST /api/rpc<br/>{method: "agent/router",<br/>params: {request, intent?}}
     API->>API: 生成 request_id
-    API->>Orch: process_request(request, id)
+    API->>Orch: process_request(request, id) [后台线程]
+    Orch->>Orch: create_initial_state() → orchestrator_phase = "planning"
 
     rect rgb(227, 242, 253)
-        Note over Orch,LLM: Phase 1: 规划阶段 (Planning)
-        Orch->>Ctx: initialize(state)
-        Orch->>Ctx: build_llm_context(state)
-        Ctx-->>Orch: context string
-        Orch->>LLM: decide_json(context + TODO_PLANNING_PROMPT)
-        LLM-->>Orch: {intent_type, todos[], thinking}
-        Orch->>Orch: todo_manager.set_todos(todos)
-        Orch->>Orch: _determine_loop_level()
+        Note over Orch,LLM: Phase 1: 任务规划 (Task Planning)
+        Orch->>Orch: _check_token_budget(system_prompt, user_prompt)
+        alt 超出 max_input_tokens
+            Orch->>Orch: 报错退出
+        end
+        Orch->>LLM: decide_json(SYSTEM_PROMPT_TASK_PLANNING +<br/>USER_PROMPT_TASK_PLANNING)
+        LLM-->>Orch: {intent_type, task_graph_nodes[],<br/>task_complete, response, need_finalizer}
+
+        alt task_complete = true
+            Orch->>Orch: final_result = response (直接回答)
+        else
+            Orch->>Graph: TaskGraph(nodes, max_graph_updates)
+            Orch->>SSE: emit(graph_nodes) → 前端渲染 DAG
+        end
     end
 
     rect rgb(252, 228, 236)
-        Note over Orch,Tools: Phase 2: Todo 循环 (Loop 1)
-        loop 遍历每个 Todo 项
-            Orch->>Orch: get_current_todo()
-            Orch->>Ctx: get_previous_todo_summary()
-            Ctx-->>Orch: prev_todo_summary
+        Note over Orch,Graph: Phase 2: 节点循环 (Node Loop)
+        loop while !graph.is_all_done()
+            Orch->>Graph: get_ready_nodes() → [node_1, node_2]
+            Orch->>Graph: set_node_running(node)
+            Orch->>Orch: 串行执行 / ThreadPool 并行<br/>(node_parallel_count)
 
-            rect rgb(232, 245, 233)
-                Note over Orch,Tools: Subtask 编排 (Loop 2: 分解 → 独立执行 → 摘要)
-                Orch->>Ctx: reset_subtask_contexts()
-                Orch->>Ctx: reset_conversation()
-                Orch->>LLM: decide_json(SUBTASK_DECOMPOSE_PROMPT)
-                LLM-->>Orch: {subtasks[]}
+            Orch->>LLM: with_tools(get_node_system_prompt(node),<br/>node.tools, USER_PROMPT_NODE_EXECUTION,<br/>context_messages=history[-10:])
+            LLM-->>Orch: {tools[], node_complete?,<br/>response?, need_update_node?}
 
-                loop 遍历每个 Subtask
-                    Orch->>Ctx: get_previous_subtask_summary()
-                    Ctx-->>Orch: prev_subtask_summary
-                    Note over Orch: Loop 3: 工具执行循环 (max 5次)
-                    loop LLM 决策 + 工具执行
-                        Orch->>LLM: with_tools(context, tool_definitions,<br/>context_messages=history[-10:])
-                        LLM-->>Orch: {tool_calls?, response?}
-                        alt 有 tool_calls
-                            Orch->>Tools: 执行工具调用
-                            Tools-->>Orch: 结果
-                        end
-                    end
-                    Orch->>LLM: decide_json(SUBTASK_SUMMARY_PROMPT)
-                    LLM-->>Orch: {summary}
-                    Orch->>Ctx: save_subtask_summary(subtask, summary)
-                end
+            alt 有 tool_calls
+                Orch->>Tools: 批量执行工具调用
+                Tools-->>Orch: 结果 → node.tool_results<br/>+ node_conversation_history
+                Note over Orch: 继续本轮节点循环
+            else node_complete = true
+                Orch->>Graph: set_node_done(node, response)
+                Orch->>SSE: emit(node_completed)
+            else need_update_node = true
+                Orch->>Graph: update_from_nodes(new_nodes)
+                Note over Graph: 被移除节点 → FAILED<br/>更新次数上限 = max_graph_updates
+                Orch->>SSE: emit(graph_nodes)
             end
-
-            Orch->>LLM: decide_json(TODO_SUMMARY_PROMPT)
-            LLM-->>Orch: {summary}
-            Orch->>Ctx: save_todo_summary(todo, summary)
-            Orch->>Orch: todo_manager.advance_todo(summary)
         end
     end
 
     rect rgb(243, 229, 245)
-        Note over Orch,LLM: Phase 3: 总结阶段 (Summarization)
-        Orch->>Orch: todo_manager.get_completed_summary()
-        Orch->>LLM: decide_json(SUMMARIZATION_PROMPT)
-        LLM-->>Orch: {summary, generated_files}
-        Orch->>Orch: state.final_result = summary
+        Note over Orch,LLM: Phase 3: 总结阶段 (Finalizer)
+        alt need_finalizer = true
+            Orch->>LLM: decide_json(SYSTEM_PROMPT_FINALIZER +<br/>全部节点结果)
+            LLM-->>Orch: {final_answer, generated_files}
+        else
+            Orch->>Orch: _collect_node_results() 拼接节点响应
+        end
     end
 
     Orch-->>API: {success, final_result, generated_files, ...}
-    API-->>User: JSON Response
+    API-->>User: JSON-RPC Response
 ```
 
 ---
 
-## 4. 三循环架构 - Todo循环时序图
+## 4. DAG节点循环设计
 
-Todo 循环（Loop 1）是外层循环，负责遍历任务清单中的每一项，对每一项调用子任务编排（Loop 2）完成具体工作。v3.1.2 重构后，每个 todo 完成后会生成摘要并传递给下一个 todo。
+节点循环（Phase 2）是编排核心：从任务图中持续取 `Ready` 状态的节点执行，直到全部 `Done`。v4.0 重构后，任务以 DAG 节点图形式组织，节点间通过 `depends` 声明依赖，无依赖节点可并行执行。
+
+### 4.1 节点状态机
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: 任务规划生成节点
+    PENDING --> READY: 所有依赖节点 Done
+    PENDING --> FAILED: 依赖节点 Failed
+    READY --> RUNNING: 调度执行
+    RUNNING --> DONE: node_complete=true
+    RUNNING --> FAILED: 工具连续失败 / 无有效输出 / 图更新被移除
+    RUNNING --> READY: need_update_node → 新图 (保留节点)
+    DONE --> [*]
+    FAILED --> [*]
+```
+
+| 状态 | 说明 |
+|------|------|
+| **PENDING** | 节点已创建，等待依赖就绪 |
+| **READY** | 所有 `depends` 节点已完成，可调度执行 |
+| **RUNNING** | 正在执行（串行主线程或并行子线程） |
+| **DONE** | 执行完成，产出 `response` |
+| **FAILED** | 执行失败（工具失败/无输出/超限/被图更新移除），下游节点自动 FAILED |
+
+### 4.2 节点循环时序
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant Orch as Orchestrator
-    participant TM as TodoManager
+    participant Graph as TaskGraph
     participant State as AgentState
-    participant Sub as Subtask Loop<br/>(Loop 2)
+    participant SSE as StatusEvents
     participant Log as Logger
 
-    Orch->>State: orchestrator_phase = "todo_loop"
-    Log->>Log: log_section("Phase 2: Todo Loop")
-    Orch->>Orch: loop_count = 0
+    Orch->>State: orchestrator_phase = "node_loop"
+    Log->>Log: log_section("Phase 2: Task Graph Node Loop")
+    Orch->>Graph: _get_graph(request_id)
+    Note over Orch: parallel_count = server.node_parallel_count (默认1)
 
-    loop while !todo_manager.is_finished(state)
-        Orch->>Orch: loop_count++
+    loop while !graph.is_all_done()
+        Orch->>Orch: is_cancelled()? → 中断
 
-        alt loop_count > max_todo_loops (50)
-            Orch->>State: error = "Max todo loops exceeded"
-            Log->>Log: log_error("Max todo loops exceeded")
-            Note over Orch: 退出循环
-        end
-
-        Orch->>TM: get_current_todo(state)
-        TM->>State: 读取 current_todo_idx, todo_list
-        State-->>TM: todo_list[idx]
-        TM-->>Orch: current_todo (string)
-
-        alt current_todo is None
-            Note over Orch: 退出循环 (无更多任务)
-        end
-
-        Log->>Log: log_orchestrator("Todo [i/N]: ...")
-
-        rect rgb(232, 245, 233)
-            Note over Orch,Sub: 执行子任务循环
-            Orch->>Sub: _subtask_loop(state, current_todo)
-            Sub-->>Orch: subtask_result (string)
-        end
-
-        Orch->>TM: advance_todo(state, result)
-        TM->>State: todos_completed.append({todo, result, status})
-        TM->>State: current_todo_idx += 1
-
-        alt current_todo_idx >= len(todo_list)
-            TM-->>Orch: True (全部完成)
-            Log->>Log: log_orchestrator("All todos completed!")
-        else 还有剩余任务
-            TM-->>Orch: False (继续)
-            TM->>TM: get_current_todo(state) → next_todo
-            Log->>Log: log_orchestrator("Moving to next: ...")
-        end
-
-        Orch->>TM: get_progress(state)
-        TM-->>Orch: 格式化进度字符串
-        Log->>Log: log_orchestrator(progress)
-    end
-
-    Log->>Log: log_orchestrator("Todo Loop completed.")
-```
-
-### 4.1 Todo 循环关键机制
-
-| 机制 | 说明 |
-|------|------|
-| **最大循环限制** | `max_todo_loops = 50`，防止无限循环 |
-| **进度追踪** | `current_todo_idx` 递增，`todos_completed` 记录历史 |
-| **状态可视化** | ✅ 已完成 / 🔄 进行中 / ⬜ 待处理 |
-| **结果传递** | 每个 Todo 的执行结果传递给下一个 Todo 的上下文 |
-
----
-
-## 5. 三循环架构 - 子任务编排详解
-
-v3.1.2 重构后，子任务执行从盲循环改为**分解→独立执行→摘要**的三重循环架构：
-
-- **Loop 1 (Todo Loop)**: 遍历任务清单，每个 todo 独立执行
-- **Loop 2 (Subtask Loop)**: 将 todo 分解为 subtasks，逐个独立执行，每个 subtask 生成摘要
-- **Loop 3 (Iteration Loop)**: 单个 subtask 内的工具调用循环（max 5次）
-
-### 5.1 子任务编排流程
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Orch as Orchestrator
-    participant Ctx as ContextManager
-    participant LLM as LLMClient
-    participant TR as ToolRegistry<br/>(Plugin Tools)
-    participant MCP as MCPRegistry<br/>(MCP Tools)
-    participant State as AgentState
-
-    Note over Orch: ──── Phase 2a: 分解阶段 ────
-    Orch->>State: subtask_status = "running"
-    Orch->>Ctx: reset_subtask_contexts(state)
-    Orch->>Ctx: reset_conversation(state)
-
-    rect rgb(255, 243, 224)
-        Note over Orch,LLM: Todo 分解为 Subtasks
-        Orch->>Ctx: get_previous_todo_summary(state)
-        Ctx-->>Orch: prev_todo_summary (可选)
-        Orch->>LLM: decide_json(SUBTASK_DECOMPOSE_PROMPT)
-        LLM-->>Orch: {subtasks: ["步骤1", "步骤2", ...]}
-        Orch->>Orch: subtasks = response.subtasks
-    end
-
-    loop 遍历每个 Subtask (idx = 1..N)
-        Note over Orch: ──── Phase 2b: 独立执行 ────
-
-        Orch->>Ctx: get_previous_subtask_summary(state)
-        Ctx-->>Orch: prev_subtask_summary (可选)
-        Orch->>Ctx: reset_conversation(state)
-
-        rect rgb(232, 245, 233)
-            Note over Orch,MCP: Loop 3: 工具执行循环 (max 5次)
-            loop LLM 决策 + 工具执行
-                Orch->>Ctx: get_conversation(state)
-                Ctx-->>Orch: conversation history
-                Orch->>LLM: with_tools(prompt,<br/>tool_definitions,<br/>context_messages=history[-10:])
-                Note over LLM: LLM 可见前次子任务摘要 +<br/>当前会话历史
-                LLM-->>Orch: JSON {thinking, tool_calls?, response?}
-
-                Orch->>Orch: _parse_llm_response()
-                Orch->>Ctx: add_message("assistant", llm_response)
-
-                alt 有 tool_calls
-                    loop 遍历每个 tool_call
-                        Orch->>Orch: _execute_tool_call(state, tc)
-                        alt tool = "web_search"
-                            Orch->>MCP: call_tool("web_search", {query})
-                            MCP-->>Orch: search results
-                            Orch->>TR: call_tool("web_fetch_batch", {urls})
-                            TR-->>Orch: fetched content
-                            Orch->>State: collected_data.append(content)
-                        else 其他工具
-                            Orch->>MCP: call_tool(name, args)
-                            alt MCP 成功
-                                MCP-->>Orch: result
-                            else MCP 失败
-                                Orch->>TR: call_tool(name, args) [fallback]
-                                TR-->>Orch: result
-                            end
-                        end
-                        Orch->>Ctx: add_message("assistant", result)
-                    end
-                else 无 tool_calls (直接响应)
-                    Orch->>Orch: subtask_result = response.response
-                    Note over Orch: 退出 Loop 3
-                end
+        Orch->>Graph: get_ready_nodes() → ready_nodes
+        alt ready_nodes 为空
+            alt 无 Running 节点
+                Log->>Log: "graph may be stuck or all done" → 退出
+            else 有 Running 节点
+                Orch->>Orch: sleep(0.1) 等待并行节点完成
+                Orch->>SSE: emit(graph_nodes)
             end
         end
 
-        Note over Orch: ──── Phase 2c: 子任务摘要 ────
-        rect rgb(243, 229, 245)
-            Orch->>LLM: decide_json(SUBTASK_SUMMARY_PROMPT)
-            LLM-->>Orch: {summary: "子任务完成摘要"}
-            Orch->>Ctx: save_subtask_summary(subtask, summary)
+        Orch->>Orch: nodes_to_run = ready_nodes[:parallel_count]
+        alt 全部节点 !can_parallel 且多于1个
+            Orch->>Orch: nodes_to_run = nodes_to_run[:1] (仅串行执行第一个)
         end
+
+        alt len(nodes_to_run) == 1
+            Orch->>Orch: _set_stream_node(request_id, node.id) → 流式输出
+            Orch->>Graph: set_node_running(node.id)
+            Orch->>SSE: emit(graph_nodes)
+            Orch->>Orch: _execute_node(state, node) [主线程]
+        else 多个节点
+            Graph->>Graph: 全部 set_node_running()
+            Orch->>Orch: 第一个节点流式，其余 emit_stream=false (静默)
+            Orch->>SSE: emit(graph_nodes)
+            Orch->>Orch: 为每个节点启动 threading.Thread 并行执行
+            Orch->>Orch: join() 等待全部线程完成
+        end
+
+        Orch->>Orch: _clear_stream_node(request_id)
+        Orch->>SSE: emit(graph_nodes)
     end
 
-    Note over Orch: ──── Phase 2d: Todo 摘要 ────
-    rect rgb(243, 229, 245)
-        Orch->>Ctx: get_all_subtask_summaries(state)
-        Ctx-->>Orch: all subtask summaries
-        Orch->>LLM: decide_json(TODO_SUMMARY_PROMPT)
-        LLM-->>Orch: {summary: "Todo 完成摘要"}
-        Orch->>Ctx: save_todo_summary(todo, summary)
-    end
-
-    Orch->>State: subtask_status = "completed"
-    Orch-->>Orch: return all_summaries
+    Log->>Log: log_orchestrator("Task Graph Node Loop completed.")
 ```
 
-### 5.2 三重循环关键机制
+### 4.3 节点循环关键机制
 
 | 机制 | 说明 |
 |------|------|
-| **Todo 分解** | LLM 将每个 todo 分解为具体的 subtasks（使用 `SUBTASK_DECOMPOSE_PROMPT`） |
-| **独立执行** | 每个 subtask 独立执行，不共享 LLM 上下文，避免上下文污染 |
-| **前次摘要传递** | 每个 subtask 执行前获取前一个 subtask 的摘要作为输入上下文 |
-| **对话历史传递** | 工具执行循环中通过 `context_messages=history[-10:]` 传递最近10条对话，解决 LLM 失忆问题 |
-| **逐层摘要生成** | subtask → `SUBTASK_SUMMARY_PROMPT` → todo → `TODO_SUMMARY_PROMPT` |
-| **分层上下文存储** | `ContextManager` 存储三层上下文：`todo_contexts[]`、`subtask_contexts[]`、`conversation[]` |
-| **工具执行限制** | 单个 subtask 内最多5轮工具调用（Loop 3），防止无限循环 |
-| **工具优先级** | MCP 工具优先调用，失败时 fallback 到 Plugin 工具 |
-| **自动链式执行** | `web_search` 自动触发 `web_fetch_batch`；`image_search` + PPT 意图自动触发 `image_download` |
+| **就绪判断** | `get_ready_nodes()` 返回所有 `depends` 均已完成、状态为 READY 的节点 |
+| **并行控制** | `server.node_parallel_count` 决定单批最多并行节点数（默认1=串行）；`can_parallel=false` 的节点永不与其他节点并行 |
+| **流式输出** | 单节点或并行批次第一个节点流式输出，其余并行节点静默执行、完成后 emit `node_completed` 事件 |
+| **卡死防护** | 无 Ready 且无 Running 节点时判定图停滞并退出；有 Running 时 0.1s 轮询等待 |
+| **取消支持** | 每轮循环检查 `is_cancelled()`，用户取消立即中断 |
+| **状态可视化** | 每轮节点状态变更均通过 `status_events.emit(graph_nodes=...)` 推送，前端实时渲染 DAG |
+
+---
+
+## 5. 节点执行编排详解
+
+v4.0 重构后，节点内部采用 **LLM 决策 → 工具执行 → 循环** 的 tool-calling 模式，直到 LLM 声明节点完成或需要更新任务图：
+
+- **Phase 1 (Task Planning)**: LLM 将用户请求分解为带依赖的 DAG 节点图
+- **Phase 2 (Node Loop)**: 按依赖顺序调度执行各节点，每个节点内部是一个独立的工具调用循环
+- **Phase 3 (Finalizer)**: 将所有节点结果汇总为最终答案
+
+### 5.1 节点执行流程
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Orch as Orchestrator
+    participant Graph as TaskGraph
+    participant LLM as LLMClient
+    participant TR as ToolRegistry<br/>(Plugin Tools)
+    participant MCP as MCPRegistry<br/>(MCP Tools)
+    participant Node as TaskNode
+
+    Note over Orch: ──── _execute_node(state, node) ────
+    Orch->>Orch: tool_definitions = _build_tool_definitions()
+    Orch->>Orch: system_prompt = get_node_system_prompt(intent_type)
+    Orch->>Node: node_conversation_history = []
+
+    loop while True (iteration 1, 2, ...)
+        Orch->>Orch: is_cancelled()? → break
+        Orch->>Graph: get_graph_state_string(node.id)
+        Orch->>Orch: conv = _format_node_conversation(node)
+        Orch->>Orch: tool_results_str = _format_tool_results(node)
+
+        alt !_check_token_budget(...)
+            Orch->>Graph: set_node_failed("prompt exceeds max_input_tokens")
+            break
+        end
+
+        Orch->>Orch: user_prompt = USER_PROMPT_NODE_EXECUTION.format(<br/>node_id, node_title, node_tools,<br/>tool_results, conversation_history, graph_state)
+        Orch->>LLM: with_tools(prompt, tool_definitions,<br/>system_prompt, emit_stream)
+        LLM-->>Orch: llm_response (content + tool_calls?)
+        Orch->>Node: node_conversation_history.append(assistant)
+
+        alt 原生 tool_calls (OpenAI 格式)
+            loop 遍历每个 tool_call
+                Orch->>Orch: _execute_tool_call(state, tc)
+                Orch->>MCP: call_tool(name, args) [优先]
+                Orch->>TR: call_tool(name, args) [fallback]
+                Orch->>Node: tool_results.append({tool, args, result[:1000]})
+            end
+            Note over Orch: continue → 下一轮循环
+        else JSON 协议 tools[]
+            loop 遍历每个 tool
+                Orch->>Orch: _execute_tool_call(state, tc)
+                Orch->>Node: tool_results.append({tool, args, result[:1000]})
+            end
+            Note over Orch: continue → 下一轮循环
+        else node_complete = true
+            Orch->>Graph: set_node_done(node.id, response)
+            alt !emit_stream
+                Orch->>Orch: emit node_completed 事件<br/>(node_id, node_title, response[:200])
+            end
+            break
+        else need_update_node = true
+            alt 有 task_graph_nodes[] 且未达 max_graph_updates
+                Orch->>Graph: update_from_nodes(new_nodes)
+                Note over Graph: 消失的节点 → FAILED
+                alt 当前节点被移除或已 FAILED
+                    Orch->>Graph: set_node_failed("Node removed during graph update")
+                end
+                break
+            else 无节点
+                Orch->>Graph: set_node_failed("Graph update with no nodes")
+            else 已达上限
+                Orch->>Graph: set_node_failed("Max graph updates reached")
+            end
+            break
+        else 无 tools / complete / update
+            Orch->>Graph: set_node_failed("No tool calls or completion from LLM")
+            break
+        end
+    end
+```
+
+### 5.2 节点执行关键机制
+
+| 机制 | 说明 |
+|------|------|
+| **节点级上下文隔离** | 每个 `TaskNode` 持有独立的 `node_conversation_history` 与 `tool_results`，节点间互不污染 |
+| **工具定义注入** | 每轮循环将全部可用工具（Plugin + MCP）统一为 `ToolDefinition[]` 提供给 LLM |
+| **双协议工具调用** | 兼容 OpenAI 原生 `tool_calls` 与 JSON 协议 `tools[]`，均批量执行并记录结果（截断至1000字符） |
+| **Token 预算检查** | 每轮循环前检查图状态 + 会话历史 + 工具结果总长度，超限则节点标记 FAILED |
+| **动态图更新** | `need_update_node=true` 时用新节点列表调用 `update_from_nodes()`，受 `llm.max_graph_updates` 限制；被移除节点标记 FAILED 并终止执行 |
+| **完成判定** | 仅当 LLM 返回 `node_complete=true` 时节点置 DONE；连续无有效输出则 FAILED |
+| **静默节点通知** | 非流式并行节点完成时通过 `node_completed` 事件通知前端，保持 DAG 状态实时同步 |
+
+### 5.3 Finalizer 总结阶段
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Orch as Orchestrator
+    participant Graph as TaskGraph
+    participant LLM as LLMClient
+
+    Orch->>Orch: orchestrator_phase = "finalizing"
+    Orch->>Graph: _get_graph(request_id)
+
+    alt 图不存在
+        Orch->>Orch: final_result = _collect_node_results(state) (拼接节点响应)
+    else need_finalizer = false
+        Orch->>Orch: final_result = _collect_node_results(state)
+    else 需要 LLM 总结
+        Orch->>Graph: get_summary_for_finalizer() → graph_summary
+        Orch->>Orch: user_prompt = USER_PROMPT_FINALIZER.format(<br/>user_request, graph_summary)
+
+        alt 超出 token 预算
+            Orch->>Orch: final_result = _collect_node_results(state)
+        else
+            Orch->>LLM: decide_json(SYSTEM_PROMPT_FINALIZER)
+            LLM-->>Orch: {final_answer}
+            Orch->>Orch: final_result = final_answer<br/>or _collect_node_results(state)
+        end
+    end
+```
 
 ---
 
@@ -570,7 +595,7 @@ graph TB
     end
 
     subgraph Consumer["消费者"]
-        ORCH["Orchestrator<br/>_subtask_loop()"]
+        ORCH["Orchestrator<br/>_execute_node()"]
         ADMIN["Admin API<br/>/api/admin/plugins"]
     end
 
@@ -760,83 +785,88 @@ class MyCustomTool(BaseTool):
 
 ## 8. 数据模型与状态管理
 
-### 8.1 AgentState 状态机
+### 8.1 编排阶段状态机
+
+编排器的生命周期由 `AgentState.orchestrator_phase` 驱动，与三阶段 DAG 一一对应：
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Planning: process_request()
+    [*] --> planning: process_request()
 
-    Planning --> TodoLoop: 意图识别 + Todo 规划完成
+    planning --> node_loop: 任务规划完成 (生成任务图)
+    planning --> done: task_complete=true (直接回答)
 
-    TodoLoop --> SubtaskLoop: 取当前 Todo
-    SubtaskLoop --> SubtaskDecompose: 分解 Todo 为 Subtasks
-    SubtaskDecompose --> SubtaskExecute: subtasks[] 生成完成
+    node_loop --> finalizing: 所有节点 Done
+    node_loop --> done: 无需总结
 
-    SubtaskExecute --> ToolExecution: LLM 决策: 调用工具
-    SubtaskExecute --> DirectResponse: LLM 决策: 直接响应
-    ToolExecution --> SubtaskExecute: 工具结果返回
-    DirectResponse --> SubtaskSummary: 子任务完成
-    SubtaskExecute --> SubtaskSummary: max loops exceeded
+    finalizing --> done: 总结生成完成
+    done --> [*]: 返回结果
 
-    SubtaskSummary --> SubtaskExecute: 还有更多 subtasks
-    SubtaskSummary --> TodoSummary: 所有 subtasks 完成
-
-    TodoSummary --> TodoLoop: 推进下一个 Todo
-
-    TodoLoop --> Summarizing: 所有 Todo 完成
-    Summarizing --> Done: 总结生成完成
-
-    Done --> [*]: 返回结果
-
-    TodoLoop --> Error: max_todo_loops exceeded
-    SubtaskExecute --> Error: max_subtask_loops exceeded
-    Error --> [*]: 返回错误
+    planning --> [*]: 错误 / 取消
+    node_loop --> [*]: 错误 / 取消
 ```
 
+| 阶段 | 值 | 说明 |
+|------|------|------|
+| **planning** | Phase 1 | LLM 分解请求为 DAG 节点图；`task_complete=true` 时直接回答 |
+| **node_loop** | Phase 2 | 循环执行 DAG 节点，直到 `is_all_done()` |
+| **finalizing** | Phase 3 | 汇总节点结果；`need_finalizer=false` 时直接拼接 |
+| **done** | — | 最终结果写入 `final_result` |
+
 ### 8.2 AgentState 关键字段
+
+`AgentState` 是 `modules/core/agent_state.py` 中定义的最小化状态 TypedDict：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `user_request` | str | 用户原始请求 |
 | `intent_type` | str | 意图类型: ppt / research / coding |
 | `request_id` | str | 请求唯一标识 |
-| `todo_list` | List[str] | 任务清单 |
-| `current_todo_idx` | int | 当前执行到的 Todo 索引 |
-| `todos_completed` | List[Dict] | 已完成的 Todo 及结果 |
-| `current_subtask` | str | 当前正在执行的子任务 |
-| `subtask_status` | str | idle / running / completed / failed |
-| `subtask_history` | List[Dict] | 子任务执行历史 |
-| `subtask_loop_count` | int | 当前子任务循环次数 |
-| `collected_data` | List[str] | 收集的数据 |
+| `forced_intent` | str | 强制指定意图（跳过规划中的意图分类） |
+| `urls_to_fetch` | List[str] | 待抓取 URL（工具执行期间收集） |
+| `fetched_content` | List[str] | 已抓取内容 |
 | `generated_files` | List[str] | 生成的文件路径 |
 | `final_result` | str | 最终结果 |
-| `orchestrator_phase` | str | planning / todo_loop / subtask_loop / summarizing / done |
-| `loop_level` | str | simple / complex |
+| `error` | Optional[str] | 错误信息 |
+| `orchestrator_phase` | str | planning / node_loop / finalizing / done |
+| `cancelled` | bool | 用户取消标记 |
 
-### 8.3 分层上下文存储 (ContextManager)
+### 8.3 TaskGraph 节点数据模型
 
-v3.1.2 重构后，`ContextManager` 采用三层存储结构，避免上下文污染：
+任务图由 `modules/core/task_graph.py` 定义，是 Phase 2 的核心数据结构：
 
 ```python
-{
-    "request_id": {
-        "todo_contexts": [          # 每个已完成 todo 的摘要
-            {"todo": "任务描述", "summary": "执行结果摘要"}
-        ],
-        "subtask_contexts": [       # 当前 todo 下每个子任务的摘要
-            {"subtask": "子任务描述", "summary": "执行结果摘要"}
-        ],
-        "conversation": [           # 当前子任务的迭代历史（工具调用/LLM响应）
-            {"role": "assistant", "content": "...", "phase": "subtask_loop"}
-        ]
-    }
-}
+class TaskNode:
+    id: str                    # 节点唯一标识
+    title: str                 # 节点任务描述
+    tools: List[str]           # 建议使用的工具列表
+    depends: List[str]         # 依赖的节点 id 列表
+    can_parallel: bool         # 是否允许与其他节点并行
+    state: NodeState           # 状态机: PENDING/READY/RUNNING/DONE/FAILED
+    response: str              # 节点执行结果
+    reason: str                # 完成原因
+    error: str                 # 失败原因
+    retry_count: int           # 重试次数
+    node_conversation_history: List[Dict]  # 节点级 LLM 对话历史
+    tool_results: List[Dict]   # 工具调用结果
+
+class TaskGraph:
+    nodes: Dict[str, TaskNode]       # 节点索引
+    max_graph_updates: int           # 图更新次数上限 (llm.max_graph_updates)
+    _graph_update_count: int         # 已更新次数
 ```
 
-**上下文层级**：
-- `todo_contexts[]` — 跨 Todo 传递：每个 todo 完成后生成摘要，作为下一个 todo 的输入上下文
-- `subtask_contexts[]` — 跨 Subtask 传递：每个 subtask 完成后生成摘要，作为下一个 subtask 的输入上下文
-- `conversation[]` — Subtask 内部传递：工具执行循环中的 LLM 对话历史（最近10条通过 `context_messages` 传给 LLM）
+**核心方法**:
+
+| 方法 | 说明 |
+|------|------|
+| `get_ready_nodes()` | 返回所有依赖已满足、状态为 READY 的节点 |
+| `set_node_running(id)` / `set_node_done(id, response)` / `set_node_failed(id, error)` | 状态迁移 |
+| `update_from_nodes(nodes)` | 动态更新任务图：新增节点、更新已有节点、移除节点（被移除节点标记 FAILED 但保留在 `_nodes` 中） |
+| `has_reached_max_updates()` | 判断是否已达图更新上限 |
+| `is_all_done()` | 判断所有节点是否完成（DONE/FAILED） |
+| `get_summary_for_finalizer()` | 为 Finalizer 生成图摘要 |
+| `to_dict_list()` | 序列化为前端 DAG 渲染格式 |
 
 ---
 
@@ -849,8 +879,8 @@ v3.1.2 重构后，`ContextManager` 采用三层存储结构，避免上下文�
 ```mermaid
 graph TB
     subgraph Config["Helix.json"]
-        S["server<br/>端口/地址/调试"]
-        L["llm<br/>provider/model/endpoint<br/>api_key/verbose/log_file"]
+        S["server<br/>端口/地址/调试<br/>node_parallel_count"]
+        L["llm<br/>provider/model/endpoint<br/>api_key/verbose/log_file<br/>max_input_tokens<br/>max_graph_updates"]
         T["tools<br/>SearXNG/图片搜索"]
         I["intents<br/>ppt/research/coding"]
         M["mcp_servers<br/>MCP Server 配置"]
@@ -885,6 +915,9 @@ graph TB
 |----------|------|------------|
 | LLM 参数 (provider/model/endpoint) | LLMClient | `orchestrator.refresh_llm()` → `LLMClient.refresh()` |
 | LLM verbose / log_file | ai_engine 日志 | 下次 LLM 调用生效 |
+| LLM max_input_tokens | 规划/节点执行 token 预算 | 下次调用读取，实时生效 |
+| LLM max_graph_updates | 任务图更新上限 | 下次请求读取，实时生效 |
+| server.node_parallel_count | 节点并行度 | 下次请求读取，实时生效 |
 | MCP Server | MCPRegistry | `mcp_registry.reload()` |
 | 工具启停 | ToolRegistry | `tool_registry.save_enabled_state()` |
 | 意图配置 | IntentRouter | 实时读取，无需刷新 |
@@ -901,7 +934,9 @@ LLM 配置已从按 Provider 分组的嵌套结构统一为扁平格式，由 ai
     "endpoint": "http://localhost:11434",
     "api_key": "",
     "verbose": true,
-    "log_file": "llm_engine.log"
+    "log_file": "llm_engine.log",
+    "max_input_tokens": 32768,
+    "max_graph_updates": 5
   }
 }
 ```
@@ -932,7 +967,7 @@ graph LR
         PX["Pexels API"]
     end
 
-    USER["客户端"] -->|POST /api/agent/router| SVC
+    USER["客户端"] -->|POST /api/rpc (JSON-RPC)| SVC
     USER -->|浏览器| ADM
     SVC --> SP1
     SVC --> SP2

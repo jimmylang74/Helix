@@ -14,7 +14,7 @@ import json
 import queue
 import threading
 from collections import deque
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 # Per-request event queues: { request_id: [Queue, ...] }
 _queues: Dict[str, list] = {}
@@ -55,24 +55,23 @@ def cleanup(request_id: str) -> None:
 
 # ── Emit (called by orchestrator on state transitions) ──────────────
 
-def emit(request_id: str, state: Dict[str, Any]) -> None:
+def emit(request_id: str, state: Dict[str, Any],
+         graph_nodes: Optional[List[Dict[str, Any]]] = None) -> None:
     with _lock:
         idx = _buf_counters.get(request_id, 0) + 1
         _buf_counters[request_id] = idx
 
-    snapshot = {
+    snapshot: Dict[str, Any] = {
         "type": "status",
         "cursor": idx,
         "request_id": request_id,
-        "todo_list": state.get("todo_list", []),
-        "current_todo_idx": state.get("current_todo_idx", -1),
-        "todo_subtask_lists": state.get("todo_subtask_lists", []),
-        "subtask_status": state.get("subtask_status", "idle"),
         "final_result": state.get("final_result", ""),
         "generated_files": state.get("generated_files", []),
         "error": state.get("error"),
         "orchestrator_phase": state.get("orchestrator_phase", ""),
     }
+    if graph_nodes is not None:
+        snapshot["task_graph_nodes"] = graph_nodes
     payload = json.dumps(snapshot, ensure_ascii=False)
 
     with _lock:

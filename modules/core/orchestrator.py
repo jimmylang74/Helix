@@ -20,7 +20,6 @@ from modules.core.agent_state import (
 from modules.core.task_graph import TaskGraph, NodeState
 from modules.agents.tool_base import tool_registry
 from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
-from modules.prompts.system_prompts import SYSTEM_PROMPT_TASK
 from modules.prompts.task_graph_prompts import (
     SYSTEM_PROMPT_TASK_PLANNING,
     USER_PROMPT_TASK_PLANNING,
@@ -115,7 +114,9 @@ class AgentOrchestrator:
             log_error(traceback.format_exc())
             state["error"] = str(e)
             state["orchestrator_phase"] = "done"
-            status_events.emit(request_id, state)
+            graph = self._get_graph(request_id)
+            graph_nodes = graph.to_dict_list() if graph else None
+            status_events.emit(request_id, state, graph_nodes=graph_nodes)
             return self._error_response(state, str(e))
         finally:
             llm_cleanup(request_id)
@@ -134,7 +135,9 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
         log_orchestrator(f"Request {request_id} cancelled by user")
-        status_events.emit(request_id, state)
+        graph = self._get_graph(request_id)
+        graph_nodes = graph.to_dict_list() if graph else None
+        status_events.emit(request_id, state, graph_nodes=graph_nodes)
         return True
 
     def is_cancelled(self, state: AgentState) -> bool:
@@ -243,7 +246,8 @@ class AgentOrchestrator:
             f"need_finalizer={need_finalizer}, reason={reason[:100]}"
         )
 
-        status_events.emit(state["request_id"], state)
+        graph_nodes = graph.to_dict_list()
+        status_events.emit(state["request_id"], state, graph_nodes=graph_nodes)
 
         return {
             "task_complete": False,
@@ -282,7 +286,7 @@ class AgentOrchestrator:
                     break
                 # 有 Running 但还没 Ready → 等下一个循环
                 log_orchestrator(f"Waiting for {graph.get_running_count()} running node(s)...")
-                status_events.emit(state["request_id"], state)
+                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
                 # 没有 Ready 节点会无限空转，加个安全等待
                 import time
                 time.sleep(0.1)
@@ -306,7 +310,7 @@ class AgentOrchestrator:
                 node = nodes_to_run[0]
                 self._set_stream_node(state["request_id"], node.id)
                 graph.set_node_running(node.id)
-                status_events.emit(state["request_id"], state)
+                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
                 self._execute_node(state, node)
             else:
                 threads = []
@@ -316,7 +320,7 @@ class AgentOrchestrator:
                 # 第一个节点流式，其他静默
                 nodes_to_run[0].can_parallel = True  # 确保被标记
                 self._set_stream_node(state["request_id"], nodes_to_run[0].id)
-                status_events.emit(state["request_id"], state)
+                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
 
                 for i, node in enumerate(nodes_to_run):
                     is_stream = (i == 0)
@@ -333,7 +337,7 @@ class AgentOrchestrator:
                     t.join()
 
             self._clear_stream_node(state["request_id"])
-            status_events.emit(state["request_id"], state)
+            status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
 
         log_orchestrator("Task Graph Node Loop completed.")
 
@@ -559,7 +563,7 @@ class AgentOrchestrator:
             "research": SYSTEM_PROMPT_RESEARCH,
             "coding": SYSTEM_PROMPT_CODING,
         }
-        return prompts.get(intent_type, SYSTEM_PROMPT_TASK)
+        return prompts.get(intent_type, SYSTEM_PROMPT_TASK_PLANNING)
 
     def _build_tool_definitions(self) -> List[ToolDefinition]:
         tool_definitions = []

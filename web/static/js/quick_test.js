@@ -420,7 +420,7 @@ function stopStatusStream() {
 }
 
 function handleStatusEvent(state) {
-    renderTodoTree(state);
+    renderTaskGraph(state);
 
     if (state.final_result) {
         updateFinalResult(state.final_result, state.generated_files);
@@ -436,49 +436,79 @@ function handleStatusEvent(state) {
     }
 }
 
-function renderTodoTree(state) {
+function renderTaskGraph(state) {
     const container = document.getElementById('todoTreeContainer');
     if (!container) return;
-    const todoList = state.todo_list || [];
-    const currentIdx = state.current_todo_idx || 0;
-    const todoSubtaskLists = state.todo_subtask_lists || [];
-    const subtaskStatus = state.subtask_status || 'idle';
 
-    if (todoList.length === 0) {
+    const phase = state.orchestrator_phase || '';
+    const nodes = state.task_graph_nodes || [];
+
+    if (phase === 'planning' && nodes.length === 0) {
+        container.innerHTML = `<div class="todo-empty">${__('qt.planning')}</div>`;
+        return;
+    }
+    if (nodes.length === 0) {
         container.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         return;
     }
 
+    const stateLabels = {
+        'Pending': __('qt.statePending'),
+        'Ready': __('qt.stateReady'),
+        'Running': __('qt.stateRunning'),
+        'Done': __('qt.stateDone'),
+        'Failed': __('qt.stateFailed'),
+    };
+
     let html = '<ul class="todo-list">';
-    todoList.forEach((todo, idx) => {
+    nodes.forEach((node) => {
+        const nodeState = node.state || 'Pending';
         let statusClass = 'todo-pending';
         let icon = '⬜';
-        if (idx < currentIdx) {
+        if (nodeState === 'Done') {
             statusClass = 'todo-completed';
             icon = '✓';
-        } else if (idx === currentIdx && subtaskStatus !== 'completed') {
+        } else if (nodeState === 'Failed') {
+            statusClass = 'todo-failed';
+            icon = '✗';
+        } else if (nodeState === 'Running') {
             statusClass = 'todo-running';
             icon = '<span class="spinner-inline"></span>';
+        } else if (nodeState === 'Ready') {
+            statusClass = 'todo-ready';
+            icon = '▶';
         }
+
+        const label = stateLabels[nodeState] || nodeState;
         html += `<li class="todo-item ${statusClass}">
-            <div class="todo-header"><span class="todo-icon">${icon}</span><span class="todo-text">${escapeHtml(todo)}</span></div>`;
-        const subtasks = todoSubtaskLists[idx] || [];
-        if (subtasks.length > 0) {
-            html += '<ul class="subtask-list">';
-            subtasks.forEach((st) => {
-                let sIcon = '⬜';
-                if (st.status === 'completed') sIcon = '✓';
-                else if (st.status === 'failed') sIcon = '✗';
-                else if (st.status === 'running') sIcon = '<span class="spinner-inline"></span>';
-                html += `<li class="subtask-item">
-                    <div class="subtask-header">${sIcon} ${escapeHtml(st.subtask || '')}</div>
-                </li>`;
-            });
-            html += '</ul>';
+            <div class="todo-header">
+                <span class="todo-icon">${icon}</span>
+                <span class="todo-text">${escapeHtml(node.title || node.id)}</span>
+                <span class="todo-badge">${label}</span>
+            </div>`;
+
+        const deps = node.depends || [];
+        if (deps.length > 0) {
+            html += `<div class="todo-deps">${__('qt.dependsOn')}: ${escapeHtml(deps.join(', '))}</div>`;
         }
+
+        if (node.response) {
+            html += `<div class="todo-response">${escapeHtml(node.response.substring(0, 120))}</div>`;
+        }
+
         html += '</li>';
     });
     html += '</ul>';
+
+    const doneCount = nodes.filter(n => n.state === 'Done').length;
+    const failedCount = nodes.filter(n => n.state === 'Failed').length;
+    const totalCount = nodes.length;
+    html += `<div class="todo-summary">${doneCount}/${totalCount} ${__('qt.nodesComplete')}`;
+    if (failedCount > 0) {
+        html += `, ${failedCount} ${__('qt.nodesFailed')}`;
+    }
+    html += '</div>';
+
     container.innerHTML = html;
 }
 

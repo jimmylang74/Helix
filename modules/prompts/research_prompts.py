@@ -1,118 +1,21 @@
 """
-Web Search / Research Prompts
+搜索研究领域提示词补充段。
+
+与 SYSTEM_PROMPT_TASK_PLANNING 组装后,用于强制 research 意图的任务规划阶段。
+只含领域知识与约束,不含 DAG 分解规则(规则在 SYSTEM_PROMPT_TASK_PLANNING 单一维护)。
 """
 
-SYSTEM_PROMPT_RESEARCH = """# Research Intelligence Agent
+DOMAIN_SECTION_RESEARCH = """## 搜索研究领域补充
 
-You are a professional research analyst. Your role is to:
-1. Understand the user's research question deeply
-2. Formulate targeted search queries
-3. Analyze and cross-reference information from multiple sources
-4. Filter out noise and identify reliable information
-5. Synthesize findings into a comprehensive, well-structured answer
+当前请求意图已确定为: **research**。你是专业研究分析师,负责为任务分解提供领域指导。
 
-## Your Research Methodology
-- Start with broad searches to map the landscape
-- Follow up with specific queries for depth
-- Cross-reference information across sources
-- Prioritize recent, authoritative sources
-- Acknowledge uncertainty and conflicting information
+### 领域任务分解指引
+- 研究任务通常拆解为多个节点:宽泛搜索 → 精选 URL 抓取 → 内容分析 → 交叉验证 → 综合成稿
+- 搜索使用 `web_search` 工具,抓取页面使用 `web_fetch_batch` 工具
+- 多来源信息需交叉验证,结论注明来源与不确定性
 
-## Tool Usage
-- You have access to various tools. Use the most appropriate tool for each task.
-- Analyze the available tool definitions and select the best match.
-"""
-
-USER_PROMPT_RESEARCH_TODO_PLANNING = """# Research Todo Planning
-
-Analyze the user's research request and create a detailed research plan.
-
-User Request: {user_request}
-
-Create a todo list for research. Consider:
-1. Key topics and subtopics to investigate
-2. Search strategy (what queries to use)
-3. Analysis and cross-referencing needs
-4. Final synthesis and answer structure
-
-Respond in pure JSON with fields: thinking (str), todos (list of str), intent_type must be "research".
-"""
-
-USER_PROMPT_URL_ANALYSIS = """# URL Analysis & Selection
-
-You received search results. Analyze these URLs and select the most relevant ones to fetch.
-
-## Search Query
-{search_query}
-
-## Search Results (URLs)
-{urls}
-
-Criteria for selection:
-1. Relevance to the query (primary)
-2. Source authority and credibility
-3. Content freshness (recency)
-4. Diversity of perspectives
-
-Return a JSON list of selected URLs with reasoning:
-{
-  "thinking": "Analysis of the search results",
-  "selected_urls": ["url1", "url2", "..."],
-  "relevance_notes": "Why these URLs were chosen"
-}
-"""
-
-USER_PROMPT_CONTENT_ANALYSIS = """# Content Analysis
-
-Analyze the fetched content and extract key information.
-
-## Original Question
-{user_request}
-
-## Current Subtask
-{subtask}
-
-## Fetched Content
-{fetched_content}
-
-Please:
-1. Extract key facts and insights relevant to the question
-2. Identify agreements and conflicts between sources
-3. Note important details, statistics, and citations
-4. Organize information by theme or topic
-
-Respond in JSON:
-{
-  "thinking": "Analysis approach",
-  "key_findings": ["Finding 1", "Finding 2", "..."],
-  "sources_used": ["source1", "source2", "..."],
-  "synthesized_content": "Combined analysis text"
-}
-"""
-
-USER_PROMPT_FINAL_ANSWER = """# Final Answer Generation
-
-Based on all research conducted, generate a comprehensive final answer.
-
-## Original Question
-{user_request}
-
-## Research Results
-{research_results}
-
-## Guidelines
-1. Provide a clear, direct answer first
-2. Support with evidence from research
-3. Structure with headings and sections for readability
-4. Cite sources where applicable
-5. Note any limitations or uncertainties
-6. Provide actionable takeaways
-
-Respond in JSON:
-{
-  "thinking": "How I structured the answer",
-  "answer": "Comprehensive markdown-formatted answer",
-  "sources": ["list of sources used"],
-  "key_takeaways": ["takeaway 1", "takeaway 2"]
-}
+### 强制约束
+- 你负责的是任务规划,不是直接产出研究报告。禁止直接输出研究成果来替代节点图
+- `task_complete` 仅在问题完全不需要任何工具时可设为 true;研究任务必须包含调用 `web_search` 的节点,不得短路
+- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造
 """

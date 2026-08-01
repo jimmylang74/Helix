@@ -75,18 +75,6 @@ class IntentRouter:
             if v.get("enabled", True)
         }
 
-    def get_intent_prompt(self, intent_type: str) -> str:
-        """Get the prompt template for an intent type."""
-        from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT
-        from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH
-        from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING
-
-        system_prompts = {
-            "ppt": SYSTEM_PROMPT_PPT,
-            "research": SYSTEM_PROMPT_RESEARCH,
-            "coding": SYSTEM_PROMPT_CODING,
-        }
-        return prompts.get(intent_type, "")
 
 
 # Global intent router

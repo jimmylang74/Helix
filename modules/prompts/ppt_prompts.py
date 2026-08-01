@@ -1,137 +1,22 @@
 """
-PPT Generation Prompts
+PPT 领域提示词补充段。
+
+与 SYSTEM_PROMPT_TASK_PLANNING 组装后,用于强制 ppt 意图的任务规划阶段。
+只含领域知识与约束,不含 DAG 分解规则(规则在 SYSTEM_PROMPT_TASK_PLANNING 单一维护)。
 """
 
-SYSTEM_PROMPT_PPT = """# PPT Generation Expert
+DOMAIN_SECTION_PPT = """## PPT 领域补充
 
-You are a professional presentation designer and content strategist. Your role is to:
-1. Analyze user-provided materials and requirements
-2. Design a coherent slide structure with logical flow
-3. Generate professional slide content with proper formatting
-4. Recommend visual design elements (colors, layouts, backgrounds)
-5. Ensure the final PPT is polished and presentation-ready
+当前请求意图已确定为: **ppt**。你是资深 PPT 内容策划与设计专家,负责为任务分解提供领域指导。
 
-## Your Design Philosophy
-- Professional and clean layouts
-- Consistent visual hierarchy
-- Appropriate use of visuals and whitespace
-- Content that supports the narrative
-- Accessible and readable typography
-"""
+### 领域任务分解指引
+- PPT 任务通常拆解为多个节点:内容结构规划 → 分章节内容撰写 → 图片素材(image_search)→ PPT 生成(create_ppt)
+- 最终成品的生成节点必须使用 `create_ppt` 工具产出实际 .pptx 文件
+- 图片素材需求使用 `image_search` 工具搜索
+- 内容节点应产出结构清晰、可直接交给 create_ppt 的文本
 
-USER_PROMPT_PPT_TODO_PLANNING = """# PPT Generation Todo Planning
-
-Analyze the user's PPT request and create a detailed plan.
-
-User Request: {user_request}
-
-Create a todo list for PPT generation. Consider:
-1. Content analysis and structure planning
-2. Slide-by-slide design decisions
-3. Visual theme and color scheme
-4. Image sourcing needs
-5. PPT file generation
-
-Respond in pure JSON with fields: thinking (str), todos (list of str), intent_type must be "ppt".
-"""
-
-USER_PROMPT_PPT_SLIDE_TEMPLATE = """You are designing a single slide. Here's the context:
-
-## Overall Task
-{user_request}
-
-## Slide Info
-Slide Number: {slide_number}
-Total Slides: {total_slides}
-Slide Title: {slide_title}
-Slide Content: {slide_content}
-
-## Design Guidelines
-- Background: Use gradient or solid colors appropriate for the content
-- Title: Bold, clear, professional font
-- Body text: Clean, readable, bullet points where appropriate
-- Visuals: Recommend appropriate images if needed
-- Layout: Clean spacing, good use of whitespace
-
-## Color Scheme
-{color_scheme}
-
-Provide the slide configuration in JSON format for the PPT generator:
-{
-  "slide_number": {slide_number},
-  "title": "{slide_title}",
-  "content": ["bullet1", "bullet2", "..."],
-  "layout": "title_only|title_content|title_two_content|blank",
-  "background": {
-    "type": "solid|gradient",
-    "color_1": [R, G, B],
-    "color_2": [R, G, B]
-  },
-  "font": {"title_size": 36, "body_size": 18},
-  "notes": "speaker notes if any"
-}
-"""
-
-USER_PROMPT_PPT_FULL_DESIGN = """# Full PPT Design
-
-You are designing a complete PowerPoint presentation.
-
-## User Request
-{user_request}
-
-## Additional Context
-{context}
-
-Please design the complete presentation structure:
-
-1. Determine the number of slides and their types
-2. Define a consistent color scheme
-3. Plan the content flow
-4. Design each slide's layout and content
-5. Recommend images if applicable
-
-## Common Layout Types
-- **title_slide**: Large title, subtitle, clean background
-- **section_header**: Section divider with background image/color
-- **content**: Title + bullet points or paragraphs
-- **two_column**: Two columns of content
-- **image_content**: Image with supporting text
-- **comparison**: Side-by-side comparison
-- **data_chart**: Chart or data visualization area
-- **closing**: Thank you / Q&A slide
-
-## Color Schemes Available
-- "modern_blue": Deep blue + white + accent orange
-- "corporate_gray": Charcoal + white + blue accent  
-- "elegant_green": Forest green + cream + gold
-- "warm_red": Burgundy + cream + warm gray
-- "dark_elegant": Dark navy + gold + white
-- "nature": Green + brown + soft yellow
-- "tech": Dark mode, neon blue + purple
-- "minimal": Black + white + single accent
-
-Respond in JSON:
-{
-  "thinking": "Design rationale",
-  "color_scheme": "modern_blue|...",
-  "total_slides": 5,
-  "slides": [
-    {
-      "type": "title_slide",
-      "title": "Presentation Title",
-      "subtitle": "Subtitle",
-      "background": {"type": "gradient", "color_1": [0,0,0], "color_2": [100,100,100]},
-      "content": []
-    },
-    {
-      "type": "content",
-      "title": "Slide Title",
-      "content": ["Point 1", "Point 2", "Point 3"],
-      "layout": "title_content",
-      "background": {"type": "solid", "color_1": [255,255,255], "color_2": null},
-      "notes": ""
-    }
-  ],
-  "image_needs": ["search_term_for_image", "another_search_term"]
-}
+### 强制约束
+- 你负责的是任务规划,不是直接产出成品。禁止直接输出幻灯片内容或设计方案来替代节点图
+- `task_complete` 仅在问题完全不需要任何工具时可设为 true;PPT 生成任务必须包含调用 `create_ppt` 的节点,不得短路
+- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造
 """

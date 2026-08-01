@@ -27,6 +27,9 @@ class AgentState(TypedDict, total=False):
     # Cancellation
     cancelled: bool
 
+    # Token usage tracking (per-call current + request-wide totals)
+    token_usage: Dict[str, int]  # input/output current + total
+
 
 def create_initial_state(user_request: str, request_id: str) -> AgentState:
     """Create initial agent state."""
@@ -43,4 +46,11 @@ def create_initial_state(user_request: str, request_id: str) -> AgentState:
         "error": None,
 
         "orchestrator_phase": "planning",
+        "token_usage": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "tokenizer": "",
+        },
     }

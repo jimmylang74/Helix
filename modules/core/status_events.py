@@ -70,6 +70,7 @@ def emit(request_id: str, state: Dict[str, Any],
         "generated_files": state.get("generated_files", []),
         "error": state.get("error"),
         "orchestrator_phase": state.get("orchestrator_phase", ""),
+        "token_usage": state.get("token_usage"),
     }
     if graph_nodes is not None:
         snapshot["task_graph_nodes"] = graph_nodes

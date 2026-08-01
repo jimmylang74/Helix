@@ -3,15 +3,12 @@
   "app.brand": "Helix（AI Agent）",
   "app.subtitle": "混合驱动智能服务",
   "app.version": "当前版本",
-
   "nav.dashboard": "仪表盘",
   "nav.quickTest": "快速测试",
   "nav.config": "配置管理",
   "nav.logs": "运行日志",
   "nav.history": "使用记录",
-
   "status.running": "系统运行中",
-
   "dashboard.title": "仪表盘",
   "dashboard.subtitle": "AI Agent 混合驱动智能服务控制台",
   "dashboard.totalRequests": "总请求数",
@@ -44,7 +41,6 @@
   "dashboard.copySuccess": "已复制到剪贴板",
   "dashboard.copyError": "复制失败",
   "dashboard.enterRequest": "请输入请求内容",
-
   "config.title": "配置管理",
   "config.subtitle": "管理系统配置，包括 LLM、MCP 工具和意图设置",
   "config.tab.llm": "LLM 配置",
@@ -52,7 +48,6 @@
   "config.tab.plugins": "插件管理",
   "config.tab.intents": "意图管理",
   "config.tab.server": "服务设置",
-
   "config.llm.provider": "LLM 提供商",
   "config.llm.selectProvider": "选择提供商",
   "config.llm.loading": "加载中...",
@@ -76,7 +71,6 @@
   "config.llm.logTitle": "LLM 交互日志",
   "config.llm.refreshLog": "刷新",
   "config.llm.noLogs": "暂无日志",
-
   "config.mcp.title": "内置 MCP 服务",
   "config.mcp.searxng": "🔍 SearXNG 搜索",
   "config.mcp.enable": "启用 SearXNG MCP 服务",
@@ -95,7 +89,6 @@
   "config.mcp.srcSaveSuccess": "SearXNG MCP 配置已保存",
   "config.mcp.imgSaveSuccess": "图片搜索 MCP 配置已保存",
   "config.mcp.saveFailed": "保存失败: ",
-
   "config.mcp.custom": "自定义 MCP 服务",
   "config.mcp.addServer": "+ 添加服务",
   "config.mcp.addTitle": "添加 MCP 服务",
@@ -109,7 +102,6 @@
   "config.mcp.actions": "操作",
   "config.mcp.loading": "加载中...",
   "config.mcp.noCustom": "暂无自定义 MCP 服务",
-
   "config.mcp.serverName": "服务名称",
   "config.mcp.serverType": "服务类型",
   "config.mcp.serverTypeUrl": "Server（URL 连接）",
@@ -120,7 +112,6 @@
   "config.mcp.env": "环境变量（每行一个 KEY=VALUE）",
   "config.mcp.enableService": "启用此服务",
   "config.mcp.enableLabel": "启用",
-
   "config.mcp.cancel": "取消",
   "config.mcp.testingLabel": "测试中...",
   "config.mcp.connected": "🟢 已连接",
@@ -137,7 +128,6 @@
   "config.mcp.saved": "MCP 服务 \"{name}\" 已保存",
   "config.mcp.deleted": "MCP 服务 \"{name}\" 已删除",
   "config.mcp.deleteFailed": "删除失败",
-
   "config.intents.title": "注册的意图",
   "config.intents.id": "ID",
   "config.intents.name": "名称",
@@ -169,7 +159,6 @@
   "config.intents.deleted": "意图已删除",
   "config.intents.deleteFailed": "删除失败",
   "config.intents.loadFailed": "加载失败",
-
   "config.plugins.title": "插件工具管理",
   "config.plugins.filterIntent": "按意图筛选：",
   "config.plugins.allIntents": "全部意图",
@@ -201,7 +190,6 @@
   "config.plugins.intentsSaved": "工具 \"{name}\" 意图已保存",
   "config.plugins.intentsSaveFailed": "保存意图失败",
   "config.plugins.noIntents": "未分配",
-
   "config.server.title": "版本信息",
   "config.server.settings": "服务设置",
   "config.server.servicePort": "服务端口",
@@ -218,7 +206,6 @@
   "config.server.nodeParallelCountHint": "任务图节点并行执行数量（默认 1）",
   "config.server.saveSuccess": "服务设置已保存（部分设置需重启生效）",
   "config.server.saveFailed": "保存失败",
-
   "history.title": "使用记录",
   "history.refresh": "🔄 刷新",
   "history.requestId": "请求 ID",
@@ -232,7 +219,6 @@
   "history.outputFiles": "输出文件",
   "history.noFiles": "暂无生成文件",
   "history.fileListTitle": "输出文件",
-
   "common.or": "或",
   "common.save": "保存",
   "common.cancel": "取消",
@@ -248,7 +234,6 @@
   "common.success": "成功",
   "common.failed": "失败",
   "common.unknownError": "未知错误",
-
   "qt.title": "快速测试",
   "qt.subtitle": "测试 AI Agent 功能并查看实时结果",
   "qt.formTitle": "请求",
@@ -298,5 +283,9 @@
   "qt.nodesFailed": "节点失败",
   "qt.dependsOn": "依赖",
   "qt.logEmpty": "日志为空",
-  "qt.exportSuccess": "导出成功"
+  "qt.exportSuccess": "导出成功",
+  "qt.inputTokens": "输入 token",
+  "qt.outputTokens": "输出 token",
+  "qt.currentTotal": "当前/总计",
+  "qt.tokenizer": "分词器"
 }

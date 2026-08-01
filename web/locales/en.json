@@ -3,15 +3,12 @@
   "app.brand": "Helix (AI Agent)",
   "app.subtitle": "Hybrid-driven Intelligent Service",
   "app.version": "Current Version",
-
   "nav.dashboard": "Dashboard",
   "nav.quickTest": "Quick Test",
   "nav.config": "Configuration",
   "nav.logs": "Logs",
   "nav.history": "History",
-
   "status.running": "System Running",
-
   "dashboard.title": "Dashboard",
   "dashboard.subtitle": "AI Agent Hybrid-driven Intelligent Service Console",
   "dashboard.totalRequests": "Total Requests",
@@ -44,7 +41,6 @@
   "dashboard.copySuccess": "Copied to clipboard",
   "dashboard.copyError": "Copy failed",
   "dashboard.enterRequest": "Please enter a request",
-
   "config.title": "Configuration",
   "config.subtitle": "Manage system configuration including LLM, MCP tools, and intents",
   "config.tab.llm": "LLM Config",
@@ -52,7 +48,6 @@
   "config.tab.plugins": "Plugins",
   "config.tab.intents": "Intents",
   "config.tab.server": "Server Settings",
-
   "config.llm.provider": "LLM Provider",
   "config.llm.selectProvider": "Select Provider",
   "config.llm.loading": "Loading...",
@@ -76,7 +71,6 @@
   "config.llm.logTitle": "LLM Interaction Logs",
   "config.llm.refreshLog": "Refresh",
   "config.llm.noLogs": "No logs available",
-
   "config.mcp.title": "Built-in MCP Services",
   "config.mcp.searxng": "🔍 SearXNG Search",
   "config.mcp.enable": "Enable SearXNG MCP Service",
@@ -95,7 +89,6 @@
   "config.mcp.srcSaveSuccess": "SearXNG MCP config saved",
   "config.mcp.imgSaveSuccess": "Image Search MCP config saved",
   "config.mcp.saveFailed": "Save failed: ",
-
   "config.mcp.custom": "Custom MCP Services",
   "config.mcp.addServer": "+ Add Service",
   "config.mcp.addTitle": "Add MCP Service",
@@ -109,7 +102,6 @@
   "config.mcp.actions": "Actions",
   "config.mcp.loading": "Loading...",
   "config.mcp.noCustom": "No custom MCP services",
-
   "config.mcp.serverName": "Service Name",
   "config.mcp.serverType": "Service Type",
   "config.mcp.serverTypeUrl": "Server (URL)",
@@ -120,7 +112,6 @@
   "config.mcp.env": "Environment Variables (one KEY=VALUE per line)",
   "config.mcp.enableService": "Enable this service",
   "config.mcp.enableLabel": "Enabled",
-
   "config.mcp.cancel": "Cancel",
   "config.mcp.testingLabel": "Testing...",
   "config.mcp.connected": "🟢 Connected",
@@ -137,7 +128,6 @@
   "config.mcp.saved": "MCP service \"{name}\" saved",
   "config.mcp.deleted": "MCP service \"{name}\" deleted",
   "config.mcp.deleteFailed": "Delete failed",
-
   "config.intents.title": "Registered Intents",
   "config.intents.id": "ID",
   "config.intents.name": "Name",
@@ -169,7 +159,6 @@
   "config.intents.deleted": "Intent deleted",
   "config.intents.deleteFailed": "Delete failed",
   "config.intents.loadFailed": "Failed to load intents",
-
   "config.plugins.title": "Plugin Tools",
   "config.plugins.filterIntent": "Filter by Intent:",
   "config.plugins.allIntents": "All Intents",
@@ -201,7 +190,6 @@
   "config.plugins.intentsSaved": "Intents saved for \"{name}\"",
   "config.plugins.intentsSaveFailed": "Failed to save intents",
   "config.plugins.noIntents": "Unassigned",
-
   "config.server.title": "Version Info",
   "config.server.settings": "Server Settings",
   "config.server.servicePort": "Service Port",
@@ -218,7 +206,6 @@
   "config.server.nodeParallelCountHint": "Number of task graph nodes to execute in parallel (default 1)",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
-
   "history.title": "History",
   "history.refresh": "🔄 Refresh",
   "history.requestId": "Request ID",
@@ -232,7 +219,6 @@
   "history.outputFiles": "Output Files",
   "history.noFiles": "No generated files",
   "history.fileListTitle": "Output Files",
-
   "common.or": "or",
   "common.save": "Save",
   "common.cancel": "Cancel",
@@ -248,7 +234,6 @@
   "common.success": "Success",
   "common.failed": "Failed",
   "common.unknownError": "Unknown error",
-
   "qt.title": "Quick Test",
   "qt.subtitle": "Test AI Agent features and view real-time results",
   "qt.formTitle": "Request",
@@ -298,5 +283,9 @@
   "qt.nodesFailed": "nodes failed",
   "qt.dependsOn": "Depends on",
   "qt.logEmpty": "Log is empty",
-  "qt.exportSuccess": "Export successful"
+  "qt.exportSuccess": "Export successful",
+  "qt.inputTokens": "Input tokens",
+  "qt.outputTokens": "Output tokens",
+  "qt.currentTotal": "current/total",
+  "qt.tokenizer": "Tokenizer"
 }

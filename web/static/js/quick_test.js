@@ -69,6 +69,7 @@ async function restoreFromStorage() {
 
     if (result.final_result) {
         updateStatus('success');
+        updateTokenUsage(result.token_usage);
         updateFinalResult(result.final_result, result.generated_files);
         saveState();
     } else {
@@ -105,6 +106,7 @@ function setupTestForm() {
         if (todoEl) todoEl.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearLlmLog();
         clearFinalResult();
+        resetTokenUsage();
 
         try {
             await submitWithStreaming(requestType, requestInput);
@@ -133,6 +135,7 @@ function setupTestForm() {
         if (todoEl2) todoEl2.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearFinalResult(__('qt.waitingResult'));
         clearLlmLog();
+        resetTokenUsage();
         currentRequestId = null;
         clearState();
     });
@@ -418,6 +421,7 @@ function stopStatusStream() {
 }
 
 function handleStatusEvent(state) {
+    updateTokenUsage(state.token_usage);
     renderTaskGraph(state);
 
     // 节点完成时，将节点执行结果实时追加到最终结果窗口（累积式，后续内容不覆盖先到的结果）
@@ -513,6 +517,33 @@ function renderTaskGraph(state) {
     html += '</div>';
 
     container.innerHTML = html;
+}
+
+// ========== Token Usage ==========
+
+function updateTokenUsage(tokenUsage) {
+    if (!tokenUsage) return;
+    const inEl = document.getElementById('tokenInput');
+    const outEl = document.getElementById('tokenOutput');
+    const tzEl = document.getElementById('tokenizerName');
+    if (inEl) {
+        inEl.textContent = `${tokenUsage.input_tokens ?? 0}/${tokenUsage.total_input_tokens ?? 0}`;
+    }
+    if (outEl) {
+        outEl.textContent = `${tokenUsage.output_tokens ?? 0}/${tokenUsage.total_output_tokens ?? 0}`;
+    }
+    if (tzEl) {
+        tzEl.textContent = tokenUsage.tokenizer || '-';
+    }
+}
+
+function resetTokenUsage() {
+    const inEl = document.getElementById('tokenInput');
+    const outEl = document.getElementById('tokenOutput');
+    const tzEl = document.getElementById('tokenizerName');
+    if (inEl) inEl.textContent = '0/0';
+    if (outEl) outEl.textContent = '0/0';
+    if (tzEl) tzEl.textContent = '-';
 }
 
 // ========== Final Result ==========

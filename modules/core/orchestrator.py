@@ -28,9 +28,9 @@ from modules.prompts.task_graph_prompts import (
     get_node_system_prompt,
     USER_PROMPT_NODE_EXECUTION,
 )
-from modules.prompts.ppt_prompts import SYSTEM_PROMPT_PPT
-from modules.prompts.search_prompts import SYSTEM_PROMPT_RESEARCH
-from modules.prompts.coding_prompts import SYSTEM_PROMPT_CODING
+from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
+from modules.prompts.research_prompts import DOMAIN_SECTION_RESEARCH
+from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -210,9 +210,12 @@ class AgentOrchestrator:
         )
 
         # 解析结果
-        intent_type = response.get("intent_type", "research")
-        if intent_type not in ("ppt", "research", "coding"):
-            intent_type = "research"
+        if forced_intent != "auto":
+            intent_type = forced_intent
+        else:
+            intent_type = response.get("intent_type", "research")
+            if intent_type not in ("ppt", "research", "coding"):
+                intent_type = "research"
 
         state["intent_type"] = intent_type
         log_llm_decision(f"Intent: {intent_type}")
@@ -588,12 +591,15 @@ class AgentOrchestrator:
             self._stream_node_id.pop(request_id, None)
 
     def _get_system_prompt(self, intent_type: str) -> str:
-        prompts = {
-            "ppt": SYSTEM_PROMPT_PPT,
-            "research": SYSTEM_PROMPT_RESEARCH,
-            "coding": SYSTEM_PROMPT_CODING,
+        domain_sections = {
+            "ppt": DOMAIN_SECTION_PPT,
+            "research": DOMAIN_SECTION_RESEARCH,
+            "coding": DOMAIN_SECTION_CODING,
         }
-        return prompts.get(intent_type, SYSTEM_PROMPT_TASK_PLANNING)
+        domain = domain_sections.get(intent_type, "")
+        if not domain:
+            return SYSTEM_PROMPT_TASK_PLANNING
+        return f"{SYSTEM_PROMPT_TASK_PLANNING}\n\n{domain}"
 
     def _build_tool_definitions(self) -> List[ToolDefinition]:
         tool_definitions = []

@@ -286,6 +286,8 @@
   "qt.waitingResult": "Waiting for request...",
   "qt.processingResult": "Processing, please wait...",
   "qt.generatedFiles": "📄 Generated files:",
+  "qt.nodeResult": "Node Result",
+  "qt.finalResult": "Final Result",
   "qt.planning": "Planning...",
   "qt.statePending": "Pending",
   "qt.stateReady": "Ready",

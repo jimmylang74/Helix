@@ -96,6 +96,8 @@ class LLMResponse:
     content: str
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     finish_reason: str = "stop"
+    # ai_engine "usage" event dict (prompt_tokens/completion_tokens/reasoning_tokens); None if unreported.
+    usage: Optional[Dict[str, Any]] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -308,6 +310,7 @@ class LLMClient:
         tool_calls: List[Dict[str, Any]] = []
         finish_reason = "stop"
         thinking_content = ""
+        usage: Optional[Dict[str, Any]] = None
 
         try:
             emitter = _StdoutEventEmitter(buf, enabled=emit_stream)
@@ -375,7 +378,7 @@ class LLMClient:
             elif etype == "done":
                 finish_reason = event.get("finish_reason", "stop")
             elif etype == "usage":
-                pass  # Could log token usage later
+                usage = event
 
         # Clean up internal keys from tool_calls
         for tc in tool_calls:
@@ -392,6 +395,7 @@ class LLMClient:
             content=content,
             tool_calls=tool_calls,
             finish_reason=finish_reason,
+            usage=usage,
         )
 
     @staticmethod

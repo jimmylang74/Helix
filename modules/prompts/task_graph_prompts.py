@@ -93,7 +93,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 - `reason`: 你的分解思路
 - `need_finalizer`: 是否需要在所有节点完成后进行总结
 
-注意：返回必须是纯 JSON，不要包含 markdown 代码块标记或其他内容。
+{json_contract}
 """
 
 # ═══════════════════════════════════════════════════════════════════
@@ -210,7 +210,7 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 4. 切换路径时，在 task_graph_nodes 中提供新的完整节点图，失败的路径节点不再包含
 5. 已失败的节点路径会通过 "Failed paths (avoid)" 提示你，不要重复尝试
 
-注意：返回必须是纯 JSON，不要包含 markdown 代码块标记或其他内容。
+{json_contract}
 """
 
 # ═══════════════════════════════════════════════════════════════════
@@ -248,7 +248,7 @@ USER_PROMPT_FINALIZER = """# Final Summary
 }}
 ```
 
-注意：返回必须是纯 JSON，不要包含 markdown 代码块标记或其他内容。
+{json_contract}
 """
 
 # ── 按 intent 获取 system prompt ──────────────────────────────

@@ -411,31 +411,55 @@ class LLMClient:
 
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
-        """Extract JSON from LLM response text."""
+        """Extract JSON from LLM response text.
+
+        Tolerant to common LLM output defects: markdown code fences,
+        surrounding prose, and raw control characters (e.g. literal
+        newlines) inside string values.
+        """
         text = text.strip()
 
         # Direct JSON parse
         if text.startswith("{") and text.endswith("}"):
-            try:
-                return json.loads(text)
-            except json.JSONDecodeError:
-                pass
+            parsed = LLMClient._try_parse_json(text)
+            if parsed is not None:
+                return parsed
 
         # Fenced code block
         json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if json_match:
-            try:
-                return json.loads(json_match.group(1).strip())
-            except json.JSONDecodeError:
-                pass
+            parsed = LLMClient._try_parse_json(json_match.group(1).strip())
+            if parsed is not None:
+                return parsed
 
         # Brace-delimited
         brace_match = re.search(r"\{.*\}", text, re.DOTALL)
         if brace_match:
-            try:
-                return json.loads(brace_match.group(0))
-            except json.JSONDecodeError:
-                pass
+            parsed = LLMClient._try_parse_json(brace_match.group(0))
+            if parsed is not None:
+                return parsed
 
         # Fallback
         return {"response": text}
+
+    @staticmethod
+    def _try_parse_json(candidate: str) -> Optional[Dict[str, Any]]:
+        """Parse a JSON candidate: strict first, then json_repair fallback.
+
+        json_repair handles common LLM output defects (raw control
+        characters in strings, trailing commas, etc.). Import is guarded so
+        the fallback degrades gracefully if the optional dependency is
+        missing.
+        """
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+        try:
+            import json_repair
+            parsed = json_repair.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+        return None

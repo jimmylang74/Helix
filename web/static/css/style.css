@@ -463,6 +463,38 @@ select.form-control {
     overflow-y: auto;
 }
 
+/* Cumulative Result Blocks */
+.result-block {
+    border-left: 3px solid #2d2d44;
+    padding-left: 12px;
+}
+
+.result-block + .result-block {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid #2d2d44;
+    border-left: none;
+    border-radius: 0;
+}
+
+.result-block-header {
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 6px;
+}
+
+.result-block-node .result-block-header { color: #4dd0e1; }
+.result-block-node { border-left-color: #4dd0e1; }
+
+.result-block-final .result-block-header { color: #81c784; }
+.result-block-final { border-left-color: #81c784; }
+
+.result-block-content {
+    color: #e0e0e0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 /* File List */
 .file-list {
     margin-top: 12px;

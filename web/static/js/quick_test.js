@@ -131,9 +131,7 @@ function setupTestForm() {
         document.getElementById('resultIntent').textContent = '';
         const todoEl2 = document.getElementById('todoTreeContainer');
         if (todoEl2) todoEl2.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
-        document.getElementById('finalResultContainer').innerHTML =
-            `<span class="text-muted">${__('qt.waitingResult')}</span>`;
-        document.getElementById('resultFiles').innerHTML = '';
+        clearFinalResult(__('qt.waitingResult'));
         clearLlmLog();
         currentRequestId = null;
         clearState();
@@ -422,9 +420,9 @@ function stopStatusStream() {
 function handleStatusEvent(state) {
     renderTaskGraph(state);
 
-    // 节点完成时，将节点执行结果实时显示在最终结果窗口
+    // 节点完成时，将节点执行结果实时追加到最终结果窗口（累积式，后续内容不覆盖先到的结果）
     if (state.node_result && state.node_result.response) {
-        updateFinalResult(state.node_result.response);
+        appendNodeResult(state.node_result);
     }
 
     if (state.final_result) {
@@ -519,15 +517,72 @@ function renderTaskGraph(state) {
 
 // ========== Final Result ==========
 
-function clearFinalResult() {
+// 累积式结果窗口：每个节点结果 / 最终结果作为独立块追加显示，
+// 后到的内容不会覆盖先到的内容。去重状态随请求生命周期重置。
+let _displayedNodeResultIds = new Set();
+let _finalResultShown = false;
+
+function clearFinalResult(placeholder) {
+    _displayedNodeResultIds = new Set();
+    _finalResultShown = false;
     document.getElementById('finalResultContainer').innerHTML =
-        `<span class="text-muted">${__('qt.processingResult')}</span>`;
+        `<span class="text-muted">${placeholder || __('qt.processingResult')}</span>`;
     document.getElementById('resultFiles').innerHTML = '';
 }
 
-function updateFinalResult(content, files) {
+function clearPlaceholder(container) {
+    const only = container.children.length === 1 ? container.firstElementChild : null;
+    if (only && only.classList.contains('text-muted')) {
+        container.innerHTML = '';
+    }
+}
+
+function appendNodeResult(nodeResult) {
+    const container = document.getElementById('finalResultContainer');
+    if (!container || !nodeResult || !nodeResult.response) return;
+
+    const nodeId = nodeResult.node_id || nodeResult.node_title || '';
+    if (nodeId) {
+        if (_displayedNodeResultIds.has(nodeId)) return;
+        _displayedNodeResultIds.add(nodeId);
+    }
+
+    clearPlaceholder(container);
+
+    const block = document.createElement('div');
+    block.className = 'result-block result-block-node';
+    const header = document.createElement('div');
+    header.className = 'result-block-header';
+    header.textContent = `▶ ${__('qt.nodeResult')}${nodeResult.node_title ? ': ' + nodeResult.node_title : ''}`;
+    const content = document.createElement('div');
+    content.className = 'result-block-content';
+    content.textContent = nodeResult.response;
+    block.appendChild(header);
+    block.appendChild(content);
+    container.appendChild(block);
+    container.scrollTop = container.scrollHeight;
+}
+
+function appendFinalResult(content, files) {
     if (content) {
-        document.getElementById('finalResultContainer').textContent = content;
+        if (_finalResultShown) return;
+        const container = document.getElementById('finalResultContainer');
+        if (!container) return;
+        _finalResultShown = true;
+        clearPlaceholder(container);
+
+        const block = document.createElement('div');
+        block.className = 'result-block result-block-final';
+        const header = document.createElement('div');
+        header.className = 'result-block-header';
+        header.textContent = `✅ ${__('qt.finalResult')}`;
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'result-block-content';
+        contentDiv.textContent = content;
+        block.appendChild(header);
+        block.appendChild(contentDiv);
+        container.appendChild(block);
+        container.scrollTop = container.scrollHeight;
     }
     if (files && files.length > 0) {
         const filesDiv = document.getElementById('resultFiles');
@@ -545,6 +600,10 @@ function updateFinalResult(content, files) {
             filesDiv.appendChild(link);
         });
     }
+}
+
+function updateFinalResult(content, files) {
+    appendFinalResult(content, files);
 }
 
 // ========== LLM Log ==========

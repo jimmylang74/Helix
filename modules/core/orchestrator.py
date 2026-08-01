@@ -209,7 +209,9 @@ class AgentOrchestrator:
             log_agent_to_llm("Sending request to LLM for task planning...")
 
         # 检查 token 预算
-        if not self._check_token_budget(system_prompt, user_prompt, tools_section):
+        if not self._check_token_budget(
+            state["request_id"], system_prompt, user_prompt, tools_section
+        ):
             state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
             log_error(state["error"])
             return {"task_complete": True, "response": state["error"]}
@@ -380,6 +382,15 @@ class AgentOrchestrator:
         request_id = state["request_id"]
         tool_definitions = self._build_tool_definitions()
         system_prompt = get_node_system_prompt(state["intent_type"])
+        # ask_with_tools 会把 tools 段追加进 system prompt 一起发送（见
+        # llm_client.ask_with_tools），预算检查必须把这段计入输入 token。
+        tools_section = LLMClient.format_tools_section(
+            tool_definitions,
+            heading=(
+                "Available tools (respond with JSON that includes "
+                "tool_calls if needed):"
+            ),
+        )
 
         # 重置节点的 conversation history
         node.node_conversation_history = []
@@ -412,23 +423,11 @@ class AgentOrchestrator:
             if not graph:
                 break
 
-            # 检查 token 预算
+            # 构造 prompt
             graph_state_str = graph.get_graph_state_string(node.id)
             conv = self._format_node_conversation(node)
             tool_results_str = self._format_tool_results(node)
 
-            if not self._check_token_budget(
-                system_prompt,
-                graph_state_str,
-                conv,
-                tool_results_str,
-            ):
-                err = f"Node {node.id}: prompt exceeds max_input_tokens limit"
-                log_error(err)
-                graph.set_node_failed(node.id, err)
-                break
-
-            # 构造 prompt
             user_prompt = USER_PROMPT_NODE_EXECUTION.format(
                 node_id=node.id,
                 node_title=node.title,
@@ -438,6 +437,18 @@ class AgentOrchestrator:
                 graph_state=graph_state_str,
                 json_contract=COMMON_JSON_CONTRACT,
             )
+
+            # 检查 token 预算：system_prompt(+tools_section) + 完整 user_prompt
+            if not self._check_token_budget(
+                request_id,
+                system_prompt,
+                tools_section,
+                user_prompt,
+            ):
+                err = f"Node {node.id}: prompt exceeds max_input_tokens limit"
+                log_error(err)
+                graph.set_node_failed(node.id, err)
+                break
 
             log_agent_to_llm(
                 f"Node {node.id} iter {iteration}: calling LLM "
@@ -585,7 +596,9 @@ class AgentOrchestrator:
             json_contract=COMMON_JSON_CONTRACT,
         )
 
-        if not self._check_token_budget(SYSTEM_PROMPT_FINALIZER, user_prompt):
+        if not self._check_token_budget(
+            state["request_id"], SYSTEM_PROMPT_FINALIZER, user_prompt
+        ):
             log_error("Finalizer prompt exceeds max_input_tokens limit, using raw results")
             state["final_result"] = self._collect_node_results(state)
             return
@@ -697,14 +710,19 @@ class AgentOrchestrator:
             )
             usage_state["tokenizer"] = estimator.__class__.__name__
 
-    def _check_token_budget(self, *text_parts: str) -> bool:
-        """估算 token 是否超过限制。超过返回 False。"""
+    def _check_token_budget(self, request_id: str, *text_parts: str) -> bool:
+        """用 tokenizer 计算输入 token 是否超过限制。超过返回 False。
+
+        使用当前请求的 token 估算器（按 LLM 配置经 create_estimator_for_config
+        选择：HF tokenizer → tiktoken → 字节粗估），与 _record_usage 的统计口径一致。
+        """
         max_tokens = ConfigManager().get("llm.max_input_tokens", 32768)
-        total_chars = sum(len(p) for p in text_parts)
-        estimated = total_chars // 3  # 混合中英文的粗略估计
+        estimator = self._get_estimator(request_id)
+        estimated = sum(estimator.count_tokens(p) for p in text_parts)
         if estimated > max_tokens:
             log_error(
-                f"Token budget exceeded: ~{estimated} estimated > {max_tokens} max"
+                f"Token budget exceeded: ~{estimated} estimated "
+                f"({estimator.__class__.__name__}) > {max_tokens} max"
             )
             return False
         return True

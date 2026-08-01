@@ -31,6 +31,7 @@ from modules.prompts.task_graph_prompts import (
 from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
 from modules.prompts.research_prompts import DOMAIN_SECTION_RESEARCH
 from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
+from modules.prompts.json_contract import COMMON_JSON_CONTRACT
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -187,13 +188,15 @@ class AgentOrchestrator:
             # 已知 intent，直接用对应 system prompt 规划
             system_prompt = self._get_system_prompt(forced_intent)
             user_prompt = USER_PROMPT_TASK_PLANNING.format(
-                user_request=state["user_request"]
+                user_request=state["user_request"],
+                json_contract=COMMON_JSON_CONTRACT,
             )
             log_agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
         else:
             system_prompt = SYSTEM_PROMPT_TASK_PLANNING
             user_prompt = USER_PROMPT_TASK_PLANNING.format(
-                user_request=state["user_request"]
+                user_request=state["user_request"],
+                json_contract=COMMON_JSON_CONTRACT,
             )
             log_agent_to_llm("Sending request to LLM for task planning...")
 
@@ -419,6 +422,7 @@ class AgentOrchestrator:
                 tool_results=tool_results_str,
                 conversation_history=conv,
                 graph_state=graph_state_str,
+                json_contract=COMMON_JSON_CONTRACT,
             )
 
             log_agent_to_llm(
@@ -557,6 +561,7 @@ class AgentOrchestrator:
         user_prompt = USER_PROMPT_FINALIZER.format(
             user_request=state["user_request"],
             graph_summary=graph_summary,
+            json_contract=COMMON_JSON_CONTRACT,
         )
 
         if not self._check_token_budget(SYSTEM_PROMPT_FINALIZER, user_prompt):

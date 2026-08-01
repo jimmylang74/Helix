@@ -8,3 +8,4 @@ __pycache__/
 llm_engine.log
 .omo/
 .playwright-mcp/
+AGENTS.md

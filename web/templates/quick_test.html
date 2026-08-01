@@ -71,6 +71,20 @@
             <span class="badge" id="resultStatus" data-i18n="qt.idle">空闲</span>
             <span class="badge badge-info" id="resultIntent"></span>
         </div>
+        <div class="token-usage-inline">
+            <span class="token-usage-item">
+                <span data-i18n="qt.inputTokens">输入 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
+                <strong id="tokenInput" class="token-usage-value">0/0</strong>
+            </span>
+            <span class="token-usage-item">
+                <span data-i18n="qt.outputTokens">输出 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
+                <strong id="tokenOutput" class="token-usage-value">0/0</strong>
+            </span>
+            <span class="token-usage-item">
+                <span data-i18n="qt.tokenizer">分词器</span>：
+                <strong id="tokenizerName" class="token-usage-value">-</strong>
+            </span>
+        </div>
         <button class="btn btn-sm btn-outline" id="copyBtn" data-i18n="qt.copy">📋 复制</button>
     </div>
     <div class="card-body" style="padding: 0;">

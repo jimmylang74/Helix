@@ -180,6 +180,20 @@ body {
     padding: 20px;
 }
 
+/* Token usage inline (same row as final result header) */
+.token-usage-inline {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.token-usage-value {
+    color: var(--primary);
+    font-variant-numeric: tabular-nums;
+}
+
 /* Stats Grid */
 .stats-grid {
     display: grid;

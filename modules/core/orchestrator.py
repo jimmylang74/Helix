@@ -43,6 +43,7 @@ from modules.llm.llm_events import (
 from modules.core import status_events
 from modules.utils.file_ops import FileOps
 from modules.config.config_manager import ConfigManager
+from modules.agent.tokenizer import TokenEstimator, create_estimator_for_config
 
 
 class AgentOrchestrator:
@@ -57,6 +58,10 @@ class AgentOrchestrator:
         # Option B: which node is currently allowed to stream to frontend
         self._stream_node_id: Dict[str, str] = {}
         self._stream_lock = threading.Lock()
+        # Per-request token estimators (created via create_estimator_for_config)
+        self._estimators: Dict[str, TokenEstimator] = {}
+        self._estimators_lock = threading.Lock()
+        self._usage_lock = threading.Lock()
 
     # ═══════════════════════════════════════════════════════════════
     # Public API (backward-compatible)
@@ -129,6 +134,8 @@ class AgentOrchestrator:
                 self._graphs.pop(request_id, None)
             with self._stream_lock:
                 self._stream_node_id.pop(request_id, None)
+            with self._estimators_lock:
+                self._estimators.pop(request_id, None)
             clear_request_context()
 
     def cancel_request(self, request_id: str) -> bool:
@@ -162,6 +169,7 @@ class AgentOrchestrator:
             "all_done": graph.is_all_done() if graph else False,
             "final_result": state.get("final_result", ""),
             "generated_files": state.get("generated_files", []),
+            "token_usage": state.get("token_usage"),
             "error": state.get("error"),
             "cancelled": state.get("cancelled", False),
         }
@@ -210,6 +218,12 @@ class AgentOrchestrator:
             prompt=user_prompt,
             system_prompt=system_prompt,
             tools=tool_definitions,
+        )
+
+        self._record_usage(
+            state,
+            f"{system_prompt}\n\n{tools_section}\n\n{user_prompt}",
+            json.dumps(response, ensure_ascii=False),
         )
 
         # 解析结果
@@ -438,6 +452,13 @@ class AgentOrchestrator:
                 emit_stream=emit_stream,
             )
 
+            # 统计该节点 LLM 调用的输入/输出 token
+            self._record_usage(
+                state,
+                f"{system_prompt}\n\n{user_prompt}",
+                llm_response.content,
+            )
+
             # 解析响应
             response_data = self._parse_llm_response(llm_response.content)
             node.node_conversation_history.append({
@@ -575,6 +596,12 @@ class AgentOrchestrator:
             system_prompt=SYSTEM_PROMPT_FINALIZER,
         )
 
+        self._record_usage(
+            state,
+            f"{SYSTEM_PROMPT_FINALIZER}\n\n{user_prompt}",
+            json.dumps(response, ensure_ascii=False),
+        )
+
         final_answer = response.get("final_answer", response.get("response", ""))
         state["final_result"] = final_answer or self._collect_node_results(state)
         log_llm_decision(f"Final summary generated ({len(state['final_result'])} chars)")
@@ -615,6 +642,60 @@ class AgentOrchestrator:
                 parameters=tool.parameters,
             ))
         return tool_definitions
+
+    def _create_estimator(self):
+        """Build the token estimator for the current LLM config.
+
+        Orchestrator LLM calls stream through ai_engine, so
+        create_estimator_for_config is called with streaming=True (for
+        Ollama this picks the HF → tiktoken → simple chain, since litellm
+        drops usage on the stream path).
+        """
+        llm_config = self.llm.config.get_llm_config()
+        return create_estimator_for_config(
+            provider=llm_config.get("provider", "ollama_native"),
+            model=llm_config.get("model", "qwen2.5:7b"),
+            streaming=True,
+        )
+
+    def _get_estimator(self, request_id: str):
+        with self._estimators_lock:
+            estimator = self._estimators.get(request_id)
+        if estimator is None:
+            estimator = self._create_estimator()
+            with self._estimators_lock:
+                self._estimators[request_id] = estimator
+        return estimator
+
+    def _record_usage(self, state: AgentState, input_text: str, output_text: str):
+        """Estimate one LLM call's input/output tokens and accumulate totals.
+
+        Updates ``state["token_usage"]`` with the last call's counts
+        (current) and the request-wide sums (total); the next
+        ``status_events.emit`` carries them to the frontend.
+        """
+        estimator = self._get_estimator(state["request_id"])
+        usage = estimator.estimate_usage(input_text, output_text)
+        usage_state = state.setdefault(
+            "token_usage",
+            {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "tokenizer": "",
+            },
+        )
+        with self._usage_lock:
+            usage_state["input_tokens"] = usage.input_tokens
+            usage_state["output_tokens"] = usage.output_tokens
+            usage_state["total_input_tokens"] = (
+                usage_state.get("total_input_tokens", 0) + usage.input_tokens
+            )
+            usage_state["total_output_tokens"] = (
+                usage_state.get("total_output_tokens", 0) + usage.output_tokens
+            )
+            usage_state["tokenizer"] = estimator.__class__.__name__
 
     def _check_token_budget(self, *text_parts: str) -> bool:
         """估算 token 是否超过限制。超过返回 False。"""

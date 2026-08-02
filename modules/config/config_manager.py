@@ -71,7 +71,8 @@ class ConfigManager:
                 "host": "0.0.0.0",
                 "debug": True,
                 "language": "zh-CN",
-                "node_parallel_count": 1
+                "node_parallel_count": 1,
+                "log_file": "debugout.log"
             },
             "default_location": {
                 "city": "Nanjing"

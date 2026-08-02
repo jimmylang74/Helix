@@ -81,7 +81,7 @@ def main():
     debug = args.debug if args.debug is not None else config.is_debug()
 
     # Initialize logger
-    init_logger("debugout.log", console=debug)
+    init_logger(config.get("server.log_file", "debugout.log"), console=debug)
 
     # Suppress Flask/werkzeug access logs (GET / 200, etc.)
     import logging

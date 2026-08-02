@@ -40,13 +40,23 @@ function clearState() {
     try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) {}
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    if (typeof i18nReady !== 'undefined') await i18nReady;
+function initQuickTestPage() {
+    if (window.__qtInited) return;
+    window.__qtInited = true;
     setupTestForm();
     setupLogTabs();
     startLogStream();
     restoreFromStorage();
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', async () => {
+        if (typeof i18nReady !== 'undefined') await i18nReady;
+        initQuickTestPage();
+    });
+} else {
+    initQuickTestPage();
+}
 
 function setupLogTabs() {
     const panel = document.getElementById('logPanel');

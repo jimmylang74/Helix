@@ -40,7 +40,9 @@
     </nav>
 
     <main class="main-content">
-        {% block content %}{% endblock %}
+        <div class="spa-page" id="page-root" data-path="{{ request.path }}">
+            {% block content %}{% endblock %}
+        </div>
     </main>
 
     <script src="/static/js/main.js"></script>

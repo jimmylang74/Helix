@@ -53,6 +53,7 @@ class AgentOrchestrator:
         self.llm = LLMClient()
         self.file_ops = FileOps()
         self._active_states: Dict[str, AgentState] = {}
+        self._states_lock = threading.Lock()
         self._graphs: Dict[str, TaskGraph] = {}
         self._graphs_lock = threading.Lock()
         # Option B: which node is currently allowed to stream to frontend
@@ -83,7 +84,8 @@ class AgentOrchestrator:
 
         state = create_initial_state(user_request, request_id)
         state["forced_intent"] = forced_intent
-        self._active_states[request_id] = state
+        with self._states_lock:
+            self._active_states[request_id] = state
 
         try:
             # ── Phase 1: Task Planning ────────────────────────────
@@ -130,6 +132,10 @@ class AgentOrchestrator:
             return self._error_response(state, str(e))
         finally:
             llm_cleanup(request_id)
+            # 任务结束即释放：前端快速测试页改走"不销毁"方案，无需为已完成任务保留状态与缓冲
+            with self._states_lock:
+                self._active_states.pop(request_id, None)
+            status_events.cleanup(request_id)
             with self._graphs_lock:
                 self._graphs.pop(request_id, None)
             with self._stream_lock:

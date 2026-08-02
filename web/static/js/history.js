@@ -19,6 +19,10 @@ if (document.readyState === 'loading') {
     initHistoryPage();
 }
 
+// SPA 每次显示本页时重新拉取数据，避免展示缓存的旧记录
+window._spaPageRefresh = window._spaPageRefresh || {};
+window._spaPageRefresh['/history'] = refreshHistory;
+
 async function refreshHistory() {
     const result = await apiCall('history.get');
     const tbody = document.getElementById('historyTable');

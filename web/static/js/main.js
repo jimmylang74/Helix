@@ -141,6 +141,9 @@ function _spaShow(path) {
     if (!entry.inited) {
         entry.inited = true;
         _spaInitPage(path);
+    } else if (window._spaPageRefresh && window._spaPageRefresh[path]) {
+        // 已缓存的页面每次显示时刷新数据（如 /history 使用记录页）
+        window._spaPageRefresh[path]();
     }
     if (typeof i18nTranslatePage === 'function') i18nTranslatePage();
     return true;

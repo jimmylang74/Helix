@@ -12,7 +12,7 @@ import threading
 from flask import Blueprint, request, jsonify, render_template, send_from_directory, Response
 from modules.llm.llm_events import stream as llm_event_stream
 from modules.core import status_events
-from modules.utils import log_watcher
+from modules.utils import log_watcher, history_store
 
 from modules.core.orchestrator import orchestrator
 from modules.config.config_manager import ConfigManager
@@ -175,7 +175,8 @@ def _intents_delete(params):
 
 
 def _history_get(params):
-    return {"history": []}
+    limit = int(params.get("limit", 100)) if params else 100
+    return {"history": history_store.get_history(limit)}
 
 
 # ---- LLM ----

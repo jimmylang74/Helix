@@ -12,6 +12,7 @@ Option B — 同一时刻只有一个 Running 节点 emit 流式事件到前端�
 import json
 import threading
 import uuid
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from modules.core.agent_state import (
@@ -42,6 +43,7 @@ from modules.llm.llm_events import (
 )
 from modules.core import status_events
 from modules.utils.file_ops import FileOps
+from modules.utils import history_store
 from modules.config.config_manager import ConfigManager
 from modules.agent.tokenizer import TokenEstimator, create_estimator_for_config
 
@@ -86,6 +88,7 @@ class AgentOrchestrator:
         state["forced_intent"] = forced_intent
         with self._states_lock:
             self._active_states[request_id] = state
+        created_at = datetime.now().isoformat(timespec="seconds")
 
         try:
             # ── Phase 1: Task Planning ────────────────────────────
@@ -131,6 +134,16 @@ class AgentOrchestrator:
             status_events.emit(request_id, state, graph_nodes=graph_nodes)
             return self._error_response(state, str(e))
         finally:
+            # 任务结束后持久化一条历史记录 (成功/失败/取消全覆盖), 供"使用记录"页面展示
+            history_store.record({
+                "request_id": request_id,
+                "user_request": user_request,
+                "intent_type": state.get("intent_type", ""),
+                "success": not state.get("error") and not state.get("cancelled"),
+                "created_at": created_at,
+                "error": state.get("error"),
+                "generated_files": state.get("generated_files", []),
+            })
             llm_cleanup(request_id)
             # 任务结束即释放：前端快速测试页改走"不销毁"方案，无需为已完成任务保留状态与缓冲
             with self._states_lock:

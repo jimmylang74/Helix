@@ -204,6 +204,8 @@
   "config.server.defaultCityPlaceholder": "Nanjing",
   "config.server.nodeParallelCount": "节点并行执行数",
   "config.server.nodeParallelCountHint": "任务图节点并行执行数量（默认 1）",
+  "config.server.logFile": "日志文件",
+  "config.server.logFileHint": "服务运行日志文件（debugout.log，需重启生效）",
   "config.server.saveSuccess": "服务设置已保存（部分设置需重启生效）",
   "config.server.saveFailed": "保存失败",
   "history.title": "使用记录",

@@ -511,8 +511,10 @@ def create_admin_routes(app):
     def log_stream():
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cursor = int(request.args.get("cursor", 0))
+        config = ConfigManager()
+        log_file = config.get("server.log_file", "debugout.log")
         return Response(
-            log_watcher.stream("debugout.log", project_root, cursor=cursor),
+            log_watcher.stream(log_file, project_root, cursor=cursor),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

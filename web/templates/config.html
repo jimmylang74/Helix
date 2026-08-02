@@ -351,6 +351,11 @@
                 <input type="number" id="nodeParallelCount" class="form-control" min="1" max="10" value="1">
                 <small class="text-muted" data-i18n="config.server.nodeParallelCountHint">任务图节点并行执行数量（默认 1）</small>
             </div>
+            <div class="form-group">
+                <label data-i18n="config.server.logFile">日志文件</label>
+                <input type="text" id="serverLogFile" class="form-control" placeholder="debugout.log">
+                <small class="text-muted" data-i18n="config.server.logFileHint">服务运行日志文件（debugout.log，需重启生效）</small>
+            </div>
             <button class="btn btn-primary" onclick="saveServerConfig()" data-i18n="config.server.save">保存服务设置</button>
         </div>
     </div>

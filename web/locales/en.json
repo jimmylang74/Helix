@@ -204,6 +204,8 @@
   "config.server.defaultCityPlaceholder": "Nanjing",
   "config.server.nodeParallelCount": "Node Parallel Count",
   "config.server.nodeParallelCountHint": "Number of task graph nodes to execute in parallel (default 1)",
+  "config.server.logFile": "Log File",
+  "config.server.logFileHint": "Service runtime log file (debugout.log, requires restart)",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
   "history.title": "History",

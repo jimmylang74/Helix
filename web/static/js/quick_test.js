@@ -43,9 +43,32 @@ function clearState() {
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof i18nReady !== 'undefined') await i18nReady;
     setupTestForm();
+    setupLogTabs();
     startLogStream();
     restoreFromStorage();
 });
+
+function setupLogTabs() {
+    const panel = document.getElementById('logPanel');
+    if (!panel) return;
+    const showControls = (tab) => {
+        const runControls = document.getElementById('controls-runlog');
+        const llmControls = document.getElementById('controls-llmlog');
+        if (runControls) runControls.style.display = tab === 'runlog' ? 'flex' : 'none';
+        if (llmControls) llmControls.style.display = tab === 'llmlog' ? 'flex' : 'none';
+    };
+    panel.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            panel.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            panel.querySelectorAll('.qt-tab-pane').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            const pane = document.getElementById(`pane-${btn.dataset.tab}`);
+            if (pane) pane.classList.add('active');
+            showControls(btn.dataset.tab);
+        });
+    });
+    showControls('runlog');
+}
 
 async function restoreFromStorage() {
     const saved = loadState();
@@ -101,7 +124,6 @@ function setupTestForm() {
 
         setProcessing(true);
         updateStatus('processing');
-        document.getElementById('resultIntent').textContent = '';
         const todoEl = document.getElementById('todoTreeContainer');
         if (todoEl) todoEl.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearLlmLog();
@@ -130,7 +152,6 @@ function setupTestForm() {
         }
         setProcessing(false);
         updateStatus('idle');
-        document.getElementById('resultIntent').textContent = '';
         const todoEl2 = document.getElementById('todoTreeContainer');
         if (todoEl2) todoEl2.innerHTML = `<div class="todo-empty">${__('qt.noTasks')}</div>`;
         clearFinalResult(__('qt.waitingResult'));
@@ -273,6 +294,7 @@ function handleStreamEvent(event) {
 
 function updateStatus(status) {
     const el = document.getElementById('resultStatus');
+    if (!el) return;
     switch (status) {
         case 'processing':
             el.textContent = __('qt.processing');

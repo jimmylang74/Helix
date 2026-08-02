@@ -9,3 +9,5 @@ llm_engine.log
 .omo/
 .playwright-mcp/
 AGENTS.md
+db/
+

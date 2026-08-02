@@ -254,7 +254,6 @@
   "qt.tabLog": "运行日志",
   "qt.tabTodo": "任务清单",
   "qt.tabLlm": "LLM日志",
-  "qt.logLines": "显示行数：",
   "qt.autoRefresh": "自动刷新",
   "qt.refresh": "🔄 刷新",
   "qt.noTasks": "暂无任务",

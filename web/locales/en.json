@@ -254,7 +254,6 @@
   "qt.tabLog": "Run Log",
   "qt.tabTodo": "Task List",
   "qt.tabLlm": "LLM Log",
-  "qt.logLines": "Show lines:",
   "qt.autoRefresh": "Auto Refresh",
   "qt.refresh": "🔄 Refresh",
   "qt.noTasks": "No tasks",

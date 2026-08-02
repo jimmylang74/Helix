@@ -970,7 +970,7 @@ select.form-control {
     display: flex;
     gap: 12px;
     margin-bottom: 12px;
-    height: 520px;
+    height: 820px;
 }
 
 .qt-panel {
@@ -993,6 +993,39 @@ select.form-control {
     max-height: none;
 }
 
+/* Quick-test combined log card: Run Log / LLM Log tabs */
+.qt-log-tabs {
+    margin-bottom: 0;
+    border-bottom: none;
+    flex-shrink: 0;
+}
+
+.qt-log-tabs .tab-btn {
+    padding: 8px 14px;
+    font-size: 14px;
+}
+
+.qt-tab-controls {
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.qt-tab-pane {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+}
+
+.qt-tab-pane.active {
+    display: flex;
+}
+
+.qt-tab-pane .log-container {
+    border-radius: 0;
+}
+
 #resultCard {
     margin-bottom: 0;
     height: 220px;
@@ -1001,30 +1034,9 @@ select.form-control {
     overflow: hidden;
 }
 
-#statusCard {
-    margin-bottom: 0;
-    height: 220px;
-}
-
-.status-info-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.status-info-item label {
-    display: block;
-    font-size: 11px;
-    color: var(--text-muted);
-    margin-bottom: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.status-info-item span {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--primary);
+/* Result card fills the full quick-test panel row height */
+#resultCard.qt-panel {
+    height: auto;
 }
 
 #resultCard .card-body {
@@ -1040,10 +1052,15 @@ select.form-control {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    border-radius: 6px 6px 0 0;
 }
 
 #resultCard .file-list {
     flex-shrink: 0;
+}
+
+#resultCard .file-list:empty {
+    display: none;
 }
 
 #requestInput {

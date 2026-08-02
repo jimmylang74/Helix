@@ -5,38 +5,51 @@
     <p class="text-muted" data-i18n="qt.subtitle">测试 AI Agent 功能并查看实时结果</p>
 </div>
 
-<!-- Top row: Run Log + LLM Log + Todo side by side -->
+<!-- Top row: Final Result + Run/LLM Log (tabs) + Todo side by side -->
 <div class="qt-panels">
+    <div class="card qt-panel" id="resultCard">
+        <div class="card-header" style="padding: 10px 16px; justify-content: flex-start; gap: 12px; flex-wrap: wrap;">
+            <h3 style="font-size: 14px; flex-shrink: 0;" data-i18n="qt.tabResult">最终结果</h3>
+            <div class="token-usage-inline">
+                <span class="token-usage-item">
+                    <span data-i18n="qt.inputTokens">输入 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
+                    <strong id="tokenInput" class="token-usage-value">0/0</strong>
+                </span>
+                <span class="token-usage-item">
+                    <span data-i18n="qt.outputTokens">输出 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
+                    <strong id="tokenOutput" class="token-usage-value">0/0</strong>
+                </span>
+                <span class="token-usage-item">
+                    <span data-i18n="qt.tokenizer">分词器</span>：
+                    <strong id="tokenizerName" class="token-usage-value">-</strong>
+                </span>
+            </div>
+            <button class="btn btn-sm btn-outline" id="copyBtn" style="margin-left: auto;" data-i18n="qt.copy">📋 复制</button>
+        </div>
+        <div class="card-body" style="padding: 0;">
+            <div id="finalResultContainer" class="result-box" style="min-height: 60px;">
+                <span class="text-muted" data-i18n="qt.waitingResult">等待请求...</span>
+            </div>
+            <div id="resultFiles" class="file-list"></div>
+        </div>
+    </div>
+
+    <!-- Combined card: Run Log + LLM Log as tabs (at the original LLM Log position) -->
     <div class="card qt-panel" id="logPanel">
-        <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
-            <h3 style="font-size: 14px;" data-i18n="qt.tabLog">运行日志</h3>
-            <div class="log-controls" style="margin-bottom: 0;">
+        <div class="card-header" style="border-bottom: none; padding: 6px 16px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <div class="tabs qt-log-tabs" role="tablist">
+                <button class="tab-btn active" data-tab="runlog" data-i18n="qt.tabLog" role="tab">运行日志</button>
+                <button class="tab-btn" data-tab="llmlog" data-i18n="qt.tabLlm" role="tab">LLM日志</button>
+            </div>
+            <div class="log-controls qt-tab-controls" id="controls-runlog" style="margin: 0;">
                 <label>
                     <input type="checkbox" id="autoRefreshLog" checked onchange="toggleAutoRefreshLog()">
                     <span data-i18n="qt.autoRefresh">自动刷新</span>
                 </label>
-                <label><span data-i18n="qt.logLines">显示行数：</span>
-                    <select id="logLines" onchange="restartLogStream()">
-                        <option value="50">50</option>
-                        <option value="100">100</option>
-                        <option value="200">200</option>
-                        <option value="500">500</option>
-                        <option value="0" selected data-i18n="qt.logAll">全部</option>
-                    </select>
-                </label>
                 <button class="btn btn-sm btn-outline" onclick="restartLogStream()" data-i18n="qt.refresh">🔄 刷新</button>
                 <button class="btn btn-sm btn-outline" onclick="exportRunLog()" data-i18n="qt.exportLog">📥 导出</button>
             </div>
-        </div>
-        <div class="card-body" style="padding: 0; flex: 1; min-height: 0; overflow: hidden;">
-            <div id="runLogContainer" class="log-container"></div>
-        </div>
-    </div>
-
-    <div class="card qt-panel" id="llmPanel">
-        <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
-            <h3 style="font-size: 14px;" data-i18n="qt.tabLlm">LLM日志</h3>
-            <div class="llm-log-controls" style="margin-bottom: 0;">
+            <div class="llm-log-controls qt-tab-controls" id="controls-llmlog" style="margin: 0; display: none;">
                 <label>
                     <input type="checkbox" id="llmAutoScroll" checked>
                     <span data-i18n="qt.autoScroll">自动滚动</span>
@@ -46,7 +59,12 @@
             </div>
         </div>
         <div class="card-body" style="padding: 0; flex: 1; min-height: 0; overflow: hidden;">
-            <div id="llmLogContainer" class="log-container llm-log-container"></div>
+            <div class="qt-tab-pane active" id="pane-runlog">
+                <div id="runLogContainer" class="log-container"></div>
+            </div>
+            <div class="qt-tab-pane" id="pane-llmlog">
+                <div id="llmLogContainer" class="log-container llm-log-container"></div>
+            </div>
         </div>
     </div>
 
@@ -60,66 +78,6 @@
             </div>
         </div>
     </div>
-</div>
-
-<!-- Middle row: Final Result + Status -->
-<div style="display: flex; gap: 12px; margin-bottom: 12px;">
-<div class="card" id="resultCard" style="flex: 1; min-width: 0;">
-    <div class="card-header" style="padding: 10px 16px;">
-        <div style="display: flex; gap: 8px; align-items: center;">
-            <h3 style="font-size: 14px;" data-i18n="qt.tabResult">最终结果</h3>
-            <span class="badge" id="resultStatus" data-i18n="qt.idle">空闲</span>
-            <span class="badge badge-info" id="resultIntent"></span>
-        </div>
-        <div class="token-usage-inline">
-            <span class="token-usage-item">
-                <span data-i18n="qt.inputTokens">输入 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
-                <strong id="tokenInput" class="token-usage-value">0/0</strong>
-            </span>
-            <span class="token-usage-item">
-                <span data-i18n="qt.outputTokens">输出 token</span>（<span data-i18n="qt.currentTotal">当前/总计</span>）：
-                <strong id="tokenOutput" class="token-usage-value">0/0</strong>
-            </span>
-            <span class="token-usage-item">
-                <span data-i18n="qt.tokenizer">分词器</span>：
-                <strong id="tokenizerName" class="token-usage-value">-</strong>
-            </span>
-        </div>
-        <button class="btn btn-sm btn-outline" id="copyBtn" data-i18n="qt.copy">📋 复制</button>
-    </div>
-    <div class="card-body" style="padding: 0;">
-        <div id="finalResultContainer" class="result-box" style="min-height: 60px;">
-            <span class="text-muted" data-i18n="qt.waitingResult">等待请求...</span>
-        </div>
-        <div id="resultFiles" class="file-list"></div>
-    </div>
-</div>
-
-<div class="card" id="statusCard" style="width: 200px; flex: 0 0 200px; display: flex; flex-direction: column; overflow: hidden;">
-    <div class="card-header" style="border-bottom: none; padding: 10px 16px; flex-shrink: 0;">
-        <h3 style="font-size: 14px;">状态信息</h3>
-    </div>
-    <div class="card-body" style="flex: 1; overflow-y: auto;">
-        <div class="status-info-grid">
-            <div class="status-info-item">
-                <label>版本</label>
-                <span><img src="https://img.shields.io/github/v/tag/jimmylang74/Helix?style=flat-square&label=Helix&color=blue" alt="Helix Version" class="version-badge"></span>
-            </div>
-            <div class="status-info-item">
-                <label>Python</label>
-                <span>3.11+</span>
-            </div>
-            <div class="status-info-item">
-                <label>协议</label>
-                <span>MIT</span>
-            </div>
-            <div class="status-info-item">
-                <label>引擎</label>
-                <span>LangGraph + ai_engine</span>
-            </div>
-        </div>
-    </div>
-</div>
 </div>
 
 <!-- Bottom row: Request Input -->

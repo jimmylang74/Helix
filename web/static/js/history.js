@@ -3,11 +3,21 @@
  * Displays request history and generated files
  */
 
-document.addEventListener('DOMContentLoaded', async () => {
-    if (typeof i18nReady !== 'undefined') await i18nReady;
+function initHistoryPage() {
+    if (window.__historyInited) return;
+    window.__historyInited = true;
     refreshHistory();
     loadOutputFiles();
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', async () => {
+        if (typeof i18nReady !== 'undefined') await i18nReady;
+        initHistoryPage();
+    });
+} else {
+    initHistoryPage();
+}
 
 async function refreshHistory() {
     const result = await apiCall('history.get');

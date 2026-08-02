@@ -7,14 +7,22 @@ let currentEditServer = null;
 let llmProviderInfo = {};
 let confirmModalResolve = null;
 
-document.addEventListener('DOMContentLoaded', async () => {
+async function initConfigPage() {
+    if (window.__configInited) return;
+    window.__configInited = true;
     await loadLLMProviders();
     loadConfig();
     setupTabs();
     loadIntents();
     loadMCPServers();
     loadPlugins();
-});
+}
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => initConfigPage());
+} else {
+    initConfigPage();
+}
 
 function setupTabs() {
     document.querySelectorAll('.tab-btn').forEach(btn => {

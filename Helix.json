@@ -15,7 +15,8 @@
     "api_key": "",
     "verbose": true,
     "log_file": "llm_engine.log",
-    "max_input_tokens": 32768
+    "max_input_tokens": 32768,
+    "planning_max_ask_rounds": 5
   },
   "intents": {
     "ppt": {

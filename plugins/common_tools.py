@@ -9,6 +9,8 @@ from datetime import datetime, timezone, timedelta
 from pypinyin import pinyin, Style
 
 from modules.agents.tool_base import BaseTool
+from modules.core.user_question import user_question_broker
+from modules.llm.llm_events import get_request_context, emit as _emit_llm_event
 from modules.utils.logger import log_tool_call
 
 
@@ -236,3 +238,38 @@ class GetCurrentLocationTool(BaseTool):
 
         city_en = chinese_city_to_pinyin(city_cn)
         return f"当前城市: {city_cn} ({city_en})"
+
+
+# ──────────────────────────────────────────────────────────
+# Tool: 向用户提问（阻塞等待用户回答）
+# ──────────────────────────────────────────────────────────
+
+class AskUserTool(BaseTool):
+    """向用户提问，阻塞等待用户回答后返回回答内容。"""
+
+    name = "ask_user"
+    description = "当信息不足、存在歧义、需要用户确认时调用该工具向用户提问，禁止自行猜测"
+    intents = ["*"]
+    parameters = {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": (
+                    "需要向用户提问的问题；可在问题中列出选项供用户选择，"
+                    "例如：A. xxx，B. xxx"
+                ),
+            }
+        },
+        "required": ["question"],
+    }
+
+    def execute(self, question: str = "", **kwargs) -> str:
+        request_id = get_request_context()
+        if not request_id:
+            return "错误: ask_user 需要活跃的请求上下文（request_id），当前无法提问"
+        if user_question_broker.is_waiting(request_id):
+            return "错误: 已有一个等待用户回答的问题，请等待其回答完成，不要重复提问"
+        log_tool_call(f"ask_user(question='{question[:200]}')")
+        _emit_llm_event(request_id, {"type": "ask_user", "question": question})
+        return user_question_broker.ask(request_id, question)

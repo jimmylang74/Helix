@@ -1,9 +1,18 @@
 """
-公共 JSON 输出契约 — 所有要求 LLM 返回 JSON 的 user prompt 共用。
+公共提示词 — 所有 system/user prompt 共享的规则与契约。
 
-通过 {json_contract} 占位符注入各 user prompt（规划 / 节点执行 / 总结），
-保证 JSON 契约规则单一来源，避免在多处模板中重复维护、口径漂移。
+- ASK_USER_RULES: 提问决策规则（经 {ask_user_rules} 占位符注入所有
+  system prompt；finalizer 无工具注入，不包含）
+- COMMON_JSON_CONTRACT: 公共 JSON 输出契约（自 json_contract.py 迁入）
 """
+
+ASK_USER_RULES = """\
+提问决策规则：
+1. 上下文已有明确信息，绝不提问；
+2. 存在多种可能性、缺少关键参数，禁止猜测，必须调用ask_user；
+3. 一次尽量把多个疑问合并成一个问题，不要分多次零散提问；
+4. 能通过其他工具（搜索）获取的信息，优先工具，不要直接问用户。"""
+
 
 COMMON_JSON_CONTRACT = """\
 ## JSON 输出契约（必须严格遵守）

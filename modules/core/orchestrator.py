@@ -32,7 +32,7 @@ from modules.prompts.task_graph_prompts import (
 from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
 from modules.prompts.research_prompts import DOMAIN_SECTION_RESEARCH
 from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
-from modules.prompts.json_contract import COMMON_JSON_CONTRACT
+from modules.prompts.common_prompt import ASK_USER_RULES, COMMON_JSON_CONTRACT
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -42,6 +42,7 @@ from modules.llm.llm_events import (
     cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
 )
 from modules.core import status_events
+from modules.core.user_question import user_question_broker
 from modules.utils.file_ops import FileOps
 from modules.utils import history_store
 from modules.config.config_manager import ConfigManager
@@ -145,6 +146,8 @@ class AgentOrchestrator:
                 "generated_files": state.get("generated_files", []),
             })
             llm_cleanup(request_id)
+            # 唤醒可能仍在等待用户回答的 ask_user，避免节点线程阻塞到超时
+            user_question_broker.cancel(request_id)
             # 任务结束即释放：前端快速测试页改走"不销毁"方案，无需为已完成任务保留状态与缓冲
             with self._states_lock:
                 self._active_states.pop(request_id, None)
@@ -165,6 +168,8 @@ class AgentOrchestrator:
         state["cancelled"] = True
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
+        # 唤醒等待用户回答的 ask_user，让节点线程退出阻塞
+        user_question_broker.cancel(request_id)
         log_orchestrator(f"Request {request_id} cancelled by user")
         graph = self._get_graph(request_id)
         graph_nodes = graph.to_dict_list() if graph else None
@@ -214,38 +219,64 @@ class AgentOrchestrator:
         if forced_intent != "auto":
             # 已知 intent，直接用对应 system prompt 规划
             system_prompt = self._get_system_prompt(forced_intent)
-            user_prompt = USER_PROMPT_TASK_PLANNING.format(
-                user_request=state["user_request"],
-                json_contract=COMMON_JSON_CONTRACT,
-            )
             log_agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
         else:
-            system_prompt = SYSTEM_PROMPT_TASK_PLANNING
-            user_prompt = USER_PROMPT_TASK_PLANNING.format(
-                user_request=state["user_request"],
-                json_contract=COMMON_JSON_CONTRACT,
+            # 规划 system prompt 内含 JSON 示例的裸花括号，不能用 .format()，用占位符替换
+            system_prompt = SYSTEM_PROMPT_TASK_PLANNING.replace(
+                "{ask_user_rules}", ASK_USER_RULES
             )
             log_agent_to_llm("Sending request to LLM for task planning...")
 
-        # 检查 token 预算
-        if not self._check_token_budget(
-            state["request_id"], system_prompt, user_prompt, tools_section
-        ):
-            state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
-            log_error(state["error"])
-            return {"task_complete": True, "response": state["error"]}
+        # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划（上限 llm.planning_max_ask_rounds 轮）
+        max_ask_rounds = ConfigManager().get("llm.planning_max_ask_rounds", 5)
+        planning_context = state["user_request"]
+        for ask_round in range(max_ask_rounds + 1):
+            user_prompt = USER_PROMPT_TASK_PLANNING.format(
+                user_request=planning_context,
+                json_contract=COMMON_JSON_CONTRACT,
+            )
 
-        response = self.llm.ask_json(
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            tools=tool_definitions,
-        )
+            # 检查 token 预算
+            if not self._check_token_budget(
+                state["request_id"], system_prompt, user_prompt, tools_section
+            ):
+                state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
+                log_error(state["error"])
+                return {"task_complete": True, "response": state["error"]}
 
-        self._record_usage(
-            state,
-            f"{system_prompt}\n\n{tools_section}\n\n{user_prompt}",
-            json.dumps(response, ensure_ascii=False),
-        )
+            response = self.llm.ask_json(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                tools=tool_definitions,
+            )
+
+            self._record_usage(
+                state,
+                f"{system_prompt}\n\n{tools_section}\n\n{user_prompt}",
+                json.dumps(response, ensure_ascii=False),
+            )
+
+            ask_tools = [
+                t for t in (response.get("tools") or [])
+                if isinstance(t, dict) and t.get("name") == "ask_user"
+            ]
+            if ask_tools and ask_round < max_ask_rounds:
+                for i, tc in enumerate(ask_tools):
+                    fake_tc = {
+                        "name": "ask_user",
+                        "arguments": tc.get("arguments", {}),
+                        "id": f"planning_ask_{ask_round}_{i}",
+                    }
+                    result = self._execute_tool_call(state, fake_tc)
+                    planning_context = (
+                        f"{planning_context}\n\n[规划阶段补充信息]\n{result}"
+                    )
+                log_llm_decision(
+                    f"Planning asked user {len(ask_tools)} question(s), "
+                    "re-planning with answers..."
+                )
+                continue
+            break
 
         # 解析结果
         if forced_intent != "auto":
@@ -399,6 +430,9 @@ class AgentOrchestrator:
     ):
         """执行单个节点（内部 tool-calling 循环）。"""
         request_id = state["request_id"]
+        # 并行节点线程没有外层 process_request 设置的上下文，这里补设，
+        # 使工具（如 ask_user）能通过 get_request_context 拿到 request_id
+        set_request_context(request_id)
         tool_definitions = self._build_tool_definitions()
         system_prompt = get_node_system_prompt(state["intent_type"])
         # ask_with_tools 会把 tools 段追加进 system prompt 一起发送（见
@@ -660,10 +694,13 @@ class AgentOrchestrator:
             "research": DOMAIN_SECTION_RESEARCH,
             "coding": DOMAIN_SECTION_CODING,
         }
+        base = SYSTEM_PROMPT_TASK_PLANNING.replace(
+            "{ask_user_rules}", ASK_USER_RULES
+        )
         domain = domain_sections.get(intent_type, "")
         if not domain:
-            return SYSTEM_PROMPT_TASK_PLANNING
-        return f"{SYSTEM_PROMPT_TASK_PLANNING}\n\n{domain}"
+            return base
+        return f"{base}\n\n{domain}"
 
     def _build_tool_definitions(self) -> List[ToolDefinition]:
         tool_definitions = []

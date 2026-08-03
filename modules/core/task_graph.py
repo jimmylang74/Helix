@@ -147,13 +147,13 @@ class TaskGraph:
 
     def get_ready_nodes(self) -> List[TaskNode]:
         """
-        找出所有满足依赖条件的 Ready 节点。
+        找出所有满足依赖条件的节点（PENDING，以及已翻成 READY 但尚未执行的）。
         如果某个依赖 Failed，当前节点也自动 Failed。
         """
         with self._lock:
             ready: List[TaskNode] = []
             for node in self._nodes.values():
-                if node.state != NodeState.PENDING:
+                if node.state not in (NodeState.PENDING, NodeState.READY):
                     continue
 
                 # 检查依赖中是否有 Failed
@@ -175,6 +175,9 @@ class TaskGraph:
                     for dep_id in node.depends
                 )
                 if node.depends and not all_deps_done:
+                    # READY 节点的依赖可能被图更新改动后不再满足，退回 PENDING 等待
+                    if node.state == NodeState.READY:
+                        node.state = NodeState.PENDING
                     continue  # 仍有未完成的依赖
 
                 node.state = NodeState.READY

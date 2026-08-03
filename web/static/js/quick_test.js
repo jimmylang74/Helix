@@ -272,6 +272,16 @@ function handleStreamEvent(event) {
             break;
         case 'tool_call_result':
             addLlmLogEntry({ type: 'tool_call_result', id: event.id || '', name: event.name || '', result: event.result || '' });
+            // ask_user 已回答完成（含状态重放场景）：收起输入表单，避免残留旧输入框
+            if (event.name === 'ask_user') {
+                const input = document.getElementById('askUserInput');
+                if (input) {
+                    const block = input.closest('.ask-user-block');
+                    const form = block ? block.querySelector('.ask-user-form') : null;
+                    if (form) form.remove();
+                    updateStatus('processing');
+                }
+            }
             break;
         case 'usage':
             addLlmLogEntry({
@@ -299,6 +309,9 @@ function handleStreamEvent(event) {
                 user_message: event.user_message || '',
             });
             break;
+        case 'ask_user':
+            showAskUserQuestion(event.question || '');
+            break;
     }
 }
 
@@ -321,6 +334,10 @@ function updateStatus(status) {
         case 'idle':
             el.textContent = __('qt.idle');
             el.className = 'badge badge-secondary';
+            break;
+        case 'awaiting':
+            el.textContent = __('qt.awaitingAnswer');
+            el.className = 'badge badge-warning';
             break;
     }
 }
@@ -667,6 +684,94 @@ function appendFinalResult(content, files) {
 
 function updateFinalResult(content, files) {
     appendFinalResult(content, files);
+}
+
+// ========== Ask User (ask_user tool) ==========
+
+function showAskUserQuestion(question) {
+    const container = document.getElementById('finalResultContainer');
+    if (!container) return;
+
+    clearPlaceholder(container);
+    // 同一时刻只保留一个待回答的问题块
+    const existing = container.querySelector('.ask-user-block');
+    if (existing) existing.remove();
+
+    const block = document.createElement('div');
+    block.className = 'result-block result-block-ask';
+
+    const header = document.createElement('div');
+    header.className = 'result-block-header';
+    header.textContent = `❓ ${__('qt.askUserTitle')}`;
+    block.appendChild(header);
+
+    const content = document.createElement('div');
+    content.className = 'result-block-content';
+    content.textContent = question || '';
+    block.appendChild(content);
+
+    const form = document.createElement('div');
+    form.className = 'ask-user-form';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-control form-control-sm';
+    input.id = 'askUserInput';
+    input.placeholder = __('qt.answerPlaceholder');
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            submitAskUserAnswer();
+        }
+    });
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-primary btn-sm';
+    btn.textContent = __('qt.submitAnswer');
+    btn.addEventListener('click', () => submitAskUserAnswer());
+
+    form.appendChild(input);
+    form.appendChild(btn);
+    block.appendChild(form);
+
+    container.appendChild(block);
+    container.scrollTop = container.scrollHeight;
+    updateStatus('awaiting');
+    input.focus();
+}
+
+async function submitAskUserAnswer() {
+    const input = document.getElementById('askUserInput');
+    const btn = input ? input.nextElementSibling : null;
+    if (!input || !currentRequestId) return;
+
+    const answer = input.value.trim();
+    if (!answer) {
+        showToast(__('qt.enterAnswer'), 'warning');
+        return;
+    }
+
+    if (btn) btn.disabled = true;
+    try {
+        const result = await apiCall('agent/router', {
+            request_id: currentRequestId,
+            answer: answer,
+        });
+        if (!result.success) {
+            showToast(result.error || __('qt.failure'), 'error');
+            if (btn) btn.disabled = false;
+            return;
+        }
+        // 回答已投递到后端，收起输入表单（问题与回答会通过 tool_call_result 回流展示）
+        const block = input.closest('.ask-user-block');
+        const form = block ? block.querySelector('.ask-user-form') : null;
+        if (form) form.remove();
+        updateStatus('processing');
+    } catch (error) {
+        if (btn) btn.disabled = false;
+        showToast(error.message || __('qt.failure'), 'error');
+    }
 }
 
 // ========== LLM Log ==========

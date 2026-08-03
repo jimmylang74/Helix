@@ -85,7 +85,8 @@ class ConfigManager:
                 "verbose": True,
                 "log_file": "llm_engine.log",
                 "max_input_tokens": 32768,
-                "max_graph_updates": 5
+                "max_graph_updates": 5,
+                "planning_max_ask_rounds": 5
             },
             "intents": {
                 "ppt": {

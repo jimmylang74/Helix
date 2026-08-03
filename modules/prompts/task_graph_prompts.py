@@ -4,7 +4,12 @@ Task Graph Prompts — 三阶段提示词（规划 / 节点执行 / 总结）。
 第一阶段  _task_planning:     LLM 将用户请求分解为 DAG 节点图
 第二阶段  _task_graph_node_loop:  每个节点执行（注入图状态 + tool结果）
 第三阶段  _task_finalizer:    将所有节点结果汇总
+
+系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则
+（finalizer 不注入工具，因此不包含该占位符）。
 """
+
+from modules.prompts.common_prompt import ASK_USER_RULES
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 1 — Task Planning
@@ -35,10 +40,17 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 - 系统会在节点执行时**直接执行**这些调用，再把结果交给 LLM 分析，避免多余的往返
 - 对于**复杂节点**（参数依赖中间结果，如搜索词依赖前序节点的输出），必须将 `initial_tool_calls` 留空，执行阶段再决定
 
+## 规划阶段提问
+- 若任务信息不足、缺少关键参数、**无法完成规划**，在 JSON 顶层返回 `"tools"` 字段调用 ask_user 提问，格式为 `{"tools": [{"name": "ask_user", "arguments": {"question": "..."}}]}`
+- 系统会先向用户提问，拿到回答后携带回答**重新规划**；禁止在信息不足时猜测关键参数硬做规划
+
 ## 可用的意图类型
 - `ppt`: PPT 生成
 - `research`: 搜索研究
 - `coding`: 代码生成
+
+## 提问决策规则
+{ask_user_rules}
 """
 
 USER_PROMPT_TASK_PLANNING = """# Task Planning Request
@@ -90,6 +102,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
   - `can_parallel`: 是否可以与其他无依赖节点并行
 - `task_complete`: 如果用户的问题可以直接回答（不需要工具），设为 true
 - `response`: 当 task_complete 为 true 时，直接回复用户
+- `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 ask_user 提问；系统会先提问并携带回答重新规划。其余情况省略该字段
 - `reason`: 你的分解思路
 - `need_finalizer`: 是否需要在所有节点完成后进行总结
 
@@ -115,6 +128,9 @@ SYSTEM_PROMPT_NODE_RESEARCH = """# Research Node Execution Agent
 - web_search: 搜索网络信息
 - web_fetch: 获取指定 URL 的内容
 - 工具调用可以一次返回多个，系统会并行执行
+
+## 提问决策规则
+{ask_user_rules}
 """
 
 SYSTEM_PROMPT_NODE_PPT = """# PPT Node Execution Agent
@@ -131,6 +147,9 @@ SYSTEM_PROMPT_NODE_PPT = """# PPT Node Execution Agent
 - 专业简洁的布局
 - 一致的视觉层次
 - 可读性好的排版
+
+## 提问决策规则
+{ask_user_rules}
 """
 
 SYSTEM_PROMPT_NODE_CODING = """# Coding Node Execution Agent
@@ -147,6 +166,9 @@ SYSTEM_PROMPT_NODE_CODING = """# Coding Node Execution Agent
 - 写干净、可维护、生产级质量的代码
 - 包含错误处理和边界情况
 - 写完代码后进行测试验证
+
+## 提问决策规则
+{ask_user_rules}
 """
 
 SYSTEM_PROMPT_NODE_DEFAULT = """# AI Agent Node Execution
@@ -155,6 +177,9 @@ SYSTEM_PROMPT_NODE_DEFAULT = """# AI Agent Node Execution
 
 根据节点描述使用合适的工具完成任务。
 一次可以返回多个工具调用，系统会批量执行。
+
+## 提问决策规则
+{ask_user_rules}
 """
 
 USER_PROMPT_NODE_EXECUTION = """# Node Execution
@@ -262,4 +287,5 @@ SYSTEM_PROMPTS_NODE = {
 
 def get_node_system_prompt(intent_type: str) -> str:
     """根据 intent 获取对应的节点执行 system prompt。"""
-    return SYSTEM_PROMPTS_NODE.get(intent_type, SYSTEM_PROMPT_NODE_DEFAULT)
+    raw = SYSTEM_PROMPTS_NODE.get(intent_type, SYSTEM_PROMPT_NODE_DEFAULT)
+    return raw.replace("{ask_user_rules}", ASK_USER_RULES)

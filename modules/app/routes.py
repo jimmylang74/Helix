@@ -15,6 +15,7 @@ from modules.core import status_events
 from modules.utils import log_watcher, history_store
 
 from modules.core.orchestrator import orchestrator
+from modules.core.user_question import user_question_broker
 from modules.config.config_manager import ConfigManager
 from modules.agents.intent_router import intent_router
 from modules.agents.tool_base import tool_registry
@@ -82,7 +83,25 @@ def _rpc_error(code: int, message: str, rpc_id: str | None = None) -> tuple:
 # ---- Agent ----
 
 def _agent_router(params):
-    if not params or "request" not in params:
+    if not params:
+        raise ValueError("Missing 'request' field in params")
+
+    # 用户回答等待中的 ask_user 问题（ask_user 工具调用会阻塞节点执行，直到这里交付回答）
+    request_id = params.get("request_id", "")
+    if request_id:
+        answer = params.get("answer", "")
+        if not isinstance(answer, str) or not answer.strip():
+            raise ValueError("Missing 'answer' field in params")
+        if not user_question_broker.answer(request_id, answer):
+            raise ValueError(f"Request '{request_id}' is not waiting for a user answer")
+        log_info(f"[{request_id}] user answered: {answer[:100]}")
+        return {
+            "success": True,
+            "request_id": request_id,
+            "status": "answered",
+        }
+
+    if "request" not in params:
         raise ValueError("Missing 'request' field in params")
     user_request = params["request"]
     forced_intent = params.get("intent", "auto")

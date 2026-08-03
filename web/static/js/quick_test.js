@@ -272,13 +272,13 @@ function handleStreamEvent(event) {
             break;
         case 'tool_call_result':
             addLlmLogEntry({ type: 'tool_call_result', id: event.id || '', name: event.name || '', result: event.result || '' });
-            // ask_user 已回答完成（含状态重放场景）：收起输入表单，避免残留旧输入框
+            // ask_user 已回答完成（含状态重放场景）：收起整个提问块，避免残留旧输入框。
+            // 事件按发出顺序到达（先 tool_call_result 后新一轮 ask_user），不会误伤新表单
             if (event.name === 'ask_user') {
                 const input = document.getElementById('askUserInput');
                 if (input) {
                     const block = input.closest('.ask-user-block');
-                    const form = block ? block.querySelector('.ask-user-form') : null;
-                    if (form) form.remove();
+                    if (block) block.remove();
                     updateStatus('processing');
                 }
             }
@@ -693,9 +693,8 @@ function showAskUserQuestion(question) {
     if (!container) return;
 
     clearPlaceholder(container);
-    // 同一时刻只保留一个待回答的问题块
-    const existing = container.querySelector('.ask-user-block');
-    if (existing) existing.remove();
+    // 删除全部旧块，防止残留输入框被 getElementById('askUserInput') 命中旧值
+    container.querySelectorAll('.ask-user-block').forEach(b => b.remove());
 
     const block = document.createElement('div');
     block.className = 'result-block result-block-ask';
@@ -721,7 +720,7 @@ function showAskUserQuestion(question) {
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
             e.preventDefault();
-            submitAskUserAnswer();
+            submitAskUserAnswer(input);
         }
     });
 
@@ -729,7 +728,7 @@ function showAskUserQuestion(question) {
     btn.type = 'button';
     btn.className = 'btn btn-primary btn-sm';
     btn.textContent = __('qt.submitAnswer');
-    btn.addEventListener('click', () => submitAskUserAnswer());
+    btn.addEventListener('click', () => submitAskUserAnswer(input));
 
     form.appendChild(input);
     form.appendChild(btn);
@@ -741,8 +740,7 @@ function showAskUserQuestion(question) {
     input.focus();
 }
 
-async function submitAskUserAnswer() {
-    const input = document.getElementById('askUserInput');
+async function submitAskUserAnswer(input) {
     const btn = input ? input.nextElementSibling : null;
     if (!input || !currentRequestId) return;
 
@@ -763,10 +761,9 @@ async function submitAskUserAnswer() {
             if (btn) btn.disabled = false;
             return;
         }
-        // 回答已投递到后端，收起输入表单（问题与回答会通过 tool_call_result 回流展示）
+        // 回答已投递到后端，收起整个提问块（问题与回答会通过 tool_call_result 回流展示）
         const block = input.closest('.ask-user-block');
-        const form = block ? block.querySelector('.ask-user-form') : null;
-        if (form) form.remove();
+        if (block) block.remove();
         updateStatus('processing');
     } catch (error) {
         if (btn) btn.disabled = false;

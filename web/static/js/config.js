@@ -649,6 +649,14 @@ function sourceBadgeClass(source) {
     return 'badge-source-internal';
 }
 
+function formatSourceLabel(tool) {
+    const source = tool.source || '内部插件';
+    if (source === 'MCP (外部)' && tool.server_name) {
+        return source + ' - ' + tool.server_name;
+    }
+    return source;
+}
+
 async function loadPlugins() {
     const result = await apiCall('plugins.get');
     const tbody = document.getElementById('pluginsTable');
@@ -683,12 +691,13 @@ function renderPluginsTable(tools) {
     tbody.innerHTML = tools.map(tool => {
         const intents = (tool.intents || []).join(', ') || __('config.plugins.noIntents');
         const source = tool.source || '内部插件';
+        const sourceLabel = formatSourceLabel(tool);
         return `
         <tr>
             <td><code>${tool.name}</code></td>
             <td><span class="badge badge-info">${intents}</span></td>
             <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${tool.description}">${tool.description}</td>
-            <td><span class="badge ${sourceBadgeClass(source)}">${source}</span></td>
+            <td><span class="badge ${sourceBadgeClass(source)}">${sourceLabel}</span></td>
             <td><span class="badge ${tool.enabled ? 'badge-success' : 'badge-danger'}">${tool.enabled ? __('config.plugins.enabled') : __('config.plugins.disabled')}</span></td>
             <td>
                 <button class="btn btn-sm btn-outline" onclick="showPluginDetail('${tool.name}')">${__('config.plugins.details')}</button>
@@ -738,7 +747,7 @@ function showPluginDetail(name) {
 
     const sourceBadge = document.getElementById('pluginDetailSource');
     const pluginSource = tool.source || '内部插件';
-    sourceBadge.textContent = pluginSource;
+    sourceBadge.textContent = formatSourceLabel(tool);
     sourceBadge.className = 'badge ' + sourceBadgeClass(pluginSource);
 
     const statusBadge = document.getElementById('pluginDetailStatus');

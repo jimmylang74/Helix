@@ -269,6 +269,7 @@
   "qt.awaitingAnswer": "Awaiting your answer",
   "qt.answerPlaceholder": "Type your answer...",
   "qt.submitAnswer": "Submit Answer",
+  "qt.userAnswer": "Your Answer",
   "qt.enterAnswer": "Please enter an answer",
   "qt.logLoadFailed": "Failed to load logs: ",
   "qt.noLogs": "No logs",

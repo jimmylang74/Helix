@@ -269,6 +269,7 @@
   "qt.awaitingAnswer": "等待用户回答",
   "qt.answerPlaceholder": "请输入您的回答...",
   "qt.submitAnswer": "提交回答",
+  "qt.userAnswer": "您的回答",
   "qt.enterAnswer": "请输入回答内容",
   "qt.logLoadFailed": "加载日志失败: ",
   "qt.noLogs": "暂无日志",

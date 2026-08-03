@@ -272,13 +272,17 @@ function handleStreamEvent(event) {
             break;
         case 'tool_call_result':
             addLlmLogEntry({ type: 'tool_call_result', id: event.id || '', name: event.name || '', result: event.result || '' });
-            // ask_user 已回答完成（含状态重放场景）：收起整个提问块，避免残留旧输入框。
+            // ask_user 已回答完成（含状态重放场景）：收起输入表单，保留问题与回答展示。
             // 事件按发出顺序到达（先 tool_call_result 后新一轮 ask_user），不会误伤新表单
             if (event.name === 'ask_user') {
                 const input = document.getElementById('askUserInput');
                 if (input) {
                     const block = input.closest('.ask-user-block');
-                    if (block) block.remove();
+                    if (block) {
+                        const form = block.querySelector('.ask-user-form');
+                        if (form) form.remove();
+                        block.classList.remove('ask-user-block');
+                    }
                     updateStatus('processing');
                 }
             }
@@ -697,7 +701,8 @@ function showAskUserQuestion(question) {
     container.querySelectorAll('.ask-user-block').forEach(b => b.remove());
 
     const block = document.createElement('div');
-    block.className = 'result-block result-block-ask';
+    // 同时挂 ask-user-block 类，供 submitAskUserAnswer / tool_call_result / 旧块清理三处移除逻辑命中
+    block.className = 'result-block result-block-ask ask-user-block';
 
     const header = document.createElement('div');
     header.className = 'result-block-header';
@@ -761,14 +766,38 @@ async function submitAskUserAnswer(input) {
             if (btn) btn.disabled = false;
             return;
         }
-        // 回答已投递到后端，收起整个提问块（问题与回答会通过 tool_call_result 回流展示）
+        // 回答已投递到后端：把回答展示到最终结果窗口，并收起提问块的输入表单
+        appendUserAnswer(answer);
         const block = input.closest('.ask-user-block');
-        if (block) block.remove();
+        if (block) {
+            const form = block.querySelector('.ask-user-form');
+            if (form) form.remove();
+            // 摘掉 ask-user-block，问答对常驻最终结果窗口，不再被后续新问题清理
+            block.classList.remove('ask-user-block');
+        }
         updateStatus('processing');
     } catch (error) {
         if (btn) btn.disabled = false;
         showToast(error.message || __('qt.failure'), 'error');
     }
+}
+
+function appendUserAnswer(answer) {
+    const container = document.getElementById('finalResultContainer');
+    if (!container || !answer) return;
+
+    const block = document.createElement('div');
+    block.className = 'result-block result-block-ask';
+    const header = document.createElement('div');
+    header.className = 'result-block-header';
+    header.textContent = `💬 ${__('qt.userAnswer')}`;
+    const content = document.createElement('div');
+    content.className = 'result-block-content';
+    content.textContent = answer;
+    block.appendChild(header);
+    block.appendChild(content);
+    container.appendChild(block);
+    container.scrollTop = container.scrollHeight;
 }
 
 // ========== LLM Log ==========

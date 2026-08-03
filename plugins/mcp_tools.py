@@ -22,8 +22,15 @@ class MCPToolAdapter(BaseTool):
         self.description = description
         self.parameters = input_schema
         self.intents = intents or []
+        self.server_name = server_name
         if server_name and server_name not in self._builtin_servers:
             self.source = "MCP (外部)"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize tool metadata, including the originating MCP server name."""
+        data = super().to_dict()
+        data["server_name"] = self.server_name
+        return data
 
     def execute(self, **kwargs) -> Any:
         log_tool_call(f"MCP adapter: {self.name}({kwargs})")

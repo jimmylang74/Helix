@@ -84,10 +84,25 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
       "can_parallel": false
     }}
   ],
+  "tools": [],
   "task_complete": false,
   "response": "",
   "reason": "任务分解的思考和原因",
   "need_finalizer": true
+}}
+```
+
+信息不足、**无法完成规划**时，不返回 `task_graph_nodes`，改用顶层 `tools` 调用 ask_user 提问：
+
+```json
+{{
+  "intent_type": "research",
+  "task_graph_nodes": [],
+  "tools": [{{"name": "ask_user", "arguments": {{"question": "需要向用户确认的问题"}}}}],
+  "task_complete": false,
+  "response": "",
+  "reason": "信息不足，无法完成规划，需要向用户提问",
+  "need_finalizer": false
 }}
 ```
 
@@ -102,7 +117,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
   - `can_parallel`: 是否可以与其他无依赖节点并行
 - `task_complete`: 如果用户的问题可以直接回答（不需要工具），设为 true
 - `response`: 当 task_complete 为 true 时，直接回复用户
-- `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 ask_user 提问；系统会先提问并携带回答重新规划。其余情况省略该字段
+- `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 ask_user 提问（见上方替代示例）；系统会先提问并携带回答重新规划。其余情况省略该字段或留空 `[]`
 - `reason`: 你的分解思路
 - `need_finalizer`: 是否需要在所有节点完成后进行总结
 

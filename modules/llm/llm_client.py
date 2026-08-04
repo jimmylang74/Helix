@@ -281,10 +281,10 @@ class LLMClient:
                 top_p if top_p is not None
                 else llm_config.get("top_p", 0.9)
             ),
-            prompt_file=None,
-            prompt_text=system_prompt,
-            file=None,
-            text=text,
+            system_prompt_file=None,
+            system_prompt=system_prompt,
+            user_prompt_file=None,
+            user_prompt=text,
             no_stream=no_stream,
             output_format="events",
             get_provider=False,

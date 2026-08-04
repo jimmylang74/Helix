@@ -229,6 +229,7 @@ class AgentOrchestrator:
 
         # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划（上限 llm.planning_max_ask_rounds 轮）
         max_ask_rounds = ConfigManager().get("llm.planning_max_ask_rounds", 5)
+        planning_sampling = ConfigManager().get_graph_sampling("planning")
         planning_context = state["user_request"]
         for ask_round in range(max_ask_rounds + 1):
             user_prompt = USER_PROMPT_TASK_PLANNING.format(
@@ -248,6 +249,8 @@ class AgentOrchestrator:
                 prompt=user_prompt,
                 system_prompt=system_prompt,
                 tools=tool_definitions,
+                temperature=planning_sampling["temperature"],
+                top_p=planning_sampling["top_p"],
             )
 
             self._record_usage(
@@ -435,6 +438,7 @@ class AgentOrchestrator:
         set_request_context(request_id)
         tool_definitions = self._build_tool_definitions()
         system_prompt = get_node_system_prompt(state["intent_type"])
+        execution_sampling = ConfigManager().get_graph_sampling("execution")
         # ask_with_tools 会把 tools 段追加进 system prompt 一起发送（见
         # llm_client.ask_with_tools），预算检查必须把这段计入输入 token。
         tools_section = LLMClient.format_tools_section(
@@ -514,6 +518,8 @@ class AgentOrchestrator:
                 tools=tool_definitions,
                 system_prompt=system_prompt,
                 emit_stream=emit_stream,
+                temperature=execution_sampling["temperature"],
+                top_p=execution_sampling["top_p"],
             )
 
             # 统计该节点 LLM 调用的输入/输出 token
@@ -657,9 +663,12 @@ class AgentOrchestrator:
             return
 
         log_agent_to_llm("Requesting final summary from LLM...")
+        finalizer_sampling = ConfigManager().get_graph_sampling("finalizer")
         response = self.llm.ask_json(
             prompt=user_prompt,
             system_prompt=SYSTEM_PROMPT_FINALIZER,
+            temperature=finalizer_sampling["temperature"],
+            top_p=finalizer_sampling["top_p"],
         )
 
         self._record_usage(

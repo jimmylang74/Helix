@@ -309,6 +309,8 @@ function handleStreamEvent(event) {
                 type: 'sending',
                 provider: event.provider || '',
                 model: event.model || '',
+                temperature: event.temperature,
+                top_p: event.top_p,
                 system_prompt: event.system_prompt || '',
                 user_message: event.user_message || '',
             });
@@ -821,7 +823,10 @@ function addLlmLogEntry(entry) {
 
         switch (entry.type) {
             case 'sending':
-                div.innerHTML = `<span class="llm-log-sending-label">📤 Sending to LLM:</span> <span class="llm-log-sending-model">${escapeHtml(entry.provider)}/${escapeHtml(entry.model)}</span><br>`;
+                const samplingParams = (entry.temperature !== undefined && entry.top_p !== undefined)
+                    ? ` <span class="llm-log-sending-params">(Temperature=${escapeHtml(entry.temperature)}, Top_p=${escapeHtml(entry.top_p)})</span>`
+                    : '';
+                div.innerHTML = `<span class="llm-log-sending-label">📤 Sending to LLM:</span> <span class="llm-log-sending-model">${escapeHtml(entry.provider)}/${escapeHtml(entry.model)}</span>${samplingParams}<br>`;
                 if (entry.system_prompt) {
                     const spDiv = document.createElement('div');
                     spDiv.className = 'llm-log-sending-detail';

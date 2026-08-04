@@ -66,10 +66,73 @@
         </div>
     </div>
     <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.llm.graphTitle">Graph 节点采样参数</h3>
+            <button class="btn btn-sm btn-outline" onclick="showSamplingHelp()" data-i18n="config.llm.samplingHelp">取值范围帮助</button>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.llm.phaseCol">阶段</th>
+                        <th data-i18n="config.llm.temperature">Temperature</th>
+                        <th data-i18n="config.llm.topP">Top_p</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td data-i18n="config.llm.graphPlanning">Planning（任务规划）</td>
+                        <td><input type="number" id="graphPlanningTemp" class="form-control" step="0.1" min="0" max="2" value="0.2" style="max-width:120px;"></td>
+                        <td><input type="number" id="graphPlanningTopP" class="form-control" step="0.05" min="0" max="1" value="0.9" style="max-width:120px;"></td>
+                    </tr>
+                    <tr>
+                        <td data-i18n="config.llm.graphExecution">Execution（节点执行）</td>
+                        <td><input type="number" id="graphExecutionTemp" class="form-control" step="0.1" min="0" max="2" value="0" style="max-width:120px;"></td>
+                        <td><input type="number" id="graphExecutionTopP" class="form-control" step="0.05" min="0" max="1" value="1" style="max-width:120px;"></td>
+                    </tr>
+                    <tr>
+                        <td data-i18n="config.llm.graphFinalizer">Finalizer（结果汇总）</td>
+                        <td><input type="number" id="graphFinalizerTemp" class="form-control" step="0.1" min="0" max="2" value="0.5" style="max-width:120px;"></td>
+                        <td><input type="number" id="graphFinalizerTopP" class="form-control" step="0.05" min="0" max="1" value="0.9" style="max-width:120px;"></td>
+                    </tr>
+                </tbody>
+            </table>
+            <small class="text-muted" data-i18n="config.llm.graphHint">DAG 三阶段（任务规划 / 节点执行 / 结果汇总）各自的采样参数</small>
+        </div>
+    </div>
+    <div class="card">
         <div class="card-body">
             <button class="btn btn-primary" onclick="saveLLMConfig()" data-i18n="config.llm.save">保存 LLM 配置</button>
             <button class="btn btn-outline" onclick="testLLM()" data-i18n="config.llm.test">测试连接</button>
             <span id="llmTestResult" class="ml-2"></span>
+        </div>
+    </div>
+
+    <!-- Sampling Parameters Help Modal -->
+    <div id="samplingHelpModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1002;align-items:center;justify-content:center;" onclick="if(event.target===this)closeSamplingHelp()">
+        <div style="background:white;border-radius:8px;padding:24px;max-width:680px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+            <h3 style="margin-bottom:8px;" data-i18n="config.llm.samplingHelpTitle">Temperature / Top_p 取值范围参考</h3>
+            <p class="text-muted" style="margin-bottom:16px;" data-i18n="config.llm.samplingHelpIntro">不同 LLM 接口对采样参数的取值范围不同，超出范围的值可能被后端拒绝或静默忽略：</p>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.llm.providerCol">LLM 接口</th>
+                        <th data-i18n="config.llm.tempCol">Temperature 取值范围</th>
+                        <th data-i18n="config.llm.topPCol">Top_p 取值范围</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td data-i18n="config.llm.helpOllama">Ollama</td><td data-i18n="config.llm.rangeTemp0to2">0 - 2</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                    <tr><td data-i18n="config.llm.helpOpenAI">OpenAI API</td><td data-i18n="config.llm.rangeTemp0to2">0 - 2</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                    <tr><td data-i18n="config.llm.helpAnthropic">Anthropic Claude API</td><td data-i18n="config.llm.rangeTemp0to1">0 - 1</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                    <tr><td data-i18n="config.llm.helpGemini">Google Gemini API</td><td data-i18n="config.llm.rangeTemp0to2">0 - 2</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                    <tr><td data-i18n="config.llm.helpDeepSeek">DeepSeek API</td><td data-i18n="config.llm.rangeTemp0to2">0 - 2</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                    <tr><td data-i18n="config.llm.helpVLLM">vLLM</td><td data-i18n="config.llm.rangeTempVllm">≥ 0（大于 1 非常随机）</td><td data-i18n="config.llm.rangeTopP0to1">0 - 1</td></tr>
+                </tbody>
+            </table>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-primary" onclick="closeSamplingHelp()" data-i18n="config.llm.close">关闭</button>
+            </div>
         </div>
     </div>
 

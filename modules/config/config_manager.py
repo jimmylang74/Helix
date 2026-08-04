@@ -86,7 +86,14 @@ class ConfigManager:
                 "log_file": "llm_engine.log",
                 "max_input_tokens": 32768,
                 "max_graph_updates": 5,
-                "planning_max_ask_rounds": 5
+                "planning_max_ask_rounds": 5,
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "graph": {
+                    "planning": {"temperature": 0.2, "top_p": 0.9},
+                    "execution": {"temperature": 0.0, "top_p": 1.0},
+                    "finalizer": {"temperature": 0.5, "top_p": 0.9},
+                },
             },
             "intents": {
                 "ppt": {
@@ -192,6 +199,24 @@ class ConfigManager:
             "log_file": self.get("llm.log_file", "llm_engine.log"),
             "max_input_tokens": self.get("llm.max_input_tokens", 32768),
             "max_graph_updates": self.get("llm.max_graph_updates", 5),
+            "temperature": self.get("llm.temperature", 0.2),
+            "top_p": self.get("llm.top_p", 0.9),
+        }
+
+    def get_graph_sampling(self, phase: str) -> Dict[str, float]:
+        """Get per-phase graph sampling params (temperature/top_p).
+
+        ``phase`` is one of "planning" / "execution" / "finalizer".
+        """
+        defaults = {
+            "planning": {"temperature": 0.2, "top_p": 0.9},
+            "execution": {"temperature": 0.0, "top_p": 1.0},
+            "finalizer": {"temperature": 0.5, "top_p": 0.9},
+        }
+        base = defaults.get(phase, defaults["planning"])
+        return {
+            "temperature": float(self.get(f"llm.graph.{phase}.temperature", base["temperature"])),
+            "top_p": float(self.get(f"llm.graph.{phase}.top_p", base["top_p"])),
         }
 
     def get_rpc_port(self) -> int:

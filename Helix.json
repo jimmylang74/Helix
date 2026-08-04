@@ -16,7 +16,22 @@
     "verbose": true,
     "log_file": "llm_engine.log",
     "max_input_tokens": 32768,
-    "planning_max_ask_rounds": 5
+    "max_graph_updates": 5,
+    "planning_max_ask_rounds": 5,
+    "graph": {
+      "planning": {
+        "temperature": 0.2,
+        "top_p": 0.9
+      },
+      "execution": {
+        "temperature": 0,
+        "top_p": 1
+      },
+      "finalizer": {
+        "temperature": 0.5,
+        "top_p": 0.9
+      }
+    }
   },
   "intents": {
     "ppt": {
@@ -193,6 +208,7 @@
     "weather": {
       "enabled": true,
       "intents": [
+        "ppt",
         "research"
       ]
     },
@@ -213,6 +229,36 @@
       "intents": []
     },
     "receive_mails": {
+      "enabled": true,
+      "intents": []
+    },
+    "ask_user": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "get_current_datetime": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "get_current_location": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "weixin_launch": {
+      "enabled": true,
+      "intents": []
+    },
+    "weixin_search_contact": {
+      "enabled": true,
+      "intents": []
+    },
+    "weixin_get_main_window": {
       "enabled": true,
       "intents": []
     }

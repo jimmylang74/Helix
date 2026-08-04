@@ -122,6 +122,8 @@ class LLMClient:
         tools: Optional[List[ToolDefinition]] = None,
         system_prompt: Optional[str] = None,
         expect_json: bool = True,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
     ) -> LLMResponse:
         """Send chat to LLM and get structured response via ai_engine events."""
         # Build a single text from messages
@@ -131,6 +133,8 @@ class LLMClient:
             system_prompt=system_prompt,
             no_stream=False,
             expect_json=expect_json,
+            temperature=temperature,
+            top_p=top_p,
         )
 
     def simple_chat(self, prompt: str, system_prompt: Optional[str] = None) -> str:
@@ -147,6 +151,8 @@ class LLMClient:
         prompt: str,
         system_prompt: Optional[str] = None,
         tools: Optional[List[ToolDefinition]] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Send prompt and expect a JSON document.
 
@@ -160,6 +166,8 @@ class LLMClient:
             messages=[{"role": "user", "content": prompt}],
             system_prompt=system_prompt,
             expect_json=True,
+            temperature=temperature,
+            top_p=top_p,
         )
         return self._extract_json(response.content)
 
@@ -170,6 +178,8 @@ class LLMClient:
         system_prompt: Optional[str] = None,
         context_messages: Optional[List[Dict[str, str]]] = None,
         emit_stream: bool = True,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
     ) -> LLMResponse:
         """Chat with tool-calling support via JSON-based protocol.
 
@@ -179,6 +189,8 @@ class LLMClient:
         Args:
             emit_stream: Whether to emit LLM streaming events to frontend.
                          Set to False for silent parallel node execution.
+            temperature/top_p: Optional sampling overrides. When None the
+                         global llm config defaults are used.
         """
         # Build combined system prompt with tool descriptions
         combined_system = (
@@ -203,6 +215,8 @@ class LLMClient:
             no_stream=False,
             expect_json=True,
             emit_stream=emit_stream,
+            temperature=temperature,
+            top_p=top_p,
         )
 
     @staticmethod
@@ -246,6 +260,8 @@ class LLMClient:
         text: str,
         system_prompt: Optional[str] = None,
         no_stream: bool = True,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
     ) -> Namespace:
         """Build ai_engine Namespace args from current config."""
         llm_config = self.config.get_llm_config()
@@ -257,6 +273,14 @@ class LLMClient:
             model=llm_config.get("model", "qwen2.5:7b"),
             endpoint=llm_config.get("endpoint", "http://localhost:11434"),
             api_key=llm_config.get("api_key") or None,
+            temperature=(
+                temperature if temperature is not None
+                else llm_config.get("temperature", 0.2)
+            ),
+            top_p=(
+                top_p if top_p is not None
+                else llm_config.get("top_p", 0.9)
+            ),
             prompt_file=None,
             prompt_text=system_prompt,
             file=None,
@@ -275,14 +299,20 @@ class LLMClient:
         no_stream: bool = False,
         expect_json: bool = True,
         emit_stream: bool = True,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
     ) -> LLMResponse:
         """Run ai_engine and parse NDJSON events into an LLMResponse.
 
         Args:
             emit_stream: If False, LLM streaming events are NOT forwarded
                          to the frontend (silent execution for parallel nodes).
+            temperature/top_p: Optional sampling overrides. When None the
+                         global llm config defaults are used.
         """
-        args = self._build_engine_args(text, system_prompt, no_stream)
+        args = self._build_engine_args(
+            text, system_prompt, no_stream, temperature=temperature, top_p=top_p
+        )
 
         log_agent_to_llm(
             f"LLM call via ai_engine: provider={args.provider}, model={args.model}\n"
@@ -296,6 +326,8 @@ class LLMClient:
                 "type": "sending",
                 "provider": args.provider,
                 "model": args.model,
+                "temperature": args.temperature,
+                "top_p": args.top_p,
                 "system_prompt": system_prompt or "",
                 "user_message": text,
             })

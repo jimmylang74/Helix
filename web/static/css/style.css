@@ -954,6 +954,7 @@ select.form-control {
 .llm-log-sending { color: #64b5f6; }
 .llm-log-sending-label { color: #90caf9; font-weight: bold; }
 .llm-log-sending-model { color: #bbdefb; font-weight: 600; }
+.llm-log-sending-params { color: #78909c; font-size: 11px; }
 .llm-log-sending-detail { 
     margin-top: 4px; 
     padding-left: 16px; 

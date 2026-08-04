@@ -6,6 +6,7 @@
 let currentEditServer = null;
 let llmProviderInfo = {};
 let confirmModalResolve = null;
+let llmExtraConfig = {};
 
 async function initConfigPage() {
     if (window.__configInited) return;
@@ -68,6 +69,21 @@ async function loadConfig() {
     document.getElementById('llmLogFile').value = llm.log_file || 'llm_engine.log';
     document.getElementById('llmMaxInputTokens').value = llm.max_input_tokens || 32768;
     document.getElementById('llmMaxGraphUpdates').value = llm.max_graph_updates || 5;
+    llmExtraConfig = {
+        planning_max_ask_rounds: llm.planning_max_ask_rounds || 5,
+    };
+
+    // Graph node sampling params (per phase)
+    const graph = llm.graph || {};
+    const planning = graph.planning || {};
+    const execution = graph.execution || {};
+    const finalizer = graph.finalizer || {};
+    document.getElementById('graphPlanningTemp').value = numOr(planning.temperature, 0.2);
+    document.getElementById('graphPlanningTopP').value = numOr(planning.top_p, 0.9);
+    document.getElementById('graphExecutionTemp').value = numOr(execution.temperature, 0);
+    document.getElementById('graphExecutionTopP').value = numOr(execution.top_p, 1);
+    document.getElementById('graphFinalizerTemp').value = numOr(finalizer.temperature, 0.5);
+    document.getElementById('graphFinalizerTopP').value = numOr(finalizer.top_p, 0.9);
     onProviderChange();
 
     // Server
@@ -116,6 +132,10 @@ async function loadLLMProviders() {
 // LLM Config
 // ============================================================
 
+function numOr(value, fallback) {
+    return (value === undefined || value === null || value === '') ? fallback : Number(value);
+}
+
 function getLLMConfig() {
     return {
         provider: document.getElementById('llmProvider').value,
@@ -126,6 +146,21 @@ function getLLMConfig() {
         log_file: document.getElementById('llmLogFile').value,
         max_input_tokens: parseInt(document.getElementById('llmMaxInputTokens').value) || 32768,
         max_graph_updates: parseInt(document.getElementById('llmMaxGraphUpdates').value) || 5,
+        planning_max_ask_rounds: llmExtraConfig.planning_max_ask_rounds || 5,
+        graph: {
+            planning: {
+                temperature: numOr(document.getElementById('graphPlanningTemp').value, 0.2),
+                top_p: numOr(document.getElementById('graphPlanningTopP').value, 0.9),
+            },
+            execution: {
+                temperature: numOr(document.getElementById('graphExecutionTemp').value, 0),
+                top_p: numOr(document.getElementById('graphExecutionTopP').value, 1),
+            },
+            finalizer: {
+                temperature: numOr(document.getElementById('graphFinalizerTemp').value, 0.5),
+                top_p: numOr(document.getElementById('graphFinalizerTopP').value, 0.9),
+            },
+        },
     };
 }
 
@@ -152,6 +187,14 @@ async function testLLM() {
     }
     btn.disabled = false;
     btn.textContent = __('config.llm.test');
+}
+
+function showSamplingHelp() {
+    document.getElementById('samplingHelpModal').style.display = 'flex';
+}
+
+function closeSamplingHelp() {
+    document.getElementById('samplingHelpModal').style.display = 'none';
 }
 
 // ============================================================

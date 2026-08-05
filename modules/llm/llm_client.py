@@ -131,7 +131,6 @@ class LLMClient:
         return self._call_engine(
             text=text,
             system_prompt=system_prompt,
-            no_stream=False,
             expect_json=expect_json,
             temperature=temperature,
             top_p=top_p,
@@ -212,7 +211,6 @@ class LLMClient:
         return self._call_engine(
             text=flat_text,
             system_prompt=combined_system,
-            no_stream=False,
             expect_json=True,
             emit_stream=emit_stream,
             temperature=temperature,
@@ -296,7 +294,7 @@ class LLMClient:
         self,
         text: str,
         system_prompt: Optional[str] = None,
-        no_stream: bool = False,
+        no_stream: Optional[bool] = None,
         expect_json: bool = True,
         emit_stream: bool = True,
         temperature: Optional[float] = None,
@@ -305,11 +303,17 @@ class LLMClient:
         """Run ai_engine and parse NDJSON events into an LLMResponse.
 
         Args:
+            no_stream: If None (default), resolved from config ``llm.stream``
+                       (Web 控制台 LLM 配置可切换). Pass an explicit bool to
+                       override the configured default.
             emit_stream: If False, LLM streaming events are NOT forwarded
                          to the frontend (silent execution for parallel nodes).
             temperature/top_p: Optional sampling overrides. When None the
                          global llm config defaults are used.
         """
+        if no_stream is None:
+            no_stream = not self.config.get("llm.stream", True)
+
         args = self._build_engine_args(
             text, system_prompt, no_stream, temperature=temperature, top_p=top_p
         )

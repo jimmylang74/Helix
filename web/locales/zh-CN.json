@@ -55,6 +55,7 @@
   "config.llm.modelName": "模型名称",
   "config.llm.apiUrl": "API 地址",
   "config.llm.verbose": "启用详细日志 (verbose)",
+  "config.llm.stream": "启用流式输出 (stream)",
   "config.llm.logFile": "日志文件",
   "config.llm.save": "保存 LLM 配置",
   "config.llm.test": "测试连接",

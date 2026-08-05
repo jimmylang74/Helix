@@ -118,19 +118,19 @@ class LLMClient:
 
     def chat(
         self,
-        messages: List[Dict[str, str]],
-        tools: Optional[List[ToolDefinition]] = None,
+        prompt: str,
         system_prompt: Optional[str] = None,
         expect_json: bool = True,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
     ) -> LLMResponse:
-        """Send chat to LLM and get structured response via ai_engine events."""
-        # Build a single text from messages
-        text = self._messages_to_text(messages)
+        """Send a prompt to LLM and get structured response via ai_engine events."""
+        messages: List[Dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         return self._call_engine(
-            text=text,
-            system_prompt=system_prompt,
+            messages=messages,
             expect_json=expect_json,
             temperature=temperature,
             top_p=top_p,
@@ -139,7 +139,7 @@ class LLMClient:
     def simple_chat(self, prompt: str, system_prompt: Optional[str] = None) -> str:
         """One-shot chat — returns plain text."""
         response = self.chat(
-            messages=[{"role": "user", "content": prompt}],
+            prompt=prompt,
             system_prompt=system_prompt,
             expect_json=False,
         )
@@ -162,7 +162,7 @@ class LLMClient:
         if tools:
             system_prompt = f"{system_prompt or ''}\n\n{self.format_tools_section(tools)}"
         response = self.chat(
-            messages=[{"role": "user", "content": prompt}],
+            prompt=prompt,
             system_prompt=system_prompt,
             expect_json=True,
             temperature=temperature,
@@ -197,20 +197,15 @@ class LLMClient:
             f"{self.format_tools_section(tools, heading='Available tools (respond with JSON that includes tool_calls if needed):')}"
         )
 
-        # Flatten context messages + prompt into a single text
-        parts: List[str] = []
+        messages: List[Dict[str, str]] = []
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
         if context_messages:
-            for m in context_messages:
-                role = m.get("role", "user")
-                content = m.get("content", "")
-                if content:
-                    parts.append(f"[{role}]: {content}")
-        parts.append(prompt)
-        flat_text = "\n\n".join(parts)
+            messages.extend(m for m in context_messages if m.get("content"))
+        messages.append({"role": "user", "content": prompt})
 
         return self._call_engine(
-            text=flat_text,
-            system_prompt=combined_system,
+            messages=messages,
             expect_json=True,
             emit_stream=emit_stream,
             temperature=temperature,
@@ -292,8 +287,7 @@ class LLMClient:
 
     def _call_engine(
         self,
-        text: str,
-        system_prompt: Optional[str] = None,
+        messages: List[Dict[str, str]],
         no_stream: Optional[bool] = None,
         expect_json: bool = True,
         emit_stream: bool = True,
@@ -303,6 +297,10 @@ class LLMClient:
         """Run ai_engine and parse NDJSON events into an LLMResponse.
 
         Args:
+            messages: Role-tagged messages ({"role": "system"|"user"|..., "content": ...}).
+                      Each message is prefixed with "[<role>]:\n" before being sent;
+                      system-role parts go to the engine's system prompt channel,
+                      everything else becomes the user prompt.
             no_stream: If None (default), resolved from config ``llm.stream``
                        (Web 控制台 LLM 配置可切换). Pass an explicit bool to
                        override the configured default.
@@ -313,6 +311,21 @@ class LLMClient:
         """
         if no_stream is None:
             no_stream = not self.config.get("llm.stream", True)
+
+        system_parts: List[str] = []
+        user_parts: List[str] = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if not content:
+                continue
+            prefixed = f"[{role}]:\n{content}"
+            if role == "system":
+                system_parts.append(prefixed)
+            else:
+                user_parts.append(prefixed)
+        system_prompt = "\n\n".join(system_parts) or None
+        text = "\n\n".join(user_parts)
 
         args = self._build_engine_args(
             text, system_prompt, no_stream, temperature=temperature, top_p=top_p
@@ -433,17 +446,6 @@ class LLMClient:
             finish_reason=finish_reason,
             usage=usage,
         )
-
-    @staticmethod
-    def _messages_to_text(messages: List[Dict[str, str]]) -> str:
-        """Flatten a messages list into a single text block."""
-        parts: List[str] = []
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-            if content:
-                parts.append(f"[{role}]: {content}")
-        return "\n\n".join(parts)
 
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:

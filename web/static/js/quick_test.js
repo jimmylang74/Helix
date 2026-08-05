@@ -491,11 +491,25 @@ function handleStatusEvent(state) {
         setProcessing(false);
         updateStatus('success');
         saveState();
+        autoSaveLlmLog();
     } else if (state.error) {
         stopStatusStream();
         setProcessing(false);
         updateStatus('error');
         saveState();
+        autoSaveLlmLog();
+    }
+
+    if (state.completed) {
+        // 直接回答且 response 为空等边界：final_result/error 分支未执行，需在此收尾
+        if (!state.final_result && !state.error) {
+            stopStatusStream();
+            setProcessing(false);
+            updateStatus('success');
+            saveState();
+        }
+        appendTaskCompleteMessage(state.request_id);
+        autoSaveLlmLog();
     }
 }
 
@@ -608,10 +622,12 @@ function resetTokenUsage() {
 // 后到的内容不会覆盖先到的内容。去重状态随请求生命周期重置。
 let _displayedNodeResultIds = new Set();
 let _finalResultShown = false;
+let _taskCompleteShown = false;
 
 function clearFinalResult(placeholder) {
     _displayedNodeResultIds = new Set();
     _finalResultShown = false;
+    _taskCompleteShown = false;
     document.getElementById('finalResultContainer').innerHTML =
         `<span class="text-muted">${placeholder || __('qt.processingResult')}</span>`;
     document.getElementById('resultFiles').innerHTML = '';
@@ -691,6 +707,25 @@ function appendFinalResult(content, files) {
 
 function updateFinalResult(content, files) {
     appendFinalResult(content, files);
+}
+
+// 任务结束消息：三种完成场景（finalizer 正常 / planning 直接回答 / need_finalizer=False 节点全完成）统一在此追加
+function appendTaskCompleteMessage(requestId) {
+    if (_taskCompleteShown) return;
+    _taskCompleteShown = true;
+    const container = document.getElementById('finalResultContainer');
+    if (!container) return;
+
+    clearPlaceholder(container);
+
+    const block = document.createElement('div');
+    block.className = 'result-block result-block-complete';
+    const content = document.createElement('div');
+    content.className = 'result-block-content';
+    content.textContent = __('qt.taskComplete', { requestId });
+    block.appendChild(content);
+    container.appendChild(block);
+    container.scrollTop = container.scrollHeight;
 }
 
 // ========== Ask User (ask_user tool) ==========
@@ -807,6 +842,7 @@ function appendUserAnswer(answer) {
 
 let _lastLlmLogType = null;
 let _lastLlmLogDiv = null;
+let _llmLogAutoSaved = false;
 
 function buildCollapsibleBlock(container, labelText, labelClass, contentText, expanded) {
     container.classList.add('llm-log-collapsible');
@@ -934,15 +970,12 @@ function clearLlmLog() {
     document.getElementById('llmLogContainer').innerHTML = '';
     _lastLlmLogType = null;
     _lastLlmLogDiv = null;
+    _llmLogAutoSaved = false;
 }
 
-function exportLlmLog() {
+function llmLogExportText() {
     const container = document.getElementById('llmLogContainer');
-    if (!container.textContent.trim()) {
-        showToast(__('qt.logEmpty') || '日志为空', 'warning');
-        return;
-    }
-
+    if (!container) return '';
     const lines = [];
     container.querySelectorAll('.llm-log-entry').forEach(el => {
         const clone = el.cloneNode(true);
@@ -953,9 +986,45 @@ function exportLlmLog() {
         });
         lines.push(clone.textContent.trim());
     });
-    const content = lines.join('\n');
+    return lines.join('\n');
+}
+
+function downloadTextFile(content, filename) {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function llmLogFilename() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const filename = `llm_log_${timestamp}.txt`;
+    return `llm_log_${timestamp}.txt`;
+}
+
+function autoSaveLlmLog() {
+    if (_llmLogAutoSaved) return;
+    const checkbox = document.getElementById('llmAutoSave');
+    if (checkbox && !checkbox.checked) return;
+    _llmLogAutoSaved = true;
+    setTimeout(() => {
+        const container = document.getElementById('llmLogContainer');
+        if (!container || !container.textContent.trim()) return;
+        downloadTextFile(llmLogExportText(), llmLogFilename());
+    }, 500);
+}
+
+function exportLlmLog() {
+    const container = document.getElementById('llmLogContainer');
+    if (!container.textContent.trim()) {
+        showToast(__('qt.logEmpty') || '日志为空', 'warning');
+        return;
+    }
+
+    const content = llmLogExportText();
+    const filename = llmLogFilename();
 
     if (window.showDirectoryPicker) {
         window.showDirectoryPicker().then(dirHandle => {
@@ -969,13 +1038,7 @@ function exportLlmLog() {
             });
         }).catch(() => {});
     } else {
-        const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        downloadTextFile(content, filename);
         showToast(__('qt.exportSuccess') || '导出成功', 'success');
     }
 }

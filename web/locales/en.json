@@ -55,6 +55,7 @@
   "config.llm.modelName": "Model Name",
   "config.llm.apiUrl": "API URL",
   "config.llm.verbose": "Enable verbose logging",
+  "config.llm.stream": "Enable streaming output",
   "config.llm.logFile": "Log File",
   "config.llm.save": "Save LLM Config",
   "config.llm.test": "Test Connection",

@@ -14,6 +14,7 @@
     "endpoint": "http://192.168.10.39:11434",
     "api_key": "",
     "verbose": true,
+    "stream": true,
     "log_file": "llm_engine.log",
     "max_input_tokens": 32768,
     "max_graph_updates": 5,

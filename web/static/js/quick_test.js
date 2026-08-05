@@ -45,6 +45,7 @@ function initQuickTestPage() {
     window.__qtInited = true;
     setupTestForm();
     setupLogTabs();
+    setupLlmLogCollapse();
     startLogStream();
     restoreFromStorage();
 }
@@ -807,6 +808,43 @@ function appendUserAnswer(answer) {
 let _lastLlmLogType = null;
 let _lastLlmLogDiv = null;
 
+function buildCollapsibleBlock(container, labelText, labelClass, contentText, expanded) {
+    container.classList.add('llm-log-collapsible');
+    const header = document.createElement('div');
+    header.className = 'llm-log-collapsible-header';
+    const toggle = document.createElement('span');
+    toggle.className = 'llm-log-toggle';
+    toggle.textContent = expanded ? '-' : '+';
+    const label = document.createElement('span');
+    label.className = labelClass;
+    label.textContent = labelText;
+    header.appendChild(toggle);
+    header.appendChild(label);
+    const content = document.createElement('div');
+    content.className = 'llm-log-collapsible-content';
+    content.style.display = expanded ? 'block' : 'none';
+    if (contentText) content.textContent = contentText;
+    container.appendChild(header);
+    container.appendChild(content);
+    return content;
+}
+
+function setupLlmLogCollapse() {
+    const container = document.getElementById('llmLogContainer');
+    if (!container) return;
+    container.addEventListener('click', (e) => {
+        const toggle = e.target.closest('.llm-log-toggle');
+        if (!toggle) return;
+        const block = toggle.closest('.llm-log-collapsible');
+        if (!block) return;
+        const content = block.querySelector('.llm-log-collapsible-content');
+        if (!content) return;
+        const isExpanded = content.style.display !== 'none';
+        content.style.display = isExpanded ? 'none' : 'block';
+        toggle.textContent = isExpanded ? '+' : '-';
+    });
+}
+
 function addLlmLogEntry(entry) {
     const container = document.getElementById('llmLogContainer');
     const autoScroll = document.getElementById('llmAutoScroll').checked;
@@ -830,24 +868,24 @@ function addLlmLogEntry(entry) {
                 if (entry.system_prompt) {
                     const spDiv = document.createElement('div');
                     spDiv.className = 'llm-log-sending-detail';
-                    spDiv.innerHTML = `<span class="llm-log-sending-detail-label">System:</span><br>${escapeHtml(entry.system_prompt)}`;
+                    buildCollapsibleBlock(spDiv, 'System:', 'llm-log-sending-detail-label', entry.system_prompt);
                     div.appendChild(spDiv);
                 }
                 if (entry.user_message) {
                     const umDiv = document.createElement('div');
                     umDiv.className = 'llm-log-sending-detail';
-                    umDiv.innerHTML = `<span class="llm-log-sending-detail-label">User:</span><br>${escapeHtml(entry.user_message)}`;
+                    buildCollapsibleBlock(umDiv, 'User:', 'llm-log-sending-detail-label', entry.user_message);
                     div.appendChild(umDiv);
                 }
                 break;
             case 'thinking':
-                div.innerHTML = `<span class="llm-log-thinking-label">💭 Thinking:</span> ${escapeHtml(entry.content)}`;
+                buildCollapsibleBlock(div, '💭 Thinking:', 'llm-log-thinking-label', entry.content);
                 break;
             case 'thinking_end':
                 div.innerHTML = '<span class="llm-log-thinking-label">💭 [end]</span>';
                 break;
             case 'assistant':
-                div.innerHTML = `<span class="llm-log-assistant-label">🤖 Assistant:</span> ${escapeHtml(entry.content)}`;
+                buildCollapsibleBlock(div, '🤖 Assistant:', 'llm-log-assistant-label', entry.content, true);
                 break;
             case 'assistant_end':
                 div.innerHTML = '<span class="llm-log-assistant-label">🤖 [end]</span>';
@@ -878,8 +916,15 @@ function addLlmLogEntry(entry) {
         }
 
         container.appendChild(div);
-        _lastLlmLogType = isDelta ? entry.type : null;
-        _lastLlmLogDiv = isDelta ? div : null;
+        if (isDelta) {
+            _lastLlmLogType = entry.type;
+            _lastLlmLogDiv = (entry.type === 'thinking' || entry.type === 'assistant')
+                ? div.querySelector('.llm-log-collapsible-content') || div
+                : div;
+        } else {
+            _lastLlmLogType = null;
+            _lastLlmLogDiv = null;
+        }
     }
 
     if (autoScroll) container.scrollTop = container.scrollHeight;
@@ -900,7 +945,13 @@ function exportLlmLog() {
 
     const lines = [];
     container.querySelectorAll('.llm-log-entry').forEach(el => {
-        lines.push(el.innerText.trim());
+        const clone = el.cloneNode(true);
+        clone.querySelectorAll('.llm-log-toggle').forEach(t => t.remove());
+        clone.querySelectorAll('br').forEach(br => br.replaceWith(document.createTextNode('\n')));
+        clone.querySelectorAll('.llm-log-collapsible-content').forEach(c => {
+            c.parentNode.insertBefore(document.createTextNode('\n'), c);
+        });
+        lines.push(clone.textContent.trim());
     });
     const content = lines.join('\n');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);

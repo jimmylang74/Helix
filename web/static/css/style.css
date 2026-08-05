@@ -503,6 +503,13 @@ select.form-control {
 .result-block-final .result-block-header { color: #81c784; }
 .result-block-final { border-left-color: #81c784; }
 
+.result-block-complete .result-block-content {
+    color: #9e9e9e;
+    font-size: 0.9em;
+    font-style: italic;
+}
+.result-block-complete { border-left-color: #546e7a; }
+
 .result-block-content {
     color: #e0e0e0;
     white-space: pre-wrap;

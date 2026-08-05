@@ -101,7 +101,7 @@ class AgentOrchestrator:
                 # 直接回答，不需要节点执行
                 state["final_result"] = planning_result.get("response", "")
                 state["orchestrator_phase"] = "done"
-                status_events.emit(request_id, state)
+                status_events.emit(request_id, state, completed=True)
                 log_section(f"Request completed (direct): {request_id}")
                 return self._build_success_result(state)
 
@@ -119,7 +119,7 @@ class AgentOrchestrator:
             # 推送最终结果（finalizer 的 final_answer 或拼接结果）到前端
             graph = self._get_graph(request_id)
             graph_nodes = graph.to_dict_list() if graph else None
-            status_events.emit(request_id, state, graph_nodes=graph_nodes)
+            status_events.emit(request_id, state, graph_nodes=graph_nodes, completed=True)
             result = self._build_success_result(state)
             log_section(f"Request completed: {request_id}")
             return result

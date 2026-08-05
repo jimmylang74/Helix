@@ -54,6 +54,10 @@
                     <input type="checkbox" id="llmAutoScroll" checked>
                     <span data-i18n="qt.autoScroll">自动滚动</span>
                 </label>
+                <label>
+                    <input type="checkbox" id="llmAutoSave" checked>
+                    <span data-i18n="qt.autoSave">自动保存</span>
+                </label>
                 <button class="btn btn-sm btn-outline" onclick="exportLlmLog()" data-i18n="qt.exportLog">📥 导出</button>
                 <button class="btn btn-sm btn-outline" onclick="clearLlmLog()" data-i18n="qt.clearLog">🗑️ 清屏</button>
             </div>
@@ -107,5 +111,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/quick_test.js?v=20260805"></script>
+<script src="/static/js/quick_test.js?v=20260807"></script>
 {% endblock %}

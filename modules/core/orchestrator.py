@@ -23,9 +23,9 @@ from modules.agents.tool_base import tool_registry, ToolDefinition
 from modules.llm.llm_client import LLMClient, LLMResponse
 from modules.prompts.task_graph_prompts import (
     USER_PROMPT_TASK_PLANNING,
-    SYSTEM_PROMPT_FINALIZER,
     USER_PROMPT_FINALIZER,
     get_node_system_prompt,
+    get_finalizer_system_prompt,
     USER_PROMPT_NODE_EXECUTION,
     build_system_prompt_task_planning,
     build_intent_enum,
@@ -652,8 +652,13 @@ class AgentOrchestrator:
             json_contract=COMMON_JSON_CONTRACT,
         )
 
+        intents_cfg = ConfigManager().get("intents", {}) or {}
+        finalizer_system_prompt = get_finalizer_system_prompt(
+            state.get("intent_type", ""), intents_cfg
+        )
+
         if not self._check_token_budget(
-            state["request_id"], SYSTEM_PROMPT_FINALIZER, user_prompt
+            state["request_id"], finalizer_system_prompt, user_prompt
         ):
             log_error("Finalizer prompt exceeds max_input_tokens limit, using raw results")
             state["final_result"] = self._collect_node_results(state)
@@ -663,14 +668,14 @@ class AgentOrchestrator:
         finalizer_sampling = ConfigManager().get_graph_sampling("finalizer")
         response = self.llm.ask_json(
             prompt=user_prompt,
-            system_prompt=SYSTEM_PROMPT_FINALIZER,
+            system_prompt=finalizer_system_prompt,
             temperature=finalizer_sampling["temperature"],
             top_p=finalizer_sampling["top_p"],
         )
 
         self._record_usage(
             state,
-            f"{SYSTEM_PROMPT_FINALIZER}\n\n{user_prompt}",
+            f"{finalizer_system_prompt}\n\n{user_prompt}",
             json.dumps(response, ensure_ascii=False),
         )
 

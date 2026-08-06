@@ -24,7 +24,7 @@ class MyTool(BaseTool):
 
     name = "my_tool"                          # 唯一标识符，LLM 通过它调用工具
     description = "这个工具做什么"              # LLM 看到的描述，写清楚
-    intents = ["research"]                     # 绑定的意图列表（见下方说明）
+    intents = ["generic"]                     # 绑定的意图列表（见下方说明）
     parameters = {                             # JSON Schema，定义 LLM 传入的参数
         "type": "object",
         "properties": {
@@ -58,7 +58,7 @@ class MyTool(BaseTool):
 | 意图 ID | 用途 |
 |---------|------|
 | `coding` | 代码生成与执行 |
-| `research` | 搜索与研究 |
+| `generic` | 通用任务（一般问题与事务，必要时搜索） |
 | `ppt` | PPT 生成 |
 | `*` | 所有意图均可见（万能工具） |
 
@@ -110,7 +110,7 @@ class WeatherTool(BaseTool):
 
     name = "weather"
     description = "查询指定城市的当前天气。返回温度、天气状况、风力等信息。"
-    intents = ["research", "*"]
+    intents = ["generic", "*"]
     parameters = {
         "type": "object",
         "properties": {

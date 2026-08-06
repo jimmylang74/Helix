@@ -105,8 +105,13 @@ def _agent_router(params):
         raise ValueError("Missing 'request' field in params")
     user_request = params["request"]
     forced_intent = params.get("intent", "auto")
-    if forced_intent != "auto" and forced_intent not in ("ppt", "research", "coding"):
-        raise ValueError(f"Invalid intent: {forced_intent}. Must be one of: auto, ppt, research, coding")
+    if forced_intent != "auto":
+        registered = intent_router.get_registered_intents()
+        if forced_intent not in registered:
+            raise ValueError(
+                f"Invalid intent: {forced_intent}. Must be one of: auto, "
+                + ", ".join(sorted(registered))
+            )
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")

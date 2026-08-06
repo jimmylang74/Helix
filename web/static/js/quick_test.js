@@ -40,14 +40,35 @@ function clearState() {
     try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) {}
 }
 
-function initQuickTestPage() {
+async function initQuickTestPage() {
     if (window.__qtInited) return;
     window.__qtInited = true;
     setupTestForm();
     setupLogTabs();
     setupLlmLogCollapse();
     startLogStream();
+    await loadRequestTypes();
     restoreFromStorage();
+}
+
+// Load registered intent types from config and populate the requestType
+// dropdown dynamically (generic/ppt/coding plus any user-registered intents)
+async function loadRequestTypes() {
+    const select = document.getElementById('requestType');
+    if (!select) return;
+    const result = await apiCall('intents.get');
+    if (!result.success || !result.intents) return;
+    const current = select.value || 'auto';
+    // Keep the "auto" option, then add one option per enabled intent
+    for (const [id, intent] of Object.entries(result.intents)) {
+        if (!intent.enabled) continue;
+        if (select.querySelector(`option[value="${id}"]`)) continue;
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = intent.name || id;
+        select.appendChild(opt);
+    }
+    select.value = current;
 }
 
 if (document.readyState === 'loading') {

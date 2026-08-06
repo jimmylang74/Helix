@@ -19,7 +19,7 @@ class WeatherTool(BaseTool):
 
     name = "weather"
     description = "查询指定城市的当前天气信息，包括温度、天气状况、风力等。支持中文城市名。"
-    intents = ["research"]
+    intents = ["generic"]
     parameters = {
         "type": "object",
         "properties": {

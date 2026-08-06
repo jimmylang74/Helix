@@ -9,9 +9,18 @@ import json
 import importlib
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from modules.utils.logger import log_info, log_error, log_warning
+
+
+@dataclass
+class ToolDefinition:
+    """LLM tool catalog entry (name/description/parameters for prompt injection)."""
+    name: str
+    description: str
+    parameters: Dict[str, Any]
 
 
 class BaseTool(ABC):
@@ -21,7 +30,7 @@ class BaseTool(ABC):
     Subclasses must implement:
       - name (str): Unique tool identifier
       - description (str): Human-readable description
-      - intents (list): Intent IDs this tool supports (e.g., ['ppt', 'research'])
+      - intents (list): Intent IDs this tool supports (e.g., ['ppt', 'generic'])
       - parameters (dict): JSON Schema for tool parameters
       - execute(**kwargs): The tool's main logic
 

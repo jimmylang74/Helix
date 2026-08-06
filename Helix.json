@@ -40,10 +40,10 @@
       "name": "PPT生成",
       "description": "根据用户提供的资料，智能生成PPT排版、背景设计和信息补全"
     },
-    "research": {
+    "generic": {
       "enabled": true,
-      "name": "智能搜索",
-      "description": "根据用户的问题，搜索网络内容，筛选和清洗内容，进行最终回答"
+      "name": "通用任务",
+      "description": "回答一般性问题、处理一般性事务，必要时通过搜索等工具获取信息"
     },
     "coding": {
       "enabled": true,
@@ -73,7 +73,7 @@
       ],
       "intent_categories": [
         "ppt",
-        "research"
+        "generic"
       ],
       "env": {
         "IMAGE_PROVIDER": "pexels",
@@ -100,7 +100,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -108,7 +108,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -116,7 +116,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -124,7 +124,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -132,7 +132,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -140,7 +140,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -148,7 +148,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -156,7 +156,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -164,7 +164,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -172,7 +172,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -180,7 +180,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -188,7 +188,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -196,7 +196,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research",
+        "generic",
         "coding"
       ]
     },
@@ -210,7 +210,7 @@
       "enabled": true,
       "intents": [
         "ppt",
-        "research"
+        "generic"
       ]
     },
     "weixin_send_message": {

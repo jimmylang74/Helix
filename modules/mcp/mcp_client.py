@@ -70,7 +70,7 @@ class MCPClient:
                 "args": ["script.py"],
                 "env": {"KEY": "VALUE"},
                 "enabled": True,
-                "intent_categories": ["research", "ppt"]
+                "intent_categories": ["generic", "ppt"]
             }
         """
         self.name = name

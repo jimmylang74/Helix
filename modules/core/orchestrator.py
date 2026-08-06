@@ -44,7 +44,6 @@ from modules.llm.llm_events import (
 )
 from modules.core import status_events
 from modules.core.user_question import user_question_broker
-from modules.utils.file_ops import FileOps
 from modules.utils import history_store
 from modules.config.config_manager import ConfigManager
 from modules.agents.tokenizer import TokenEstimator, create_estimator_for_config
@@ -55,7 +54,6 @@ class AgentOrchestrator:
 
     def __init__(self):
         self.llm = LLMClient()
-        self.file_ops = FileOps()
         self._active_states: Dict[str, AgentState] = {}
         self._states_lock = threading.Lock()
         self._graphs: Dict[str, TaskGraph] = {}

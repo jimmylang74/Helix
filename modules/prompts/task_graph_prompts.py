@@ -16,7 +16,8 @@ Task Graph Prompts — 三阶段提示词（规划 / 节点执行 / 总结）。
   前后端均禁止删除/禁用）
 - 其余意图（ppt、coding 及用户新增）从 Helix.json 的 intents.* 配置注入，
   仅列出 enabled 的意图
-- 每个意图可在 intents.* 中配置 planning_prompt / node_prompt 字段覆盖默认提示词
+- 每个意图可在 intents.* 中配置 planning_prompt / node_prompt / finalizer_prompt
+  字段覆盖默认提示词
 
 系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则、通过
 {planning_guidelines} 占位符注入核心工作编号列表（auto 模式含意图分类说明，
@@ -368,17 +369,41 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 """
 
 # ═══════════════════════════════════════════════════════════════════
-# Phase 3 — Finalizer
+# Phase 3 — Finalizer（按 intent 分类）
 # ═══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT_FINALIZER = """# AI Agent — Task Finalizer
+SYSTEM_PROMPT_FINALIZER_GENERIC = """# AI Agent — Task Finalizer
+
+你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
+
+- 通用任务：输出完整的研究报告或处理结果
+"""
+
+SYSTEM_PROMPT_FINALIZER_PPT = """# AI Agent — Task Finalizer
 
 你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
 
 - PPT 任务：输出一个结构清晰的 PPT 设计说明
-- 通用任务：输出完整的研究报告或处理结果
+"""
+
+SYSTEM_PROMPT_FINALIZER_CODING = """# AI Agent — Task Finalizer
+
+你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
+
 - 编码任务：输出生成的代码和说明
 """
+
+# 兜底总结提示词（未知 / 未配置意图时使用）：仅含通用总结要求，不含意图特化表述
+SYSTEM_PROMPT_FINALIZER = """# AI Agent — Task Finalizer
+
+你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
+"""
+
+SYSTEM_PROMPTS_FINALIZER = {
+    "generic": SYSTEM_PROMPT_FINALIZER_GENERIC,
+    "ppt": SYSTEM_PROMPT_FINALIZER_PPT,
+    "coding": SYSTEM_PROMPT_FINALIZER_CODING,
+}
 
 USER_PROMPT_FINALIZER = """# Final Summary
 
@@ -471,6 +496,25 @@ def get_node_system_prompt(
     if tools_section:
         return f"{prompt}\n\n{tools_section}"
     return prompt
+
+
+def get_finalizer_system_prompt(
+    intent_type: str,
+    intents_cfg: Optional[dict] = None,
+) -> str:
+    """根据 intent 获取对应的总结（finalizer）system prompt。
+
+    intents_cfg 为 Helix.json 的 intents.* 配置；若某意图配置了非空的
+    finalizer_prompt 字段则优先使用（支持用户自定义意图的总结提示词），
+    否则回退内置注册表 SYSTEM_PROMPTS_FINALIZER，最后兜底 SYSTEM_PROMPT_FINALIZER。
+    """
+    configured = ""
+    if intents_cfg:
+        cfg = intents_cfg.get(intent_type) or {}
+        configured = (cfg.get("finalizer_prompt") or "").strip()
+    return configured or SYSTEM_PROMPTS_FINALIZER.get(
+        intent_type, SYSTEM_PROMPT_FINALIZER
+    )
 
 
 # ── 规划提示词动态构建 ──────────────────────────────────────────

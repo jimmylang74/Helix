@@ -47,7 +47,7 @@ from modules.core.user_question import user_question_broker
 from modules.utils.file_ops import FileOps
 from modules.utils import history_store
 from modules.config.config_manager import ConfigManager
-from modules.agent.tokenizer import TokenEstimator, create_estimator_for_config
+from modules.agents.tokenizer import TokenEstimator, create_estimator_for_config
 
 
 class AgentOrchestrator:

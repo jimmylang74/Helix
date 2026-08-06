@@ -5,11 +5,101 @@ Task Graph Prompts — 三阶段提示词（规划 / 节点执行 / 总结）。
 第二阶段  _task_graph_node_loop:  每个节点执行（注入图状态 + tool结果）
 第三阶段  _task_finalizer:    将所有节点结果汇总
 
-系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则
-（finalizer 不注入工具，因此不包含该占位符）。
+本文件为提示词维护入口，包含：
+- 公共规则（ASK_USER_RULES / COMMON_JSON_CONTRACT，自 common_prompt.py 迁入）
+- 内置意图领域指引（DOMAIN_SECTIONS；generic 自 research_prompts.py 迁入并更名重写，
+  ppt/coding 仍维护在 ppt_prompts.py / coding_prompts.py 中）
+- 三阶段提示词模板
+
+规划提示词（SYSTEM_PROMPT_TASK_PLANNING）中的意图列表是动态注入的：
+- `generic` 为固定兜底意图，始终出现在列表中（常量 GENERIC_INTENT_* 兜底，
+  前后端均禁止删除/禁用）
+- 其余意图（ppt、coding 及用户新增）从 Helix.json 的 intents.* 配置注入，
+  仅列出 enabled 的意图
+- 每个意图可在 intents.* 中配置 planning_prompt / node_prompt 字段覆盖默认提示词
+
+系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则、通过
+{planning_guidelines} 占位符注入核心工作编号列表（auto 模式含意图分类说明，
+forced 模式意图已确定则不含）、通过 {intent_catalog_section} 占位符注入
+可用意图列表段（auto 模式注入，forced 模式为空）、通过 {domain_section}
+占位符注入领域指引段（forced 模式取目标意图的 planning_prompt 或内置
+DOMAIN_SECTIONS，auto 模式拼接各可用意图配置的 planning_prompt 指引段）。
+规划与节点执行提示词均通过 {available_tools} 占位符注入可用工具列表段
+（由 format_tools_section 生成；节点执行段标题见 NODE_TOOLS_HEADING）。
 """
 
-from modules.prompts.common_prompt import ASK_USER_RULES
+import json
+from typing import List, Optional
+
+from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
+from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
+from modules.agents.tool_base import ToolDefinition
+
+# ═══════════════════════════════════════════════════════════════════
+# 公共规则（自 common_prompt.py 迁入）
+# ═══════════════════════════════════════════════════════════════════
+
+ASK_USER_RULES = """\
+提问决策规则：
+1. 上下文已有明确信息，绝不提问；
+2. 存在多种可能性、缺少关键参数，禁止猜测，必须调用ask_user；
+3. 一次尽量把多个疑问合并成一个问题，不要分多次零散提问；
+4. 能通过其他工具（搜索）获取的信息，优先工具，不要直接问用户。"""
+
+
+COMMON_JSON_CONTRACT = """\
+## JSON 输出契约（必须严格遵守）
+
+1. 只输出一个 JSON 对象，不要包含 markdown 代码块标记（```、```json）、注释或任何其他文字
+2. 字符串字段内禁止真实换行：多行内容必须使用转义符 \\n 连接，例如 "第一行\\n第二行"
+3. 字符串字段内禁止真实制表符（\\t），同理使用转义符
+4. 布尔值使用 true/false，不要写成 True/False 或带引号的字符串
+
+正确示例（字符串内多行用 \\n 转义，整个 JSON 保持单行字符串）：
+{"response": "第一行\\n第二行"}
+
+错误示例（字符串内真实换行，会导致整个 JSON 解析失败）：
+{"response": "第一行
+第二行"}
+"""
+
+# ═══════════════════════════════════════════════════════════════════
+# 内置意图常量
+# ═══════════════════════════════════════════════════════════════════
+
+# generic 为固定兜底意图：始终出现在规划提示词的意图列表中，
+# 后端（intent_router）与前端（意图管理页）均禁止删除或禁用。
+GENERIC_INTENT_ID = "generic"
+GENERIC_INTENT_NAME = "通用任务"
+GENERIC_INTENT_DESC = "回答一般性问题、处理一般性事务，必要时通过搜索等工具获取信息"
+
+# ═══════════════════════════════════════════════════════════════════
+# 内置意图领域指引（规划阶段领域补充段）
+# ═══════════════════════════════════════════════════════════════════
+
+# generic 领域段（原 research_prompts.py 迁入并更名重写）：
+# 原"搜索研究"意图扩展为一般任务兜底意图，覆盖一般问题解答与一般性事务。
+DOMAIN_SECTION_GENERIC = """## 通用任务领域补充
+
+当前请求意图已确定为: **generic**。你是通用任务处理 Agent,负责为任务分解提供领域指导。
+
+### 领域任务分解指引
+- 通用任务涵盖:一般性问题解答、信息查询、资料整理、一般性事务处理等
+- 需要最新或外部信息时,使用 `web_search` 搜索、`web_fetch_batch` 抓取页面内容
+- 涉及文件读写、代码执行、命令操作时,使用对应的文件/Shell 工具
+- 多来源信息需交叉验证,结论注明来源与不确定性
+
+### 强制约束
+- 你负责的是任务规划,不是直接产出最终答案。禁止直接输出研究成果或处理结果来替代节点图
+- `task_complete` 仅在问题完全不需要任何工具时可设为 true;需要工具的任务必须包含对应工具调用节点,不得短路
+- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造
+"""
+
+DOMAIN_SECTIONS = {
+    "generic": DOMAIN_SECTION_GENERIC,
+    "ppt": DOMAIN_SECTION_PPT,
+    "coding": DOMAIN_SECTION_CODING,
+}
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 1 — Task Planning
@@ -19,10 +109,7 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 
 你是一个混合 AI Agent 系统的调度核心。你的工作是根据用户请求做任务规划：
 
-1. **意图分类 (intent_type)**：判断用户需要是 ppt / research / coding 还是其他
-2. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
-3. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
-4. **并行判断**：没有依赖关系的节点可以并行执行
+{planning_guidelines}
 
 ## 任务分解原则
 - 每个节点有**单一且明确的目标**
@@ -35,6 +122,8 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 - 只列出与节点目标相关的工具；若没有合适工具，`tools` 可留空
 - 不要编造 Available Tools 中不存在的工具名
 
+{available_tools}
+
 ## 初始工具调用 (initial_tool_calls)
 - 对于**简单节点**（工具参数可以预先确定的），在 `initial_tool_calls` 中提供完整的工具调用，格式为 `{"name": "...", "arguments": {...}}`
 - 系统会在节点执行时**直接执行**这些调用，再把结果交给 LLM 分析，避免多余的往返
@@ -43,14 +132,11 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 ## 规划阶段提问
 - 若任务信息不足、缺少关键参数、**无法完成规划**，在 JSON 顶层返回 `"tools"` 字段调用 ask_user 提问，格式为 `{"tools": [{"name": "ask_user", "arguments": {"question": "..."}}]}`
 - 系统会先向用户提问，拿到回答后携带回答**重新规划**；禁止在信息不足时猜测关键参数硬做规划
-
-## 可用的意图类型
-- `ppt`: PPT 生成
-- `research`: 搜索研究
-- `coding`: 代码生成
-
-## 提问决策规则
 {ask_user_rules}
+
+{intent_catalog_section}
+
+{domain_section}
 """
 
 USER_PROMPT_TASK_PLANNING = """# Task Planning Request
@@ -63,7 +149,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 ## JSON Response Format
 ```json
 {{
-  "intent_type": "research | ppt | coding",
+  "intent_type": "{intent_enum}",
   "task_graph_nodes": [
     {{
       "id": "node_1",
@@ -96,7 +182,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 
 ```json
 {{
-  "intent_type": "research",
+  "intent_type": "generic",
   "task_graph_nodes": [],
   "tools": [{{"name": "ask_user", "arguments": {{"question": "需要向用户确认的问题"}}}}],
   "task_complete": false,
@@ -125,15 +211,34 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 """
 
 # ═══════════════════════════════════════════════════════════════════
+# 核心工作指引整段文本（build_planning_guidelines 使用）
+# ═══════════════════════════════════════════════════════════════════
+
+# forced / auto 两种模式分别维护整段编号文本，避免运行时按子串拼接：
+# - PLANNING_GUIDELINES_FORCED：意图已确定，无意图分类条目（第 1-3 条）
+# - PLANNING_GUIDELINES_AUTO：含意图分类条目（第 1-4 条），其中
+#   {intent_types} 占位符由 build_planning_guidelines 注入动态意图枚举
+PLANNING_GUIDELINES_FORCED = """\
+1. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
+2. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
+3. **并行判断**：没有依赖关系的节点可以并行执行"""
+
+PLANNING_GUIDELINES_AUTO = """\
+1. **意图分类 (intent_type)**：判断用户需要是哪个意图类型（{intent_types}）
+2. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
+3. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
+4. **并行判断**：没有依赖关系的节点可以并行执行"""
+
+# ═══════════════════════════════════════════════════════════════════
 # Phase 2 — Node Execution（按 intent 分类）
 # ═══════════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT_NODE_RESEARCH = """# Research Node Execution Agent
+SYSTEM_PROMPT_NODE_GENERIC = """# Generic Node Execution Agent
 
-你是智能搜索研究 Agent。当前正在执行任务图中的一个节点。
+你是通用任务处理 Agent。当前正在执行任务图中的一个节点。
 
 ## 你的工作方式
-1. 根据当前节点的任务描述，使用合适的工具获取信息
+1. 根据当前节点的任务描述，使用合适的工具获取信息或完成任务
 2. 一次尽可能多地返回需要调用的工具列表，系统会批量执行
 3. 分析工具返回的结果
 4. 当节点目标完成时，标记 node_complete=true
@@ -142,7 +247,10 @@ SYSTEM_PROMPT_NODE_RESEARCH = """# Research Node Execution Agent
 ## 工具使用规范
 - web_search: 搜索网络信息
 - web_fetch: 获取指定 URL 的内容
+- 涉及文件读写、代码执行等一般性任务时，使用对应的文件/Shell 工具
 - 工具调用可以一次返回多个，系统会并行执行
+
+{available_tools}
 
 ## 提问决策规则
 {ask_user_rules}
@@ -163,6 +271,8 @@ SYSTEM_PROMPT_NODE_PPT = """# PPT Node Execution Agent
 - 一致的视觉层次
 - 可读性好的排版
 
+{available_tools}
+
 ## 提问决策规则
 {ask_user_rules}
 """
@@ -182,6 +292,8 @@ SYSTEM_PROMPT_NODE_CODING = """# Coding Node Execution Agent
 - 包含错误处理和边界情况
 - 写完代码后进行测试验证
 
+{available_tools}
+
 ## 提问决策规则
 {ask_user_rules}
 """
@@ -192,6 +304,8 @@ SYSTEM_PROMPT_NODE_DEFAULT = """# AI Agent Node Execution
 
 根据节点描述使用合适的工具完成任务。
 一次可以返回多个工具调用，系统会批量执行。
+
+{available_tools}
 
 ## 提问决策规则
 {ask_user_rules}
@@ -262,7 +376,7 @@ SYSTEM_PROMPT_FINALIZER = """# AI Agent — Task Finalizer
 你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
 
 - PPT 任务：输出一个结构清晰的 PPT 设计说明
-- 搜索任务：输出完整的研究报告
+- 通用任务：输出完整的研究报告或处理结果
 - 编码任务：输出生成的代码和说明
 """
 
@@ -291,16 +405,223 @@ USER_PROMPT_FINALIZER = """# Final Summary
 {json_contract}
 """
 
-# ── 按 intent 获取 system prompt ──────────────────────────────
+# ── 按 intent 获取 node system prompt ──────────────────────────
 
 SYSTEM_PROMPTS_NODE = {
-    "research": SYSTEM_PROMPT_NODE_RESEARCH,
+    "generic": SYSTEM_PROMPT_NODE_GENERIC,
     "ppt": SYSTEM_PROMPT_NODE_PPT,
     "coding": SYSTEM_PROMPT_NODE_CODING,
 }
 
+# ── 可用工具列表段 ──────────────────────────────────────────────
 
-def get_node_system_prompt(intent_type: str) -> str:
-    """根据 intent 获取对应的节点执行 system prompt。"""
-    raw = SYSTEM_PROMPTS_NODE.get(intent_type, SYSTEM_PROMPT_NODE_DEFAULT)
-    return raw.replace("{ask_user_rules}", ASK_USER_RULES)
+# 节点执行阶段 tools 段的标题（get_node_system_prompt 注入 {available_tools}
+# 时使用）；规划阶段使用 format_tools_section 的默认标题 "## Available Tools"。
+NODE_TOOLS_HEADING = (
+    "Available tools (respond with JSON that includes tool_calls if needed):"
+)
+
+
+def format_tools_section(
+    tools: List[ToolDefinition],
+    heading: str = "## Available Tools",
+) -> str:
+    """将工具定义格式化为提示词文本块：标题 + 每个工具一行。
+
+    供规划 / 节点执行阶段注入 {available_tools} 占位符使用；tools 为空时
+    仅返回标题（与调用方行为约定一致）。
+    """
+    parts = [heading]
+    for t in tools:
+        parts.append(f"- {t.name}: {t.description}")
+        parts.append(
+            f"  Parameters: {json.dumps(t.parameters, ensure_ascii=False)}"
+        )
+    return "\n".join(parts)
+
+
+def get_node_system_prompt(
+    intent_type: str,
+    intents_cfg: Optional[dict] = None,
+    tools: Optional[List[ToolDefinition]] = None,
+) -> str:
+    """根据 intent 获取对应的节点执行 system prompt（含可用工具列表段）。
+
+    intents_cfg 为 Helix.json 的 intents.* 配置；若某意图配置了非空的
+    node_prompt 字段则优先使用（支持用户自定义意图的节点提示词），
+    否则回退内置注册表 SYSTEM_PROMPTS_NODE，最后兜底 SYSTEM_PROMPT_NODE_DEFAULT。
+
+    可用工具列表经 {available_tools} 占位符注入（tools 为 None 时不注入）；
+    自定义 node_prompt 未含该占位符时在末尾追加 tools 段，保证自定义
+    提示词仍能拿到工具列表。
+    """
+    configured = ""
+    if intents_cfg:
+        cfg = intents_cfg.get(intent_type) or {}
+        configured = (cfg.get("node_prompt") or "").strip()
+    raw = configured or SYSTEM_PROMPTS_NODE.get(intent_type, SYSTEM_PROMPT_NODE_DEFAULT)
+    prompt = raw.replace("{ask_user_rules}", ASK_USER_RULES)
+    tools_section = (
+        format_tools_section(tools, heading=NODE_TOOLS_HEADING)
+        if tools is not None
+        else ""
+    )
+    if "{available_tools}" in prompt:
+        return prompt.replace("{available_tools}", tools_section)
+    if tools_section:
+        return f"{prompt}\n\n{tools_section}"
+    return prompt
+
+
+# ── 规划提示词动态构建 ──────────────────────────────────────────
+
+def build_available_intents_section(intents_cfg: dict) -> str:
+    """构建"可用的意图类型"列表段。
+
+    generic 为固定兜底意图，无论配置 enabled 与否始终列出第一行；
+    其余意图仅列出配置中 enabled 的意图（含用户新增意图）。
+    """
+    generic_cfg = intents_cfg.get(GENERIC_INTENT_ID) or {}
+    lines = [
+        f"- `{GENERIC_INTENT_ID}`: {generic_cfg.get('name') or GENERIC_INTENT_NAME}"
+        f" — {generic_cfg.get('description') or GENERIC_INTENT_DESC}"
+    ]
+    for intent_id, cfg in intents_cfg.items():
+        if intent_id == GENERIC_INTENT_ID:
+            continue
+        if not (cfg or {}).get("enabled", True):
+            continue
+        name = cfg.get("name") or intent_id
+        desc = cfg.get("description")
+        if desc:
+            lines.append(f"- `{intent_id}`: {name} — {desc}")
+        else:
+            lines.append(f"- `{intent_id}`: {name}")
+    return "\n".join(lines)
+
+
+def build_planning_guidance_sections(intents_cfg: dict) -> str:
+    """构建 auto 模式下的意图领域指引段（仅使用配置的 planning_prompt）。
+
+    内置意图的代码领域段（DOMAIN_SECTIONS）含"意图已确定为"表述，仅供
+    forced 模式使用；auto 模式下依赖配置的 planning_prompt（中性表述）
+    提供指引，未配置该字段的意图无指引段。
+    """
+    sections = []
+    for intent_id, cfg in intents_cfg.items():
+        if not cfg:
+            continue
+        if intent_id != GENERIC_INTENT_ID and not cfg.get("enabled", True):
+            continue
+        prompt = (cfg.get("planning_prompt") or "").strip()
+        if not prompt:
+            continue
+        name = cfg.get("name") or intent_id
+        sections.append(
+            f"## 领域指引（当规划意图为 `{intent_id}`（{name}）的任务时适用）\n\n{prompt}"
+        )
+    return "\n\n".join(sections)
+
+
+def _enabled_intent_ids(intents_cfg: dict) -> list:
+    """返回 generic + 配置中 enabled 的意图 ID 列表（generic 固定在最前）。
+
+    供 build_intent_enum / build_intent_types_list 复用，保证各占位符
+    的意图枚举口径一致。
+    """
+    ids = [GENERIC_INTENT_ID]
+    for intent_id, cfg in intents_cfg.items():
+        if intent_id == GENERIC_INTENT_ID:
+            continue
+        if (cfg or {}).get("enabled", True):
+            ids.append(intent_id)
+    return ids
+
+
+def build_intent_enum(intents_cfg: dict) -> str:
+    """构建 USER_PROMPT_TASK_PLANNING 中 intent_type 字段的取值枚举。
+
+    generic 固定在最前，其后为配置中 enabled 的意图。
+    """
+    return " | ".join(_enabled_intent_ids(intents_cfg))
+
+
+def build_intent_types_list(intents_cfg: dict) -> str:
+    """构建 SYSTEM_PROMPT_TASK_PLANNING 意图分类说明中的意图类型列举。
+
+    仅 generic 为固定兜底意图，其余（ppt / coding / 用户新增意图）均
+    从配置动态获取，仅列出 enabled 的意图；新增或删除意图时自动同步。
+    """
+    return " / ".join(_enabled_intent_ids(intents_cfg))
+
+
+def build_planning_guidelines(intents_cfg: dict, forced_intent: str = "") -> str:
+    """构建"核心工作"编号列表整段文本。
+
+    forced 模式返回 PLANNING_GUIDELINES_FORCED（意图已确定，无意图分类
+    条目）；auto 模式返回 PLANNING_GUIDELINES_AUTO 并注入 {intent_types}
+    占位符（意图枚举从配置动态生成）。
+    """
+    if forced_intent:
+        return PLANNING_GUIDELINES_FORCED
+    return PLANNING_GUIDELINES_AUTO.replace(
+        "{intent_types}", build_intent_types_list(intents_cfg)
+    )
+
+
+def _build_domain_section(intents_cfg: dict, forced_intent: str = "") -> str:
+    """构建注入 {domain_section} 占位符的领域指引段（空串则不产生该段）。
+
+    - forced 模式：目标意图配置了非空 planning_prompt 时使用配置内容（中性
+      表述，由本函数补充"意图已确定为"声明）；未配置则回退内置 DOMAIN_SECTIONS；
+      两者皆无（如未知意图）返回空串
+    - auto 模式：拼接全部可用意图配置的 planning_prompt 指引段（无配置则为空）
+    """
+    if forced_intent:
+        cfg = intents_cfg.get(forced_intent) or {}
+        configured = (cfg.get("planning_prompt") or "").strip()
+        if configured:
+            name = cfg.get("name") or forced_intent
+            return (
+                f"## 当前请求意图已确定为: **{forced_intent}**（{name}）\n\n"
+                f"{configured}"
+            )
+        return DOMAIN_SECTIONS.get(forced_intent, "")
+    return build_planning_guidance_sections(intents_cfg)
+
+
+def build_system_prompt_task_planning(
+    intents_cfg: dict,
+    forced_intent: str = "",
+    tools: Optional[List[ToolDefinition]] = None,
+) -> str:
+    """构建任务规划阶段 system prompt（仅做占位符替换，不做字符串拼接）。
+
+    模板 SYSTEM_PROMPT_TASK_PLANNING 的五个占位符依次替换：
+    - {planning_guidelines} / {ask_user_rules}：核心工作列表 / 提问决策规则
+    - {intent_catalog_section}：可用意图列表段（仅 auto 模式注入，forced 为空）
+    - {domain_section}：领域指引段，由 _build_domain_section 按模式生成
+    - {available_tools}：可用工具列表段（tools 为空或 None 时不注入）
+
+    intents_cfg: Helix.json 中的 intents.* 配置（dict，允许为空）
+    forced_intent: 强制指定意图时传入（如 "ppt"）；为空表示自动识别。
+        - forced: 不注入意图分类说明与可用意图列表；领域指引段优先取配置的
+          planning_prompt（中性表述，由本函数补充"意图已确定为"声明），
+          未配置则回退内置 DOMAIN_SECTIONS
+        - auto: 注入意图分类说明、可用意图列表，以及全部可用意图的
+          配置 planning_prompt 指引段
+    """
+    return SYSTEM_PROMPT_TASK_PLANNING.replace(
+        "{ask_user_rules}", ASK_USER_RULES
+    ).replace(
+        "{planning_guidelines}", build_planning_guidelines(intents_cfg, forced_intent)
+    ).replace(
+        "{intent_catalog_section}",
+        ""
+        if forced_intent
+        else f"\n## 可用的意图类型\n{build_available_intents_section(intents_cfg)}\n",
+    ).replace(
+        "{domain_section}", _build_domain_section(intents_cfg, forced_intent),
+    ).replace(
+        "{available_tools}", format_tools_section(tools) if tools else "",
+    )

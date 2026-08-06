@@ -167,9 +167,8 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── app/                   #   应用层
 │   │   └── routes.py          #     Flask 路由 (JSON-RPC API + Admin + Web UI)
 │   ├── prompts/               #   提示词模板
-│   │   ├── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结)
+│   │   ├── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结，含通用任务意图)
 │   │   ├── ppt_prompts.py     #     PPT 生成提示词
-│   │   ├── research_prompts.py #     搜索研究提示词
 │   │   └── coding_prompts.py  #     代码生成提示词
 │   ├── config/                #   配置管理
 │   │   └── config_manager.py  #     配置管理器 (单例/线程安全)
@@ -241,7 +240,7 @@ from modules.agents.tool_base import BaseTool
 class MyTool(BaseTool):
     name = "my_tool"
     description = "工具说明，LLM 根据此描述决定是否调用"
-    intents = ["research"]  # 绑定意图，["*"] 表示所有意图可用
+    intents = ["generic"]  # 绑定意图，["*"] 表示所有意图可用
     parameters = {
         "type": "object",
         "properties": {"query": {"type": "string", "description": "参数说明"}},

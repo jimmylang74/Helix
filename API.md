@@ -64,7 +64,7 @@ POST /api/rpc
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | request | string | ✅ | 用户请求内容 |
-| intent | string | | auto / ppt / research / coding (默认 auto) |
+| intent | string | | auto / 任意已注册意图 ID，如 generic / ppt / coding (默认 auto) |
 | rpc_id | string | | 前端追踪ID（如 `rpc_xxx`），后端自动映射为内部 `req_id`，便于前端跨页面导航恢复状态 |
 | stream | bool | | 是否流式返回 (默认 false) |
 
@@ -73,7 +73,7 @@ POST /api/rpc
 {
     "success": true,
     "request_id": "req_abc123def456",
-    "intent_type": "research",
+    "intent_type": "generic",
     "final_result": "处理结果摘要...",
     "generated_files": ["output/presentation_20241201_120000.pptx"],
     "todos_completed": 3,
@@ -95,7 +95,7 @@ POST /api/rpc
 ```json
 {
     "request_id": "req_abc123def456",
-    "intent_type": "research",
+    "intent_type": "generic",
     "orchestrator_phase": "todo_loop",
     "todo_progress": "...",
     "current_todo": "搜索和分析数据",
@@ -424,7 +424,7 @@ def rpc_call(method, params=None, req_id="1"):
 # 发送请求
 result = rpc_call("agent/router", {
     "request": "搜索Python FastAPI教程",
-    "intent": "research",
+    "intent": "generic",
     "rpc_id": "rpc_py001"
 })
 print(result["result"]["final_result"])

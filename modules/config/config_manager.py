@@ -44,8 +44,9 @@ class ConfigManager:
                 # Migrate: service_port → rpc_port
                 if "server" in self._data and "service_port" in self._data["server"]:
                     self._data["server"]["rpc_port"] = self._data["server"].pop("service_port")
+                # Migrate: research intent → generic（一般任务兜底意图）
+                changed = self._migrate_research_to_generic()
                 defaults = self._defaults()
-                changed = False
                 for key, val in defaults.items():
                     if key not in self._data:
                         self._data[key] = val
@@ -62,6 +63,41 @@ class ConfigManager:
         else:
             self._data = self._defaults()
             self._save()
+
+    def _migrate_research_to_generic(self) -> bool:
+        """Migrate legacy 'research' intent references to 'generic'.
+
+        research 意图已更名/扩展为 generic（一般任务兜底意图）。迁移范围：
+        - intents.research → intents.generic（保留原 name/description，用户可自行修改）
+        - plugins.*.intents 与 mcp_servers.*.intent_categories 列表中的
+          "research" → "generic"
+
+        返回是否发生变更。
+        """
+        changed = False
+
+        intents = self._data.get("intents")
+        if isinstance(intents, dict) and "research" in intents and "generic" not in intents:
+            intents["generic"] = intents.pop("research")
+            changed = True
+
+        for key in ("plugins", "mcp_servers"):
+            section = self._data.get(key)
+            if not isinstance(section, dict):
+                continue
+            for cfg in section.values():
+                if not isinstance(cfg, dict):
+                    continue
+                for field in ("intents", "intent_categories"):
+                    items = cfg.get(field)
+                    if isinstance(items, list):
+                        new_items = [
+                            "generic" if i == "research" else i for i in items
+                        ]
+                        if new_items != items:
+                            cfg[field] = new_items
+                            changed = True
+        return changed
 
     def _defaults(self) -> Dict[str, Any]:
         return {
@@ -102,10 +138,10 @@ class ConfigManager:
                     "name": "PPT Generation",
                     "description": "Generate PPT layouts, backgrounds and content based on user-provided materials"
                 },
-                "research": {
+                "generic": {
                     "enabled": True,
-                    "name": "Smart Search",
-                    "description": "Search the web, filter and refine content to provide a final answer"
+                    "name": "Generic Task",
+                    "description": "Answer general questions and handle general tasks, using tools such as web search when needed"
                 },
                 "coding": {
                     "enabled": True,
@@ -119,7 +155,7 @@ class ConfigManager:
                     "enabled": True,
                     "command": "python3",
                     "args": ["mcp/searxng_server.py"],
-                    "intent_categories": ["research"],
+                    "intent_categories": ["generic"],
                     "env": {
                         "SEARXNG_BASE_URL": "http://localhost:8888",
                         "SEARXNG_MAX_RESULTS": "10"
@@ -130,7 +166,7 @@ class ConfigManager:
                     "enabled": True,
                     "command": "python3",
                     "args": ["mcp/image_search_server.py"],
-                    "intent_categories": ["ppt", "research"],
+                    "intent_categories": ["ppt", "generic"],
                     "env": {
                         "IMAGE_PROVIDER": "pexels",
                         "PEXELS_API_KEY": "",

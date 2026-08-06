@@ -83,14 +83,6 @@ class _StdoutEventEmitter:
 
 
 @dataclass
-class ToolDefinition:
-    """Tool definition for LLM function calling."""
-    name: str
-    description: str
-    parameters: Dict[str, Any]
-
-
-@dataclass
 class LLMResponse:
     """Structured LLM response."""
     content: str
@@ -149,18 +141,14 @@ class LLMClient:
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
-        tools: Optional[List[ToolDefinition]] = None,
         temperature: Optional[float] = None,
         top_p: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Send prompt and expect a JSON document.
 
-        If ``tools`` is given, the tool catalog is injected into the system
-        prompt as context so the LLM can reference real tool names — but the
-        response contract stays a JSON document (no tool-calling channel).
+        The system prompt must be fully assembled by the caller (including
+        any tool catalog); this client only transports messages to the engine.
         """
-        if tools:
-            system_prompt = f"{system_prompt or ''}\n\n{self.format_tools_section(tools)}"
         response = self.chat(
             prompt=prompt,
             system_prompt=system_prompt,
@@ -173,7 +161,6 @@ class LLMClient:
     def ask_with_tools(
         self,
         prompt: str,
-        tools: List[ToolDefinition],
         system_prompt: Optional[str] = None,
         context_messages: Optional[List[Dict[str, str]]] = None,
         emit_stream: bool = True,
@@ -182,8 +169,9 @@ class LLMClient:
     ) -> LLMResponse:
         """Chat with tool-calling support via JSON-based protocol.
 
-        Tool descriptions are injected into the system prompt so the LLM
-        can respond with ``{"tool_calls": [...]}`` when appropriate.
+        The system prompt must already contain the tool catalog (injected by
+        the prompts layer); the LLM responds with ``{"tool_calls": [...]}``
+        when appropriate.
 
         Args:
             emit_stream: Whether to emit LLM streaming events to frontend.
@@ -191,15 +179,9 @@ class LLMClient:
             temperature/top_p: Optional sampling overrides. When None the
                          global llm config defaults are used.
         """
-        # Build combined system prompt with tool descriptions
-        combined_system = (
-            f"{system_prompt or ''}\n\n"
-            f"{self.format_tools_section(tools, heading='Available tools (respond with JSON that includes tool_calls if needed):')}"
-        )
-
         messages: List[Dict[str, str]] = []
-        if combined_system:
-            messages.append({"role": "system", "content": combined_system})
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
         if context_messages:
             messages.extend(m for m in context_messages if m.get("content"))
         messages.append({"role": "user", "content": prompt})
@@ -211,20 +193,6 @@ class LLMClient:
             temperature=temperature,
             top_p=top_p,
         )
-
-    @staticmethod
-    def format_tools_section(
-        tools: List[ToolDefinition],
-        heading: str = "## Available Tools",
-    ) -> str:
-        """Format tool definitions as a prompt block: heading + one entry per tool."""
-        parts = [heading]
-        for t in tools:
-            parts.append(f"- {t.name}: {t.description}")
-            parts.append(
-                f"  Parameters: {json.dumps(t.parameters, ensure_ascii=False)}"
-            )
-        return "\n".join(parts)
 
     def refresh(self):
         """Re-read configuration (call after config change)."""

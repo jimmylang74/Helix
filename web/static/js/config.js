@@ -217,18 +217,23 @@ async function loadIntents() {
     if (entries.length === 0) {
         tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('config.intents.none') + '</td></tr>';
     } else {
-        tbody.innerHTML = entries.map(([id, intent]) => `
+        tbody.innerHTML = entries.map(([id, intent]) => {
+            const isFixed = id === 'generic';
+            const actions = isFixed
+                ? `<button class="btn btn-sm btn-outline" onclick="openEditIntent('${id}')">${__('config.intents.editLabel')}</button>
+                   <span class="badge badge-secondary">${__('config.intents.fixed')}</span>`
+                : `<button class="btn btn-sm btn-outline" onclick="openEditIntent('${id}')">${__('config.intents.editLabel')}</button>
+                   <button class="btn btn-sm btn-outline" onclick="toggleIntent('${id}')">${intent.enabled ? __('config.intents.disable') : __('config.intents.enable')}</button>
+                   <button class="btn btn-sm btn-danger" onclick="deleteIntent('${id}')">${__('config.intents.deleteLabel')}</button>`;
+            return `
             <tr>
                 <td><code>${id}</code></td>
                 <td>${intent.name || id}</td>
                 <td>${intent.description || '-'}</td>
                 <td><span class="badge ${intent.enabled ? 'badge-success' : 'badge-danger'}">${intent.enabled ? __('config.intents.enabled') : __('config.intents.disabled')}</span></td>
-                <td>
-                    <button class="btn btn-sm btn-outline" onclick="toggleIntent('${id}')">${intent.enabled ? __('config.intents.disable') : __('config.intents.enable')}</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteIntent('${id}')">${__('config.intents.deleteLabel')}</button>
-                </td>
-            </tr>
-        `).join('');
+                <td>${actions}</td>
+            </tr>`;
+        }).join('');
     }
     renderIntentCheckboxes();
 }
@@ -622,6 +627,45 @@ async function deleteIntent(intentId) {
     else { showToast(__('config.intents.deleteFailed'), 'error'); }
 }
 
+let editingIntentId = null;
+
+function openEditIntent(intentId) {
+    editingIntentId = intentId;
+    const intent = registeredIntents[intentId] || {};
+    document.getElementById('editIntentId').textContent = intentId;
+    document.getElementById('editIntentName').value = intent.name || '';
+    document.getElementById('editIntentDesc').value = intent.description || '';
+    document.getElementById('editIntentPlanningPrompt').value = intent.planning_prompt || '';
+    document.getElementById('editIntentNodePrompt').value = intent.node_prompt || '';
+    document.getElementById('intentEditModal').style.display = 'flex';
+}
+
+function closeEditIntentModal() {
+    document.getElementById('intentEditModal').style.display = 'none';
+}
+
+async function saveEditIntent() {
+    const id = editingIntentId;
+    const name = document.getElementById('editIntentName').value.trim();
+    if (!name) { showToast(__('config.intents.regRequired'), 'error'); return; }
+    const params = {
+        intent_type: id,
+        enabled: registeredIntents[id]?.enabled !== false,
+        name,
+        description: document.getElementById('editIntentDesc').value.trim(),
+    };
+    const planningPrompt = document.getElementById('editIntentPlanningPrompt').value.trim();
+    if (planningPrompt) params.planning_prompt = planningPrompt;
+    const nodePrompt = document.getElementById('editIntentNodePrompt').value.trim();
+    if (nodePrompt) params.node_prompt = nodePrompt;
+    const result = await apiCall('intents.update', params);
+    if (result.success) {
+        closeEditIntentModal();
+        loadIntents();
+        showToast(__('config.intents.editSuccess'), 'success');
+    } else { showToast(__('config.intents.editFailed'), 'error'); }
+}
+
 async function registerIntent() {
     const id = document.getElementById('newIntentId').value.trim();
     const name = document.getElementById('newIntentName').value.trim();
@@ -631,12 +675,19 @@ async function registerIntent() {
     if (intentsResult.success && intentsResult.intents?.[id]) {
         showToast(__('config.intents.idExists'), 'error'); return;
     }
-    const result = await apiCall('intents.update', { intent_type: id, enabled: true, name, description: desc });
+    const params = { intent_type: id, enabled: true, name, description: desc };
+    const planningPrompt = document.getElementById('newIntentPlanningPrompt').value.trim();
+    if (planningPrompt) params.planning_prompt = planningPrompt;
+    const nodePrompt = document.getElementById('newIntentNodePrompt').value.trim();
+    if (nodePrompt) params.node_prompt = nodePrompt;
+    const result = await apiCall('intents.update', params);
     if (result.success) {
         showToast(__('config.intents.regSuccess'), 'success');
         document.getElementById('newIntentId').value = '';
         document.getElementById('newIntentName').value = '';
         document.getElementById('newIntentDesc').value = '';
+        document.getElementById('newIntentPlanningPrompt').value = '';
+        document.getElementById('newIntentNodePrompt').value = '';
         loadIntents();
     } else { showToast(__('config.intents.regFailed'), 'error'); }
 }

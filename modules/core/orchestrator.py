@@ -19,20 +19,21 @@ from modules.core.agent_state import (
     AgentState, create_initial_state
 )
 from modules.core.task_graph import TaskGraph, NodeState
-from modules.agents.tool_base import tool_registry
-from modules.llm.llm_client import LLMClient, LLMResponse, ToolDefinition
+from modules.agents.tool_base import tool_registry, ToolDefinition
+from modules.llm.llm_client import LLMClient, LLMResponse
 from modules.prompts.task_graph_prompts import (
-    SYSTEM_PROMPT_TASK_PLANNING,
     USER_PROMPT_TASK_PLANNING,
     SYSTEM_PROMPT_FINALIZER,
     USER_PROMPT_FINALIZER,
     get_node_system_prompt,
     USER_PROMPT_NODE_EXECUTION,
+    build_system_prompt_task_planning,
+    build_intent_enum,
+    GENERIC_INTENT_ID,
+    ASK_USER_RULES,
+    COMMON_JSON_CONTRACT,
 )
-from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
-from modules.prompts.research_prompts import DOMAIN_SECTION_RESEARCH
-from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
-from modules.prompts.common_prompt import ASK_USER_RULES, COMMON_JSON_CONTRACT
+from modules.agents.intent_router import intent_router
 from modules.utils.logger import (
     log_orchestrator, log_agent_action, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -213,17 +214,21 @@ class AgentOrchestrator:
 
         # 注入可用工具列表，让 LLM 在拆分节点时只选择真实存在的工具
         tool_definitions = self._build_tool_definitions()
-        tools_section = LLMClient.format_tools_section(tool_definitions)
+
+        # 意图配置（Helix.json intents.*），用于动态注入规划提示词的意图列表
+        intents_cfg = ConfigManager().get("intents", {}) or {}
 
         forced_intent = state.get("forced_intent", "auto")
         if forced_intent != "auto":
             # 已知 intent，直接用对应 system prompt 规划
-            system_prompt = self._get_system_prompt(forced_intent)
+            system_prompt = self._get_system_prompt(
+                forced_intent, intents_cfg, tool_definitions
+            )
             log_agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
         else:
             # 规划 system prompt 内含 JSON 示例的裸花括号，不能用 .format()，用占位符替换
-            system_prompt = SYSTEM_PROMPT_TASK_PLANNING.replace(
-                "{ask_user_rules}", ASK_USER_RULES
+            system_prompt = build_system_prompt_task_planning(
+                intents_cfg, tools=tool_definitions
             )
             log_agent_to_llm("Sending request to LLM for task planning...")
 
@@ -235,11 +240,12 @@ class AgentOrchestrator:
             user_prompt = USER_PROMPT_TASK_PLANNING.format(
                 user_request=planning_context,
                 json_contract=COMMON_JSON_CONTRACT,
+                intent_enum=build_intent_enum(intents_cfg),
             )
 
             # 检查 token 预算
             if not self._check_token_budget(
-                state["request_id"], system_prompt, user_prompt, tools_section
+                state["request_id"], system_prompt, user_prompt
             ):
                 state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
                 log_error(state["error"])
@@ -248,14 +254,13 @@ class AgentOrchestrator:
             response = self.llm.ask_json(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
-                tools=tool_definitions,
                 temperature=planning_sampling["temperature"],
                 top_p=planning_sampling["top_p"],
             )
 
             self._record_usage(
                 state,
-                f"{system_prompt}\n\n{tools_section}\n\n{user_prompt}",
+                f"{system_prompt}\n\n{user_prompt}",
                 json.dumps(response, ensure_ascii=False),
             )
 
@@ -285,9 +290,9 @@ class AgentOrchestrator:
         if forced_intent != "auto":
             intent_type = forced_intent
         else:
-            intent_type = response.get("intent_type", "research")
-            if intent_type not in ("ppt", "research", "coding"):
-                intent_type = "research"
+            intent_type = response.get("intent_type", GENERIC_INTENT_ID)
+            if intent_type not in intent_router.get_enabled_intent_ids():
+                intent_type = GENERIC_INTENT_ID
 
         state["intent_type"] = intent_type
         log_llm_decision(f"Intent: {intent_type}")
@@ -437,17 +442,13 @@ class AgentOrchestrator:
         # 使工具（如 ask_user）能通过 get_request_context 拿到 request_id
         set_request_context(request_id)
         tool_definitions = self._build_tool_definitions()
-        system_prompt = get_node_system_prompt(state["intent_type"])
-        execution_sampling = ConfigManager().get_graph_sampling("execution")
-        # ask_with_tools 会把 tools 段追加进 system prompt 一起发送（见
-        # llm_client.ask_with_tools），预算检查必须把这段计入输入 token。
-        tools_section = LLMClient.format_tools_section(
-            tool_definitions,
-            heading=(
-                "Available tools (respond with JSON that includes "
-                "tool_calls if needed):"
-            ),
+        intents_cfg = ConfigManager().get("intents", {}) or {}
+        # 可用工具列表由 get_node_system_prompt 注入 {available_tools} 占位符，
+        # 已包含在 system_prompt 内，预算检查直接按 system_prompt 计算。
+        system_prompt = get_node_system_prompt(
+            state["intent_type"], intents_cfg, tools=tool_definitions
         )
+        execution_sampling = ConfigManager().get_graph_sampling("execution")
 
         # 重置节点的 conversation history
         node.node_conversation_history = []
@@ -495,11 +496,10 @@ class AgentOrchestrator:
                 json_contract=COMMON_JSON_CONTRACT,
             )
 
-            # 检查 token 预算：system_prompt(+tools_section) + 完整 user_prompt
+            # 检查 token 预算：system_prompt（含可用工具段）+ 完整 user_prompt
             if not self._check_token_budget(
                 request_id,
                 system_prompt,
-                tools_section,
                 user_prompt,
             ):
                 err = f"Node {node.id}: prompt exceeds max_input_tokens limit"
@@ -512,10 +512,9 @@ class AgentOrchestrator:
                 f"{'(streaming)' if emit_stream else '(silent)'}..."
             )
 
-            # 调用 LLM（带工具）
+            # 调用 LLM（带工具）；工具列表已由 get_node_system_prompt 注入 system_prompt
             llm_response = self.llm.ask_with_tools(
                 prompt=user_prompt,
-                tools=tool_definitions,
                 system_prompt=system_prompt,
                 emit_stream=emit_stream,
                 temperature=execution_sampling["temperature"],
@@ -697,19 +696,16 @@ class AgentOrchestrator:
         with self._stream_lock:
             self._stream_node_id.pop(request_id, None)
 
-    def _get_system_prompt(self, intent_type: str) -> str:
-        domain_sections = {
-            "ppt": DOMAIN_SECTION_PPT,
-            "research": DOMAIN_SECTION_RESEARCH,
-            "coding": DOMAIN_SECTION_CODING,
-        }
-        base = SYSTEM_PROMPT_TASK_PLANNING.replace(
-            "{ask_user_rules}", ASK_USER_RULES
+    def _get_system_prompt(
+        self,
+        intent_type: str,
+        intents_cfg: dict,
+        tools: Optional[List[ToolDefinition]] = None,
+    ) -> str:
+        """构建强制指定意图时的规划 system prompt（动态意图列表 + 领域指引）。"""
+        return build_system_prompt_task_planning(
+            intents_cfg, forced_intent=intent_type, tools=tools
         )
-        domain = domain_sections.get(intent_type, "")
-        if not domain:
-            return base
-        return f"{base}\n\n{domain}"
 
     def _build_tool_definitions(self) -> List[ToolDefinition]:
         tool_definitions = []

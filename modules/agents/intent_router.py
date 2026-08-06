@@ -7,6 +7,7 @@ Pre-registered templates with admin configurable settings.
 import json
 from typing import Any, Dict, Optional
 from modules.config.config_manager import ConfigManager
+from modules.prompts.task_graph_prompts import GENERIC_INTENT_ID
 from modules.utils.logger import log_agent_action, log_llm_decision, log_error, log_info
 
 
@@ -44,8 +45,14 @@ class IntentRouter:
             return False
 
     def update_intent(self, intent_type: str, data: Dict[str, Any]) -> bool:
-        """Update an existing intent."""
+        """Update an existing intent.
+
+        generic 为固定兜底意图，禁止禁用（enabled 恒为 True）。
+        """
         try:
+            if intent_type == GENERIC_INTENT_ID:
+                data = dict(data)
+                data["enabled"] = True
             self.config.set(f"intents.{intent_type}", data)
             log_info(f"Intent updated: {intent_type}")
             return True
@@ -54,8 +61,11 @@ class IntentRouter:
             return False
 
     def delete_intent(self, intent_type: str) -> bool:
-        """Delete an intent."""
+        """Delete an intent. generic 为固定兜底意图，禁止删除。"""
         try:
+            if intent_type == GENERIC_INTENT_ID:
+                log_error(f"Refused to delete fixed intent: {intent_type}")
+                return False
             intents = self.config.get("intents", {})
             if intent_type in intents:
                 del intents[intent_type]
@@ -74,6 +84,16 @@ class IntentRouter:
             k: v for k, v in intents.items()
             if v.get("enabled", True)
         }
+
+    def get_enabled_intent_ids(self) -> set:
+        """Get set of enabled intent IDs (generic always included)."""
+        intents = self.config.get("intents", {})
+        ids = {GENERIC_INTENT_ID}
+        ids.update(
+            i for i, c in intents.items()
+            if i != GENERIC_INTENT_ID and c.get("enabled", True)
+        )
+        return ids
 
 
 

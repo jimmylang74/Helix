@@ -44,8 +44,14 @@ class ConfigManager:
                 # Migrate: service_port → rpc_port
                 if "server" in self._data and "service_port" in self._data["server"]:
                     self._data["server"]["rpc_port"] = self._data["server"].pop("service_port")
-                # Migrate: research intent → generic（一般任务兜底意图）
-                changed = self._migrate_research_to_generic()
+                # Cleanup: generic 为固定内部意图，不写入配置文件（遗留配置可能残留）
+                changed = False
+                intents = self._data.get("intents")
+                if isinstance(intents, dict) and "generic" in intents:
+                    del intents["generic"]
+                    changed = True
+                # Migrate: 内置意图提示词迁入配置后，为已存在意图补缺提示词字段
+                changed = self._migrate_intent_prompts() or changed
                 defaults = self._defaults()
                 for key, val in defaults.items():
                     if key not in self._data:
@@ -64,39 +70,28 @@ class ConfigManager:
             self._data = self._defaults()
             self._save()
 
-    def _migrate_research_to_generic(self) -> bool:
-        """Migrate legacy 'research' intent references to 'generic'.
+    def _migrate_intent_prompts(self) -> bool:
+        """为已存在的内置意图（ppt/coding）补缺提示词字段。
 
-        research 意图已更名/扩展为 generic（一般任务兜底意图）。迁移范围：
-        - intents.research → intents.generic（保留原 name/description，用户可自行修改）
-        - plugins.*.intents 与 mcp_servers.*.intent_categories 列表中的
-          "research" → "generic"
+        ppt/coding 的提示词已从代码迁入配置（intents.*.planning_prompt /
+        node_prompt / finalizer_prompt）。对配置中已存在但缺少这些字段的
+        意图，按工厂默认值逐字段补缺（不覆盖用户已修改的字段）。
 
         返回是否发生变更。
         """
         changed = False
-
+        seed_intents = self._defaults().get("intents", {})
         intents = self._data.get("intents")
-        if isinstance(intents, dict) and "research" in intents and "generic" not in intents:
-            intents["generic"] = intents.pop("research")
-            changed = True
-
-        for key in ("plugins", "mcp_servers"):
-            section = self._data.get(key)
-            if not isinstance(section, dict):
+        if not isinstance(intents, dict):
+            return False
+        for intent_id, seed in seed_intents.items():
+            cur = intents.get(intent_id)
+            if not isinstance(cur, dict):
                 continue
-            for cfg in section.values():
-                if not isinstance(cfg, dict):
-                    continue
-                for field in ("intents", "intent_categories"):
-                    items = cfg.get(field)
-                    if isinstance(items, list):
-                        new_items = [
-                            "generic" if i == "research" else i for i in items
-                        ]
-                        if new_items != items:
-                            cfg[field] = new_items
-                            changed = True
+            for field, value in seed.items():
+                if field not in cur or cur[field] in (None, ""):
+                    cur[field] = value
+                    changed = True
         return changed
 
     def _defaults(self) -> Dict[str, Any]:
@@ -136,17 +131,95 @@ class ConfigManager:
                 "ppt": {
                     "enabled": True,
                     "name": "PPT Generation",
-                    "description": "Generate PPT layouts, backgrounds and content based on user-provided materials"
-                },
-                "generic": {
-                    "enabled": True,
-                    "name": "Generic Task",
-                    "description": "Answer general questions and handle general tasks, using tools such as web search when needed"
+                    "description": "Generate PPT layouts, backgrounds and content based on user-provided materials",
+                    "planning_prompt": (
+                        "你是资深 PPT 内容策划与设计专家,负责为任务分解提供领域指导。\n"
+                        "\n"
+                        "### 领域任务分解指引\n"
+                        "- PPT 任务通常拆解为多个节点:内容结构规划 → 分章节内容撰写 → 图片素材(image_search)→ PPT 生成(create_ppt)\n"
+                        "- 最终成品的生成节点必须使用 `create_ppt` 工具产出实际 .pptx 文件\n"
+                        "- 图片素材需求使用 `image_search` 工具搜索\n"
+                        "- 内容节点应产出结构清晰、可直接交给 create_ppt 的文本\n"
+                        "\n"
+                        "### 强制约束\n"
+                        "- 你负责的是任务规划,不是直接产出成品。禁止直接输出幻灯片内容或设计方案来替代节点图\n"
+                        "- `task_complete` 仅在问题完全不需要任何工具时可设为 true;PPT 生成任务必须包含调用 `create_ppt` 的节点,不得短路\n"
+                        "- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造"
+                    ),
+                    "node_prompt": (
+                        "# PPT Node Execution Agent\n"
+                        "\n"
+                        "你是 PPT 生成 Agent。当前正在执行任务图中的一个节点。\n"
+                        "\n"
+                        "## 你的工作方式\n"
+                        "1. 根据当前节点的任务描述完成任务\n"
+                        "2. 涉及 PPT 创建的节点使用 create_ppt 等工具\n"
+                        "3. 图片搜索使用 image_search 工具\n"
+                        "4. 一次尽可能多地返回需要调用的工具列表\n"
+                        "\n"
+                        "## 设计准则\n"
+                        "- 专业简洁的布局\n"
+                        "- 一致的视觉层次\n"
+                        "- 可读性好的排版\n"
+                        "\n"
+                        "{available_tools}\n"
+                        "\n"
+                        "## 提问决策规则\n"
+                        "{ask_user_rules}"
+                    ),
+                    "finalizer_prompt": (
+                        "# AI Agent — Task Finalizer\n"
+                        "\n"
+                        "你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。\n"
+                        "\n"
+                        "- PPT 任务：输出一个结构清晰的 PPT 设计说明"
+                    ),
                 },
                 "coding": {
                     "enabled": True,
                     "name": "Code Generation",
-                    "description": "Generate code based on user requirements with basic testing and validation"
+                    "description": "Generate code based on user requirements with basic testing and validation",
+                    "planning_prompt": (
+                        "你是资深软件架构师,负责为任务分解提供领域指导。\n"
+                        "\n"
+                        "### 领域任务分解指引\n"
+                        "- 编码任务通常拆解为多个节点:需求分析 → 代码实现 → 测试验证 → 文件保存\n"
+                        "- 代码保存使用 `save_code` 工具,运行验证使用 `run_code` 工具,文件操作使用 `write_file`/`read_file`/`bash`\n"
+                        "- 实现节点产出可运行的完整文件,验证节点需给出测试结果\n"
+                        "\n"
+                        "### 强制约束\n"
+                        "- 你负责的是任务规划,不是直接产出代码。禁止直接输出代码或实现方案来替代节点图\n"
+                        "- `task_complete` 仅在问题完全不需要任何工具时可设为 true;编码任务必须包含保存/验证工具调用的节点,不得短路\n"
+                        "- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造"
+                    ),
+                    "node_prompt": (
+                        "# Coding Node Execution Agent\n"
+                        "\n"
+                        "你是高级软件工程师 Agent。当前正在执行任务图中的一个节点。\n"
+                        "\n"
+                        "## 你的工作方式\n"
+                        "1. 根据当前节点的任务描述完成开发工作\n"
+                        "2. 使用 bash/read_file/write_file 等工具\n"
+                        "3. 代码完成后执行测试验证\n"
+                        "4. 一次尽可能多地返回需要调用的工具列表\n"
+                        "\n"
+                        "## 工程标准\n"
+                        "- 写干净、可维护、生产级质量的代码\n"
+                        "- 包含错误处理和边界情况\n"
+                        "- 写完代码后进行测试验证\n"
+                        "\n"
+                        "{available_tools}\n"
+                        "\n"
+                        "## 提问决策规则\n"
+                        "{ask_user_rules}"
+                    ),
+                    "finalizer_prompt": (
+                        "# AI Agent — Task Finalizer\n"
+                        "\n"
+                        "你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。\n"
+                        "\n"
+                        "- 编码任务：输出生成的代码和说明"
+                    ),
                 }
             },
             "mcp_servers": {

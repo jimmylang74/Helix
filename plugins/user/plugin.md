@@ -53,16 +53,16 @@ class MyTool(BaseTool):
 
 ## 意图（Intents）说明
 
-意图决定工具在什么场景下被 LLM 看到。常用意图：
+意图决定工具在什么场景下被 LLM 看到。常见意图：
 
 | 意图 ID | 用途 |
 |---------|------|
-| `coding` | 代码生成与执行 |
 | `generic` | 通用任务（一般问题与事务，必要时搜索） |
-| `ppt` | PPT 生成 |
+| `ppt` | PPT 生成（Helix.json 中注册的示例意图） |
+| `coding` | 代码生成与执行（Helix.json 中注册的示例意图） |
 | `*` | 所有意图均可见（万能工具） |
 
-你也可以自定义意图，只需在 `Helix.json` 的 `intents` 配置中注册即可。
+你也可以自定义意图，只需在 `Helix.json` 的 `intents` 配置中注册即可（含 planning/node/finalizer 各阶段提示词）。
 
 ## execute() 规范
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, TypedDict
 class AgentState(TypedDict, total=False):
     """Main Agent State for the three-phase DAG orchestrator."""
     user_request: str
-    intent_type: str  # "generic", "ppt", "coding" 或配置中注册的其他意图
+    intent_type: str  # 配置中注册的意图 ID（generic 为固定兜底）
     request_id: str
     forced_intent: str
 

@@ -52,7 +52,7 @@ async function initQuickTestPage() {
 }
 
 // Load registered intent types from config and populate the requestType
-// dropdown dynamically (generic/ppt/coding plus any user-registered intents)
+// dropdown dynamically (generic plus any config-registered intents)
 async function loadRequestTypes() {
     const select = document.getElementById('requestType');
     if (!select) return;

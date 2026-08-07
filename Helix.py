@@ -8,7 +8,7 @@ Architecture:
 - Admin web UI on configurable admin port (default: 11556)
 - LangGraph-based dual-loop orchestrator
 - Multi-LLM support (Ollama, OpenAI, Gemini, DeepSeek)
-- Built-in tools: web_search, image_search, PPT generation, coding
+- Built-in tools: web_search, image_search, create_ppt, save_code, bash
 
 Usage:
     python3 Helix.py                        # Run with default config
@@ -36,6 +36,9 @@ from modules.mcp.mcp_registry import registry as mcp_registry
 def create_service_app() -> Flask:
     """Create the main service Flask app."""
     app = Flask(__name__)
+    # 保持 dict 插入序输出 JSON（默认 sort_keys=True 会打乱 intents 等顺序，
+    # 破坏 generic 固定排首位的前端展示保证）
+    app.json.sort_keys = False
     app.register_blueprint(api_bp)
     return app
 
@@ -48,6 +51,9 @@ def create_admin_app() -> Flask:
         static_folder="web/static",
         static_url_path="/static"
     )
+    # 与 service app 一致：保持 dict 插入序，避免 jsonify 默认字母排序
+    # 破坏 intents 等键序敏感响应的顺序保证
+    app.json.sort_keys = False
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
     create_admin_routes(app)

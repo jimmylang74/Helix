@@ -7,17 +7,16 @@ Task Graph Prompts — 三阶段提示词（规划 / 节点执行 / 总结）。
 
 本文件为提示词维护入口，包含：
 - 公共规则（ASK_USER_RULES / COMMON_JSON_CONTRACT，自 common_prompt.py 迁入）
-- 内置意图领域指引（DOMAIN_SECTIONS；generic 自 research_prompts.py 迁入并更名重写，
-  ppt/coding 仍维护在 ppt_prompts.py / coding_prompts.py 中）
+- 内置意图领域指引（DOMAIN_SECTIONS；generic 自 research_prompts.py 迁入并更名重写）
 - 三阶段提示词模板
 
 规划提示词（SYSTEM_PROMPT_TASK_PLANNING）中的意图列表是动态注入的：
 - `generic` 为固定兜底意图，始终出现在列表中（常量 GENERIC_INTENT_* 兜底，
   前后端均禁止删除/禁用）
-- 其余意图（ppt、coding 及用户新增）从 Helix.json 的 intents.* 配置注入，
+- 其余意图（ppt、coding 等，均在 Helix.json 的 intents.* 中配置）从配置注入，
   仅列出 enabled 的意图
 - 每个意图可在 intents.* 中配置 planning_prompt / node_prompt / finalizer_prompt
-  字段覆盖默认提示词
+  字段覆盖默认提示词（ppt/coding 的提示词已全部迁入 Helix.json）
 
 系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则、通过
 {planning_guidelines} 占位符注入核心工作编号列表（auto 模式含意图分类说明，
@@ -32,8 +31,6 @@ DOMAIN_SECTIONS，auto 模式拼接各可用意图配置的 planning_prompt 指�
 import json
 from typing import List, Optional
 
-from modules.prompts.ppt_prompts import DOMAIN_SECTION_PPT
-from modules.prompts.coding_prompts import DOMAIN_SECTION_CODING
 from modules.agents.tool_base import ToolDefinition
 
 # ═══════════════════════════════════════════════════════════════════
@@ -96,10 +93,10 @@ DOMAIN_SECTION_GENERIC = """## 通用任务领域补充
 - `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造
 """
 
+# 内部定义意图仅 generic（固定兜底）；ppt/coding 等其余意图的提示词
+# 全部由 Helix.json 的 intents.* 配置提供（planning_prompt 等字段）。
 DOMAIN_SECTIONS = {
     "generic": DOMAIN_SECTION_GENERIC,
-    "ppt": DOMAIN_SECTION_PPT,
-    "coding": DOMAIN_SECTION_CODING,
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -257,48 +254,6 @@ SYSTEM_PROMPT_NODE_GENERIC = """# Generic Node Execution Agent
 {ask_user_rules}
 """
 
-SYSTEM_PROMPT_NODE_PPT = """# PPT Node Execution Agent
-
-你是 PPT 生成 Agent。当前正在执行任务图中的一个节点。
-
-## 你的工作方式
-1. 根据当前节点的任务描述完成任务
-2. 涉及 PPT 创建的节点使用 create_ppt 等工具
-3. 图片搜索使用 image_search 工具
-4. 一次尽可能多地返回需要调用的工具列表
-
-## 设计准则
-- 专业简洁的布局
-- 一致的视觉层次
-- 可读性好的排版
-
-{available_tools}
-
-## 提问决策规则
-{ask_user_rules}
-"""
-
-SYSTEM_PROMPT_NODE_CODING = """# Coding Node Execution Agent
-
-你是高级软件工程师 Agent。当前正在执行任务图中的一个节点。
-
-## 你的工作方式
-1. 根据当前节点的任务描述完成开发工作
-2. 使用 bash/read_file/write_file 等工具
-3. 代码完成后执行测试验证
-4. 一次尽可能多地返回需要调用的工具列表
-
-## 工程标准
-- 写干净、可维护、生产级质量的代码
-- 包含错误处理和边界情况
-- 写完代码后进行测试验证
-
-{available_tools}
-
-## 提问决策规则
-{ask_user_rules}
-"""
-
 SYSTEM_PROMPT_NODE_DEFAULT = """# AI Agent Node Execution
 
 你是 AI Agent。当前正在执行任务图中的一个节点。
@@ -379,20 +334,6 @@ SYSTEM_PROMPT_FINALIZER_GENERIC = """# AI Agent — Task Finalizer
 - 通用任务：输出完整的研究报告或处理结果
 """
 
-SYSTEM_PROMPT_FINALIZER_PPT = """# AI Agent — Task Finalizer
-
-你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
-
-- PPT 任务：输出一个结构清晰的 PPT 设计说明
-"""
-
-SYSTEM_PROMPT_FINALIZER_CODING = """# AI Agent — Task Finalizer
-
-你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。
-
-- 编码任务：输出生成的代码和说明
-"""
-
 # 兜底总结提示词（未知 / 未配置意图时使用）：仅含通用总结要求，不含意图特化表述
 SYSTEM_PROMPT_FINALIZER = """# AI Agent — Task Finalizer
 
@@ -401,8 +342,6 @@ SYSTEM_PROMPT_FINALIZER = """# AI Agent — Task Finalizer
 
 SYSTEM_PROMPTS_FINALIZER = {
     "generic": SYSTEM_PROMPT_FINALIZER_GENERIC,
-    "ppt": SYSTEM_PROMPT_FINALIZER_PPT,
-    "coding": SYSTEM_PROMPT_FINALIZER_CODING,
 }
 
 USER_PROMPT_FINALIZER = """# Final Summary
@@ -434,8 +373,6 @@ USER_PROMPT_FINALIZER = """# Final Summary
 
 SYSTEM_PROMPTS_NODE = {
     "generic": SYSTEM_PROMPT_NODE_GENERIC,
-    "ppt": SYSTEM_PROMPT_NODE_PPT,
-    "coding": SYSTEM_PROMPT_NODE_CODING,
 }
 
 # ── 可用工具列表段 ──────────────────────────────────────────────
@@ -593,7 +530,7 @@ def build_intent_enum(intents_cfg: dict) -> str:
 def build_intent_types_list(intents_cfg: dict) -> str:
     """构建 SYSTEM_PROMPT_TASK_PLANNING 意图分类说明中的意图类型列举。
 
-    仅 generic 为固定兜底意图，其余（ppt / coding / 用户新增意图）均
+    仅 generic 为固定兜底意图，其余意图（如 ppt、coding 等配置注册的意图）均
     从配置动态获取，仅列出 enabled 的意图；新增或删除意图时自动同步。
     """
     return " / ".join(_enabled_intent_ids(intents_cfg))
@@ -648,7 +585,7 @@ def build_system_prompt_task_planning(
     - {available_tools}：可用工具列表段（tools 为空或 None 时不注入）
 
     intents_cfg: Helix.json 中的 intents.* 配置（dict，允许为空）
-    forced_intent: 强制指定意图时传入（如 "ppt"）；为空表示自动识别。
+    forced_intent: 强制指定意图时传入（如配置中注册的意图 ID）；为空表示自动识别。
         - forced: 不注入意图分类说明与可用意图列表；领域指引段优先取配置的
           planning_prompt（中性表述，由本函数补充"意图已确定为"声明），
           未配置则回退内置 DOMAIN_SECTIONS

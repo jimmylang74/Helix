@@ -2,7 +2,7 @@
 
 ## Overview
 
-AI混合驱动智能服务的JSON-RPC 2.0 API文档。服务提供三种核心Agent能力：PPT生成、智能搜索和代码生成。
+AI混合驱动智能服务的JSON-RPC 2.0 API文档。服务按配置的意图（`Helix.json → intents`）提供 Agent 能力：通用任务、PPT 生成、代码生成等，意图及其各阶段提示词可在配置或 Web 控制台中管理。
 
 **Base URL**: `http://<host>:<rpc_port>`
 **RPC Endpoint**: `POST /api/rpc` (single entry point, method dispatch)
@@ -64,7 +64,7 @@ POST /api/rpc
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | request | string | ✅ | 用户请求内容 |
-| intent | string | | auto / 任意已注册意图 ID，如 generic / ppt / coding (默认 auto) |
+| intent | string | | auto / 任意配置中注册的意图 ID，如 generic / ppt / coding (默认 auto) |
 | rpc_id | string | | 前端追踪ID（如 `rpc_xxx`），后端自动映射为内部 `req_id`，便于前端跨页面导航恢复状态 |
 | stream | bool | | 是否流式返回 (默认 false) |
 

@@ -15,7 +15,7 @@ class CreatePPTTool(BaseTool):
 
     name = "create_ppt"
     description = "Generate a PowerPoint (.pptx) file with slides, backgrounds, and content."
-    intents = ["ppt"]
+    intents = ["*"]
     parameters = {
         "type": "object",
         "properties": {

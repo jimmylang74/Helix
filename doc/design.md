@@ -562,12 +562,11 @@ MCP Server 配置 (Helix.json):
   searxng:                    # 未配置 intent_categories → 匹配所有意图
     intent_categories: []     # (缺省 = 全部意图)
   image_search:
-    intent_categories: ["ppt", "generic"]
+    intent_categories: ["generic"]
 
-调用时:
-  get_tools_for_intent("ppt")      → [web_search, image_search]
-  get_tools_for_intent("coding")   → [web_search]  (searxng 无类别限制)
+调用时 (示例, 意图 ID 来自配置注册):
   get_tools_for_intent("generic")  → [web_search, image_search]
+  get_tools_for_intent("<其它注册意图>") → [web_search]  (searxng 无类别限制)
 ```
 
 ### 6.5 MCP 协议实现
@@ -688,7 +687,7 @@ class BaseTool(ABC):
 
     name: str           # 唯一标识符 (如 "web_fetch_batch")
     description: str    # 人类可读描述 (给 LLM 看)
-    intents: list       # 支持的意图列表 (如 ["ppt", "generic"], ["*"] 表示全部)
+    intents: list       # 支持的意图列表 (如 ["generic"], ["*"] 表示全部)
     parameters: dict    # JSON Schema 参数定义
     source: str         # 来源 (内部插件 / 外部插件 / MCP)
 
@@ -845,7 +844,7 @@ stateDiagram-v2
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `user_request` | str | 用户原始请求 |
-| `intent_type` | str | 意图类型: generic / ppt / coding（或配置中注册的其他意图） |
+| `intent_type` | str | 意图类型: 配置中注册的意图 ID（generic 为固定兜底） |
 | `request_id` | str | 请求唯一标识 |
 | `forced_intent` | str | 强制指定意图（跳过规划中的意图分类） |
 | `urls_to_fetch` | List[str] | 待抓取 URL（工具执行期间收集） |
@@ -908,7 +907,7 @@ graph TB
         S["server<br/>端口/地址/调试<br/>node_parallel_count"]
         L["llm<br/>provider/model/endpoint<br/>api_key/verbose/log_file<br/>max_input_tokens<br/>max_graph_updates"]
         D["default_location<br/>默认输出目录"]
-        I["intents<br/>generic/ppt/coding + 用户注册"]
+        I["intents<br/>generic 兜底 + 配置注册意图<br/>(ppt/coding 示例)"]
         M["mcp_servers<br/>MCP Server 配置"]
         P["plugins<br/>工具启停状态"]
     end

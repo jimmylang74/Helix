@@ -47,7 +47,7 @@
 - **动态任务图**: 执行中 LLM 可更新节点图（`need_update_node`），失败路径自动标记并规避，支持 `max_graph_updates` 次更新
 - **节点级上下文隔离**: 每个节点维护独立的对话历史与工具结果，避免上下文污染；节点间通过 `depends` 依赖传递结果
 - **LLM驱动决策**: LLM负责任务分解、工具调用判断、节点完成判定、结果总结
-- **三种预置Agent**: PPT生成、智能搜索、代码生成（按 intent 使用对应的规划与节点执行提示词）
+- **配置化意图体系**: 内置 generic 兜底意图，PPT 生成、代码生成等意图在 `Helix.json` 中配置（含规划/节点执行/总结各阶段提示词），可通过 Web 控制台动态增改
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
@@ -167,9 +167,7 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── app/                   #   应用层
 │   │   └── routes.py          #     Flask 路由 (JSON-RPC API + Admin + Web UI)
 │   ├── prompts/               #   提示词模板
-│   │   ├── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结，含通用任务意图)
-│   │   ├── ppt_prompts.py     #     PPT 生成提示词
-│   │   └── coding_prompts.py  #     代码生成提示词
+│   │   └── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结，generic 兜底)
 │   ├── config/                #   配置管理
 │   │   └── config_manager.py  #     配置管理器 (单例/线程安全)
 │   └── utils/                 #   工具库

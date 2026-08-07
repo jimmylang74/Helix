@@ -35,7 +35,7 @@ from modules.prompts.task_graph_prompts import (
 )
 from modules.agents.intent_router import intent_router
 from modules.utils.logger import (
-    log_orchestrator, log_agent_action, log_llm_decision,
+    log_orchestrator, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
 )
 from modules.llm.llm_events import (
@@ -853,10 +853,6 @@ class AgentOrchestrator:
                 self._emit_tool_result(
                     tc_id, name, f"搜索到 {len(results)} 张图片"
                 )
-                if state.get("intent_type") == "ppt" and urls:
-                    log_agent_action(f"Auto-downloading {len(urls)} images...")
-                    saved = tool_registry.call_tool("image_download", {"urls": urls})
-                    state["generated_files"].extend(saved)
             else:
                 result_text = tool_registry.call_tool(name, arguments)
                 preview = (

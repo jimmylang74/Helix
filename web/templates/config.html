@@ -383,6 +383,7 @@
             <div class="form-group"><label data-i18n="config.intents.intentDesc">描述</label><textarea id="newIntentDesc" class="form-control" rows="2" data-i18n-placeholder="config.intents.intentDescPlaceholder" placeholder="根据用户要求进行翻译"></textarea></div>
             <div class="form-group"><label data-i18n="config.intents.planningPrompt">规划提示词（可选，覆盖内置）</label><textarea id="newIntentPlanningPrompt" class="form-control" rows="2" data-i18n-placeholder="config.intents.planningPromptPlaceholder" placeholder="覆盖 Planning 阶段系统提示词，留空使用内置"></textarea></div>
             <div class="form-group"><label data-i18n="config.intents.nodePrompt">节点执行提示词（可选，覆盖内置）</label><textarea id="newIntentNodePrompt" class="form-control" rows="2" data-i18n-placeholder="config.intents.nodePromptPlaceholder" placeholder="覆盖节点执行阶段系统提示词，留空使用内置"></textarea></div>
+            <div class="form-group"><label data-i18n="config.intents.finalizerPrompt">总结提示词（可选，覆盖内置）</label><textarea id="newIntentFinalizerPrompt" class="form-control" rows="2" data-i18n-placeholder="config.intents.finalizerPromptPlaceholder" placeholder="覆盖 Finalize 阶段系统提示词，留空使用内置"></textarea></div>
             <button class="btn btn-primary" onclick="registerIntent()" data-i18n="config.intents.registerBtn">注册意图</button>
         </div>
     </div>
@@ -452,6 +453,10 @@
         <div class="form-group">
             <label data-i18n="config.intents.nodePrompt">节点执行提示词（可选，覆盖内置）</label>
             <textarea id="editIntentNodePrompt" class="form-control" rows="3" data-i18n-placeholder="config.intents.nodePromptPlaceholder" placeholder="覆盖节点执行阶段系统提示词，留空使用内置"></textarea>
+        </div>
+        <div class="form-group">
+            <label data-i18n="config.intents.finalizerPrompt">总结提示词（可选，覆盖内置）</label>
+            <textarea id="editIntentFinalizerPrompt" class="form-control" rows="3" data-i18n-placeholder="config.intents.finalizerPromptPlaceholder" placeholder="覆盖 Finalize 阶段系统提示词，留空使用内置"></textarea>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
             <button class="btn btn-outline" onclick="closeEditIntentModal()" data-i18n="config.mcp.cancel">取消</button>

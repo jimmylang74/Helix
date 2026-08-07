@@ -30,7 +30,7 @@ class BaseTool(ABC):
     Subclasses must implement:
       - name (str): Unique tool identifier
       - description (str): Human-readable description
-      - intents (list): Intent IDs this tool supports (e.g., ['ppt', 'generic'])
+      - intents (list): Intent IDs this tool supports (e.g., ['generic']); ['*'] means all intents
       - parameters (dict): JSON Schema for tool parameters
       - execute(**kwargs): The tool's main logic
 

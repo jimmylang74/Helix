@@ -220,8 +220,7 @@ async function loadIntents() {
         tbody.innerHTML = entries.map(([id, intent]) => {
             const isFixed = id === 'generic';
             const actions = isFixed
-                ? `<button class="btn btn-sm btn-outline" onclick="openEditIntent('${id}')">${__('config.intents.editLabel')}</button>
-                   <span class="badge badge-secondary">${__('config.intents.fixed')}</span>`
+                ? `<span class="badge badge-secondary">${__('config.intents.fixed')}</span>`
                 : `<button class="btn btn-sm btn-outline" onclick="openEditIntent('${id}')">${__('config.intents.editLabel')}</button>
                    <button class="btn btn-sm btn-outline" onclick="toggleIntent('${id}')">${intent.enabled ? __('config.intents.disable') : __('config.intents.enable')}</button>
                    <button class="btn btn-sm btn-danger" onclick="deleteIntent('${id}')">${__('config.intents.deleteLabel')}</button>`;
@@ -632,11 +631,12 @@ let editingIntentId = null;
 function openEditIntent(intentId) {
     editingIntentId = intentId;
     const intent = registeredIntents[intentId] || {};
-    document.getElementById('editIntentId').textContent = intentId;
+    document.getElementById('editIntentId').value = intentId;
     document.getElementById('editIntentName').value = intent.name || '';
     document.getElementById('editIntentDesc').value = intent.description || '';
     document.getElementById('editIntentPlanningPrompt').value = intent.planning_prompt || '';
     document.getElementById('editIntentNodePrompt').value = intent.node_prompt || '';
+    document.getElementById('editIntentFinalizerPrompt').value = intent.finalizer_prompt || '';
     document.getElementById('intentEditModal').style.display = 'flex';
 }
 
@@ -658,6 +658,8 @@ async function saveEditIntent() {
     if (planningPrompt) params.planning_prompt = planningPrompt;
     const nodePrompt = document.getElementById('editIntentNodePrompt').value.trim();
     if (nodePrompt) params.node_prompt = nodePrompt;
+    const finalizerPrompt = document.getElementById('editIntentFinalizerPrompt').value.trim();
+    if (finalizerPrompt) params.finalizer_prompt = finalizerPrompt;
     const result = await apiCall('intents.update', params);
     if (result.success) {
         closeEditIntentModal();
@@ -680,6 +682,8 @@ async function registerIntent() {
     if (planningPrompt) params.planning_prompt = planningPrompt;
     const nodePrompt = document.getElementById('newIntentNodePrompt').value.trim();
     if (nodePrompt) params.node_prompt = nodePrompt;
+    const finalizerPrompt = document.getElementById('newIntentFinalizerPrompt').value.trim();
+    if (finalizerPrompt) params.finalizer_prompt = finalizerPrompt;
     const result = await apiCall('intents.update', params);
     if (result.success) {
         showToast(__('config.intents.regSuccess'), 'success');
@@ -688,6 +692,7 @@ async function registerIntent() {
         document.getElementById('newIntentDesc').value = '';
         document.getElementById('newIntentPlanningPrompt').value = '';
         document.getElementById('newIntentNodePrompt').value = '';
+        document.getElementById('newIntentFinalizerPrompt').value = '';
         loadIntents();
     } else { showToast(__('config.intents.regFailed'), 'error'); }
 }

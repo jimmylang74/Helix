@@ -91,6 +91,11 @@
       "type": "server",
       "enabled": true,
       "url": "http://192.168.10.39:5555/api/mcp"
+    },
+    "gold_sge": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://192.168.10.39:8001/mcp"
     }
   },
   "default_location": {
@@ -263,6 +268,14 @@
     "weixin_get_main_window": {
       "enabled": true,
       "intents": []
+    },
+    "get_gold_price": {
+      "enabled": true,
+      "intents": [
+        "generic",
+        "ppt",
+        "coding"
+      ]
     }
   }
 }

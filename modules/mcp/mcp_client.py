@@ -305,11 +305,19 @@ class MCPClient:
             )
 
             if resp.status_code == 202:
+                # Session mode: the server accepted the request and assigned a
+                # session. The initialize result is delivered in the response
+                # body as an SSE stream, which must be read to receive it.
                 self._http_session_id = resp.headers.get("Mcp-Session-Id")
-                log_info(f"MCP [{self.name}] Streamable HTTP accepted (202)")
+                log_info(f"MCP [{self.name}] Streamable HTTP accepted (202), session: {self._http_session_id}")
+                init_result = self._read_stream_response(resp, init_msg["id"], timeout=10)
+                if init_result is not None and "error" in init_result:
+                    log_error(f"MCP [{self.name}] Streamable HTTP init error: {init_result['error']}")
+                    self._disconnect_streamable_http()
+                    return False
                 self._connected = True
                 self._send_notification("notifications/initialized")
-                log_info(f"MCP [{self.name}] Streamable HTTP connection established")
+                log_info(f"MCP [{self.name}] Streamable HTTP (session mode) connection established")
                 return True
 
             if resp.status_code not in (200, 201):
@@ -319,15 +327,13 @@ class MCPClient:
 
             self._http_session_id = resp.headers.get("Mcp-Session-Id")
 
-            content_type = resp.headers.get("Content-Type", "")
-            if "text/event-stream" in content_type:
-                self._handle_streamable_http_sse_response(resp)
-            else:
-                result = resp.json()
-                if "error" in result:
-                    log_error(f"MCP [{self.name}] Streamable HTTP init error: {result['error']}")
-                    self._disconnect_streamable_http()
-                    return False
+            init_result = self._read_stream_response(resp, init_msg["id"], timeout=10)
+            if init_result is None:
+                log_warning(f"MCP [{self.name}] Streamable HTTP init: no response in body, continuing")
+            elif "error" in init_result:
+                log_error(f"MCP [{self.name}] Streamable HTTP init error: {init_result['error']}")
+                self._disconnect_streamable_http()
+                return False
 
             self._connected = True
             self._send_notification("notifications/initialized")
@@ -347,20 +353,109 @@ class MCPClient:
             self._disconnect_streamable_http()
             return False
 
-    def _handle_streamable_http_sse_response(self, resp: requests.Response):
-        """Parse SSE stream from Streamable HTTP response."""
+    def _handle_streamable_http_sse_response(self, resp: requests.Response, stop_msg_id: int | None = None):
+        """Parse an SSE stream from a Streamable HTTP response body.
+
+        Each SSE event is framed by one or more ``data:`` lines terminated by a
+        blank line; a single event may span multiple data lines, which are
+        joined with a newline per the SSE spec. Complete events are routed to
+        the pending queue of their JSON-RPC id. Stops reading once the response
+        for stop_msg_id has been received (guards against servers that keep the
+        response stream open after delivering the response).
+        """
+        data_lines: list[str] = []
         for line in resp.iter_lines(decode_unicode=True):
             if line is None:
                 continue
-            if line.startswith("data: "):
-                data = line[6:].strip()
-                try:
-                    msg = json.loads(data)
-                    msg_id = msg.get("id")
-                    if msg_id is not None and msg_id in self._pending:
-                        self._pending[msg_id].put(msg)
-                except json.JSONDecodeError:
-                    pass
+            if line.startswith("data:"):
+                # Accept both "data: value" and "data:value" framing.
+                data_lines.append(line[5:].strip())
+            elif line == "" and data_lines:
+                if self._handle_sse_event("\n".join(data_lines), stop_msg_id):
+                    return
+                data_lines = []
+        if data_lines:
+            self._handle_sse_event("\n".join(data_lines), stop_msg_id)
+
+    def _handle_sse_event(self, data: str, stop_msg_id: int | None = None) -> bool:
+        """Route a single SSE event payload to its pending request queue.
+
+        Returns True if the event was the response for stop_msg_id.
+        """
+        try:
+            msg = json.loads(data)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(msg, dict):
+            return False
+        msg_id = msg.get("id")
+        if msg_id is not None and msg_id in self._pending:
+            self._pending[msg_id].put(msg)
+            if stop_msg_id is not None and msg_id == stop_msg_id:
+                return True
+        return False
+
+    def _handle_streamable_http_json_response(self, resp: requests.Response, msg_id: int | None) -> bool:
+        """Parse the response body as a pure JSON-RPC message and route it to
+        the pending queue of its id. Returns True if the body was valid JSON.
+        """
+        try:
+            result = resp.json()
+        except (json.JSONDecodeError, ValueError):
+            return False
+        if isinstance(result, dict):
+            resp_id = result.get("id")
+            if resp_id is not None and resp_id in self._pending:
+                self._pending[resp_id].put(result)
+            elif msg_id is not None and msg_id in self._pending:
+                self._pending[msg_id].put(result)
+        return True
+
+    def _parse_response_body(self, resp: requests.Response, msg_id: int | None = None):
+        """Parse a Streamable HTTP response body and route the JSON-RPC
+        response for msg_id to its pending queue.
+
+        The body may be a pure JSON document or an SSE-framed payload. The
+        server's Content-Type header decides which format to expect:
+        - "application/json"  -> pure JSON body
+        - "text/event-stream" -> SSE-framed body
+        - anything else       -> try pure JSON first, fall back to SSE parsing
+        """
+        if not resp.content:
+            return
+
+        content_type = (resp.headers.get("Content-Type") or "").lower()
+
+        if "text/event-stream" in content_type:
+            self._handle_streamable_http_sse_response(resp, stop_msg_id=msg_id)
+            return
+
+        if "application/json" in content_type:
+            if not self._handle_streamable_http_json_response(resp, msg_id):
+                # Some servers frame SSE payloads with an application/json
+                # Content-Type; fall back to SSE parsing.
+                self._handle_streamable_http_sse_response(resp, stop_msg_id=msg_id)
+            return
+
+        if not self._handle_streamable_http_json_response(resp, msg_id):
+            self._handle_streamable_http_sse_response(resp, stop_msg_id=msg_id)
+
+    def _read_stream_response(self, resp: requests.Response, msg_id: int, timeout: float = 10) -> dict[str, Any] | None:
+        """Parse a Streamable HTTP response body and wait for the JSON-RPC
+        response carrying msg_id. Returns the response message, or None on
+        timeout. Used for the initialize handshake, which is not sent through
+        _send_request.
+        """
+        resp_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._pending[msg_id] = resp_queue
+        try:
+            self._parse_response_body(resp, msg_id)
+            try:
+                return resp_queue.get(timeout=timeout)
+            except queue.Empty:
+                return None
+        finally:
+            self._pending.pop(msg_id, None)
 
     def _send_streamable_http(self, msg: dict[str, Any]):
         """Send JSON-RPC message via Streamable HTTP."""
@@ -382,22 +477,18 @@ class MCPClient:
         )
 
         if resp.status_code == 202:
+            # Session mode: the JSON-RPC response is delivered in the response
+            # body as an SSE stream. Read it so the caller receives its
+            # response. Notifications (no id) expect no response, so their
+            # stream is not consumed to avoid blocking on a long-lived body.
+            if msg.get("id") is not None:
+                self._parse_response_body(resp, msg.get("id"))
             return
 
         if resp.status_code not in (200, 201):
             raise MCPError(-1, f"Streamable HTTP send failed: HTTP {resp.status_code}")
 
-        content_type = resp.headers.get("Content-Type", "")
-        if "text/event-stream" in content_type:
-            self._handle_streamable_http_sse_response(resp)
-        elif resp.content:
-            try:
-                result = resp.json()
-                msg_id = msg.get("id")
-                if msg_id is not None and msg_id in self._pending:
-                    self._pending[msg_id].put(result)
-            except json.JSONDecodeError:
-                pass
+        self._parse_response_body(resp, msg.get("id"))
 
     def _disconnect_streamable_http(self):
         """Disconnect Streamable HTTP transport."""

@@ -11,7 +11,7 @@ by the RPC answer path and orchestrator cancellation.
 from typing import Optional
 
 from HelixCore.tools.base import tool_registry
-from modules.core.user_question import user_question_broker
+from modules.agent.user_question import user_question_broker
 from modules.llm.llm_events import get_request_context, emit as _emit_llm_event
 from modules.utils.logger import log_tool_call
 

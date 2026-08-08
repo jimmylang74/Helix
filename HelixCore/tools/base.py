@@ -1,19 +1,17 @@
 """
 Tool Base Class and ToolRegistry.
-All tool calling functions are implemented as subclasses of BaseTool.
-ToolRegistry manages tool lifecycle, discovery, and enable/disable state.
+
+HelixCore 只提供工具注册表的类型与内存态生命周期管理：
+扫描插件目录、读取/写回 Helix.json 等装配动作由 Host 侧完成
+（modules/host/plugin_loader.py）。
 """
 
-import os
-import json
-import importlib
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from HelixCore.ports.intents import IntentProvider
-from modules.utils.logger import log_info, log_error, log_warning
+from HelixCore.interface import IntentProvider, LogSink, NullLogSink
 
 
 @dataclass
@@ -35,7 +33,7 @@ class BaseTool(ABC):
       - parameters (dict): JSON Schema for tool parameters
       - execute(**kwargs): The tool's main logic
 
-    Source is determined automatically:
+    Source is set by the Host assembly layer (modules/host/plugin_loader.py):
       - 'MCP': tools from MCP servers (MCPToolAdapter)
       - '内部插件': tools from plugins/ directory (excluding mcp_tools.py)
       - '外部插件': tools from plugins/user/ directory
@@ -85,11 +83,12 @@ class BaseTool(ABC):
 
 class ToolRegistry:
     """
-    Singleton registry for all plugin tools.
+    Singleton registry for all plugin tools (memory-resident).
 
-    - Auto-discovers tools from plugins/ directory
-    - Manages enable/disable state (persisted in config)
-    - Provides tool lookup and execution
+    - Provides tool registration, lookup and execution
+    - Manages enable/disable state in memory
+    - 装配（扫描 plugins/、读写 Helix.json 的 plugins 段）由 Host 完成：
+      modules.host.plugin_loader.discover_plugins / load_tool_config / save_tool_config
     """
 
     _instance = None
@@ -103,32 +102,23 @@ class ToolRegistry:
                     cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
+    def __init__(self, logger: Optional[LogSink] = None):
         if self._initialized:
             return
         self._initialized = True
         self._tools: Dict[str, BaseTool] = {}
         self._tools_lock = threading.Lock()
-        # Host 组合根注入（P4）：避免 HelixCore 反向依赖 modules.agents / modules.config
+        # Host 组合根注入（P4）：避免 HelixCore 反向依赖 modules.*
         self._intent_provider: Optional[IntentProvider] = None
-        self._config_store: Optional[Any] = None
-        self._plugins_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "plugins"
-        )
-        self._user_plugins_dir = os.path.join(self._plugins_dir, "user")
+        self._logger: LogSink = logger if logger is not None else NullLogSink()
+
+    def set_logger(self, logger: Optional[LogSink]) -> None:
+        """Host 组合根注入日志实现（P4）；None 时回退静默实现。"""
+        self._logger = logger if logger is not None else NullLogSink()
 
     def set_intent_provider(self, provider: Optional[IntentProvider]) -> None:
-        """Host 组合根注入意图提供者（P4，替代对 modules.agents 的 lazy import）。"""
+        """Host 组合根注入意图提供者（P4，替代对 modules.agent 的 lazy import）。"""
         self._intent_provider = provider
-
-    def set_config_store(self, store: Optional[Any]) -> None:
-        """Host 组合根注入配置存取对象（P4，替代对 modules.config 的 lazy import）。
-
-        对象需提供 get(key_path, default) 与 update_section(section, data)
-        （modules.config.config_manager.ConfigManager 即满足）。
-        """
-        self._config_store = store
 
     def _get_all_registered_intent_ids(self) -> List[str]:
         """Return all registered intent IDs from the injected intent provider."""
@@ -150,9 +140,9 @@ class ToolRegistry:
         """Register a tool instance."""
         with self._tools_lock:
             if tool.name in self._tools:
-                log_warning(f"ToolRegistry: tool '{tool.name}' already registered, overwriting")
+                self._logger.warning(f"ToolRegistry: tool '{tool.name}' already registered, overwriting")
             self._tools[tool.name] = tool
-            log_info(f"ToolRegistry: registered '{tool.name}' (source={tool.source}, intents={tool.intents})")
+            self._logger.info(f"ToolRegistry: registered '{tool.name}' (source={tool.source}, intents={tool.intents})")
 
     def unregister(self, name: str):
         """Remove a tool by name."""
@@ -223,105 +213,6 @@ class ToolRegistry:
         if not tool.enabled:
             raise ToolDisabledError(f"Tool '{name}' is disabled")
         return tool.execute(**(arguments or {}))
-
-    def discover_plugins(self):
-        """
-        Scan the plugins/ directory and import all tool modules.
-        Each module should define tool classes that subclass BaseTool.
-        Also scans plugins/user/ for external user-defined plugins.
-        Skips mcp_tools.py (MCP tools are registered separately).
-        """
-        if not os.path.isdir(self._plugins_dir):
-            log_warning(f"ToolRegistry: plugins directory not found: {self._plugins_dir}")
-            return
-
-        # Ensure plugins/ is importable
-        project_root = os.path.dirname(self._plugins_dir)
-        if project_root not in __import__("sys").path:
-            __import__("sys").path.insert(0, project_root)
-
-        self._scan_plugin_dir(self._plugins_dir, source="内部插件")
-
-        if os.path.isdir(self._user_plugins_dir):
-            if self._user_plugins_dir not in __import__("sys").path:
-                __import__("sys").path.insert(0, self._user_plugins_dir)
-            self._scan_plugin_dir(self._user_plugins_dir, source="外部插件")
-
-    def _scan_plugin_dir(self, plugin_dir: str, source: str):
-        """Scan a plugin directory and register discovered tools."""
-        for filename in sorted(os.listdir(plugin_dir)):
-            if filename.startswith("_") or not filename.endswith(".py"):
-                continue
-            # Skip mcp_tools.py in the main plugins dir (registered separately)
-            if source == "内部插件" and filename == "mcp_tools.py":
-                continue
-
-            if source == "外部插件":
-                module_name = f"plugins.user.{filename[:-3]}"
-            else:
-                module_name = f"plugins.{filename[:-3]}"
-
-            try:
-                module = importlib.import_module(module_name)
-                # Find all BaseTool subclasses in the module
-                for attr_name in dir(module):
-                    attr = getattr(module, attr_name)
-                    if (isinstance(attr, type)
-                            and issubclass(attr, BaseTool)
-                            and attr is not BaseTool
-                            and getattr(attr, "name", "")):
-                        try:
-                            instance = attr()
-                            instance.source = source
-                            self.register(instance)
-                        except Exception as e:
-                            log_error(f"ToolRegistry: failed to instantiate {attr_name}: {e}")
-                log_info(f"ToolRegistry: loaded plugin module '{module_name}' (source={source})")
-            except Exception as e:
-                log_error(f"ToolRegistry: failed to import '{module_name}': {e}")
-
-    def load_enabled_state(self):
-        """Load enable/disable state and intents from Helix.json."""
-        if self._config_store is None:
-            log_warning("ToolRegistry: config store not injected, skipping tool config load")
-            return
-        try:
-            config = self._config_store
-            tools_config = config.get("plugins", {})
-            with self._tools_lock:
-                for name, tool in self._tools.items():
-                    tool_cfg = tools_config.get(name, {})
-                    tool.enabled = tool_cfg.get("enabled", True)
-                    saved_intents = tool_cfg.get("intents")
-                    if saved_intents is not None:
-                        tool.intents = saved_intents
-            log_info("ToolRegistry: loaded tool config from Helix.json")
-        except Exception as e:
-            log_warning(f"ToolRegistry: failed to load tool config: {e}")
-
-    def save_enabled_state(self):
-        """Persist tool config (enabled + intents) to Helix.json."""
-        if self._config_store is None:
-            log_warning("ToolRegistry: config store not injected, skipping tool config save")
-            return
-        try:
-            config = self._config_store
-            tools_config = config.get("plugins", {})
-            with self._tools_lock:
-                for name, tool in self._tools.items():
-                    if name not in tools_config:
-                        tools_config[name] = {}
-                    tools_config[name]["enabled"] = tool.enabled
-                    tools_config[name]["intents"] = list(tool.intents)
-            config.update_section("plugins", tools_config)
-        except Exception as e:
-            log_error(f"ToolRegistry: failed to save tool config: {e}")
-
-    def initialize(self):
-        """Full initialization: discover plugins + load state."""
-        self.discover_plugins()
-        self.load_enabled_state()
-        log_info(f"ToolRegistry: initialized with {len(self._tools)} tool(s)")
 
 
 class ToolNotFoundError(Exception):

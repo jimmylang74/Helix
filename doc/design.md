@@ -1126,8 +1126,8 @@ sequenceDiagram
 | 组件 | 文件 | 职责 |
 |------|------|------|
 | `_StdoutEventEmitter` | `modules/host/ai_engine_backend.py` | 包装 `StringIO` 缓冲区，`write()` 时同时解析 NDJSON 并 `emit()` 到事件总线 |
-| `llm_events` 事件总线 | `modules/llm/llm_events.py` | thread-local `request_id` 上下文 + per-request `Queue[]` + SSE `stream()` 生成器 |
-| `Orchestrator` | `modules/core/orchestrator.py` | `process_request()` 入口调用 `set_request_context()`，`finally` 调用 `llm_cleanup()` |
+| `llm_events` 事件总线 | `modules/llm/llm_events.py` | thread-local `request_id` 上下文 + per-request `Queue[]` + SSE `stream()` 生成器（经 `modules/host/llm_event_bus.py` `LlmEventBusImpl` 注入 HelixCore） |
+| `Orchestrator` | `HelixCore/orchestrator/orchestrator.py`（由 Host 组合根实例化） | `process_request()` 入口经注入的 `LlmEventBus` 端口调用 `set_request_context()`，`finally` 经同一端口调用 `cleanup()`；日志经 `LogSink` 端口，配置热更新经 `refresh_config` 扩展点注入；ask_user 唤醒与使用记录持久化由 Host 侧 `ToolContext.cancel()` / `history_store.record()` 负责，不注入 HelixCore |
 | SSE endpoint | `modules/app/routes.py` | `GET /api/llm-stream?request_id=xxx` 返回 `text/event-stream` 响应 |
 | 前端 `EventSource` | `web/static/js/quick_test.js` | `startLlmStream()` 建立连接，`onmessage` → `handleStreamEvent()` → `addLlmLogEntry()` 渲染 |
 

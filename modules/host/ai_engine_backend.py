@@ -3,7 +3,7 @@ AI Engine Backend — LLMBackend implementation via the ai_engine submodule.
 
 All LLM calls go through ai_engine.run_engine() using --output-format events.
 Events are captured from stdout and parsed into structured responses.
-Implements the HelixCore.ports.llm.LLMBackend protocol (formerly LLMClient).
+Implements the HelixCore.interface.LLMBackend protocol (formerly LLMClient).
 """
 
 import io
@@ -15,7 +15,7 @@ from argparse import Namespace
 from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
 
-from HelixCore.ports.llm import LLMBackend, LLMResponse
+from HelixCore.interface import LLMBackend, LLMResponse
 from modules.config.config_manager import ConfigManager
 from modules.llm.llm_events import get_request_context, emit as _emit_event
 from modules.utils.logger import (
@@ -79,7 +79,7 @@ class _StdoutEventEmitter:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# LLMResponse 与 LLMBackend 协议均定义于 HelixCore.ports.llm（见顶部 import）。
+# LLMResponse 与 LLMBackend 协议均定义于 HelixCore.interface（见顶部 import）。
 # ═══════════════════════════════════════════════════════════════════════
 
 

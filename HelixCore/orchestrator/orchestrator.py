@@ -12,17 +12,18 @@ Option B — 同一时刻只有一个 Running 节点 emit 流式事件到前端�
 import json
 import threading
 import uuid
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from HelixCore.orchestrator.agent_state import (
     AgentState, create_initial_state
 )
 from HelixCore.orchestrator.task_graph import TaskGraph, NodeState
-from HelixCore.orchestrator.config import AgentConfig, SamplingParams
-from HelixCore.tools.base import tool_registry, ToolDefinition
-from HelixCore.ports.events import EventSink
-from HelixCore.ports.llm import LLMBackend, LLMResponse
+from HelixCore.orchestrator.config import AgentConfig
+from HelixCore.tools.base import ToolDefinition, ToolRegistry
+from HelixCore.interface import (
+    EventSink, IntentProvider, LLMBackend, LLMResponse,
+    LlmEventBus, LogSink, NullLogSink,
+)
 from HelixCore.prompts.task_graph_prompts import (
     USER_PROMPT_TASK_PLANNING,
     USER_PROMPT_FINALIZER,
@@ -36,21 +37,6 @@ from HelixCore.prompts.task_graph_prompts import (
     COMMON_JSON_CONTRACT,
 )
 from HelixCore.utils.tokenizer import TokenEstimator, create_estimator_for_config
-from modules.host.ai_engine_backend import AIEngineBackend
-from modules.host.event_sink import SSEEventSink
-from HelixCore.ports.intents import IntentProvider
-from modules.host.intent_store import IntentStore
-from modules.utils.logger import (
-    log_orchestrator, log_llm_decision,
-    log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
-)
-from modules.llm.llm_events import (
-    set_request_context, clear_request_context,
-    cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
-)
-from modules.host.tool_context import ToolContext
-from modules.utils import history_store
-from modules.config.config_manager import ConfigManager
 
 
 class AgentOrchestrator:
@@ -58,19 +44,29 @@ class AgentOrchestrator:
 
     def __init__(
         self,
-        llm_backend: Optional[LLMBackend] = None,
-        config: Optional[AgentConfig] = None,
-        event_sink: Optional[EventSink] = None,
-        intent_provider: Optional[IntentProvider] = None,
+        llm_backend: LLMBackend,
+        config: AgentConfig,
+        event_sink: EventSink,
+        intent_provider: IntentProvider,
+        tool_registry: ToolRegistry,
+        event_bus: LlmEventBus,
+        log: Optional[LogSink] = None,
+        refresh_config: Optional[Callable[[], AgentConfig]] = None,
     ):
-        # LLMBackend 由 Host 注入；默认用 ai_engine 适配器（P4 组合根收敛注入）
-        self.llm: LLMBackend = llm_backend or AIEngineBackend()
-        # AgentConfig 由 Host 注入；默认从 Helix.json 读取（P4 组合根收敛注入）
-        self._config: AgentConfig = config or self._build_config_from_config_manager()
-        # EventSink 由 Host 注入；默认用 SSE 事件总线适配器（P4 组合根收敛注入）
-        self._event_sink: EventSink = event_sink or SSEEventSink()
-        # IntentProvider 由 Host 注入；默认用 IntentStore 适配器（P4 组合根收敛注入）
-        self._intent_provider: IntentProvider = intent_provider or IntentStore()
+        """全部依赖由 Host 组合根显式注入（P4），无默认回退。
+
+        注入端口：LLMBackend / AgentConfig / EventSink / IntentProvider /
+        ToolRegistry / LlmEventBus（请求上下文 + LLM 事件流，核心必填）；
+        可选扩展点：LogSink（默认 NullLogSink 静默）、refresh_config（热重载配置）。
+        """
+        self.llm: LLMBackend = llm_backend
+        self._config: AgentConfig = config
+        self._event_sink: EventSink = event_sink
+        self._intent_provider: IntentProvider = intent_provider
+        self._tools: ToolRegistry = tool_registry
+        self._events: LlmEventBus = event_bus
+        self._log: LogSink = log or NullLogSink()
+        self._refresh_config: Optional[Callable[[], AgentConfig]] = refresh_config
         self._active_states: Dict[str, AgentState] = {}
         self._states_lock = threading.Lock()
         self._graphs: Dict[str, TaskGraph] = {}
@@ -97,15 +93,14 @@ class AgentOrchestrator:
         if not request_id:
             request_id = f"req_{uuid.uuid4().hex[:12]}"
 
-        set_request_context(request_id)
-        log_section(f"Processing Request: {request_id}")
-        log_info(f"User request: {user_request[:200]}")
+        self._events.set_request_context(request_id)
+        self._log.section(f"Processing Request: {request_id}")
+        self._log.info(f"User request: {user_request[:200]}")
 
         state = create_initial_state(user_request, request_id)
         state["forced_intent"] = forced_intent
         with self._states_lock:
             self._active_states[request_id] = state
-        created_at = datetime.now().isoformat(timespec="seconds")
 
         try:
             # ── Phase 1: Task Planning ────────────────────────────
@@ -118,7 +113,7 @@ class AgentOrchestrator:
                 state["final_result"] = planning_result.get("response", "")
                 state["orchestrator_phase"] = "done"
                 self._event_sink.emit(request_id, state, completed=True)
-                log_section(f"Request completed (direct): {request_id}")
+                self._log.section(f"Request completed (direct): {request_id}")
                 return self._build_success_result(state)
 
             # ── Phase 2: Task Graph Node Loop ─────────────────────
@@ -137,13 +132,13 @@ class AgentOrchestrator:
             graph_nodes = graph.to_dict_list() if graph else None
             self._event_sink.emit(request_id, state, graph_nodes=graph_nodes, completed=True)
             result = self._build_success_result(state)
-            log_section(f"Request completed: {request_id}")
+            self._log.section(f"Request completed: {request_id}")
             return result
 
         except Exception as e:
-            log_error(f"Orchestrator error: {e}")
+            self._log.error(f"Orchestrator error: {e}")
             import traceback
-            log_error(traceback.format_exc())
+            self._log.error(traceback.format_exc())
             state["error"] = str(e)
             state["orchestrator_phase"] = "done"
             graph = self._get_graph(request_id)
@@ -151,19 +146,7 @@ class AgentOrchestrator:
             self._event_sink.emit(request_id, state, graph_nodes=graph_nodes)
             return self._error_response(state, str(e))
         finally:
-            # 任务结束后持久化一条历史记录 (成功/失败/取消全覆盖), 供"使用记录"页面展示
-            history_store.record({
-                "request_id": request_id,
-                "user_request": user_request,
-                "intent_type": state.get("intent_type", ""),
-                "success": not state.get("error") and not state.get("cancelled"),
-                "created_at": created_at,
-                "error": state.get("error"),
-                "generated_files": state.get("generated_files", []),
-            })
-            llm_cleanup(request_id)
-            # 唤醒可能仍在等待用户回答的 ask_user，避免节点线程阻塞到超时
-            ToolContext(request_id).cancel()
+            self._events.cleanup(request_id)
             # 任务结束即释放：前端快速测试页改走"不销毁"方案，无需为已完成任务保留状态与缓冲
             with self._states_lock:
                 self._active_states.pop(request_id, None)
@@ -174,7 +157,7 @@ class AgentOrchestrator:
                 self._stream_node_id.pop(request_id, None)
             with self._estimators_lock:
                 self._estimators.pop(request_id, None)
-            clear_request_context()
+            self._events.clear_request_context()
 
     def cancel_request(self, request_id: str) -> bool:
         """Cancel an active request."""
@@ -184,9 +167,8 @@ class AgentOrchestrator:
         state["cancelled"] = True
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
-        # 唤醒等待用户回答的 ask_user，让节点线程退出阻塞
-        ToolContext(request_id).cancel()
-        log_orchestrator(f"Request {request_id} cancelled by user")
+        # 唤醒等待用户回答的 ask_user 由 Host 侧负责（ToolContext.cancel），HelixCore 不感知 ask_user
+        self._log.orchestrate(f"Request {request_id} cancelled by user")
         graph = self._get_graph(request_id)
         graph_nodes = graph.to_dict_list() if graph else None
         self._event_sink.emit(request_id, state, graph_nodes=graph_nodes)
@@ -223,26 +205,8 @@ class AgentOrchestrator:
         """Hot-reload runtime config. Host may inject a new AgentConfig snapshot."""
         if config is not None:
             self._config = config
-        else:
-            self._config = self._build_config_from_config_manager()
-
-    @staticmethod
-    def _build_config_from_config_manager() -> AgentConfig:
-        """Build an AgentConfig snapshot from Helix.json (host-side read)."""
-        cm = ConfigManager()
-        sampling = {
-            phase: cm.get_graph_sampling(phase)
-            for phase in ("planning", "execution", "finalizer")
-        }
-        return AgentConfig(
-            node_parallel_count=int(cm.get("server.node_parallel_count", 1)),
-            max_graph_updates=int(cm.get("llm.max_graph_updates", 5)),
-            planning_max_ask_rounds=int(cm.get("llm.planning_max_ask_rounds", 5)),
-            max_input_tokens=int(cm.get("llm.max_input_tokens", 32768)),
-            planning=SamplingParams(**sampling["planning"]),
-            execution=SamplingParams(**sampling["execution"]),
-            finalizer=SamplingParams(**sampling["finalizer"]),
-        )
+        elif self._refresh_config is not None:
+            self._config = self._refresh_config()
 
     # ═══════════════════════════════════════════════════════════════
     # Phase 1 — Task Planning
@@ -251,13 +215,13 @@ class AgentOrchestrator:
     def _task_planning(self, state: AgentState) -> Dict[str, Any]:
         """Phase 1: LLM 分解任务为 DAG 节点图。"""
         state["orchestrator_phase"] = "planning"
-        log_section("Phase 1: Task Planning")
+        self._log.section("Phase 1: Task Planning")
 
         # 注入可用工具列表，让 LLM 在拆分节点时只选择真实存在的工具
         tool_definitions = self._build_tool_definitions()
 
         # 意图配置（Helix.json intents.*），用于动态注入规划提示词的意图列表
-        intents_cfg = ConfigManager().get("intents", {}) or {}
+        intents_cfg = self._intent_provider.get_registered_intents()
 
         forced_intent = state.get("forced_intent", "auto")
         if forced_intent != "auto":
@@ -265,13 +229,13 @@ class AgentOrchestrator:
             system_prompt = self._get_system_prompt(
                 forced_intent, intents_cfg, tool_definitions
             )
-            log_agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
+            self._log.agent_to_llm(f"Forced intent={forced_intent}, planning task graph...")
         else:
             # 规划 system prompt 内含 JSON 示例的裸花括号，不能用 .format()，用占位符替换
             system_prompt = build_system_prompt_task_planning(
                 intents_cfg, tools=tool_definitions
             )
-            log_agent_to_llm("Sending request to LLM for task planning...")
+            self._log.agent_to_llm("Sending request to LLM for task planning...")
 
         # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划（上限 llm.planning_max_ask_rounds 轮）
         max_ask_rounds = self._config.planning_max_ask_rounds
@@ -289,7 +253,7 @@ class AgentOrchestrator:
                 state["request_id"], system_prompt, user_prompt
             ):
                 state["error"] = "Prompt exceeds max_input_tokens limit at planning phase"
-                log_error(state["error"])
+                self._log.error(state["error"])
                 return {"task_complete": True, "response": state["error"]}
 
             response = self.llm.ask_json(
@@ -320,7 +284,7 @@ class AgentOrchestrator:
                     planning_context = (
                         f"{planning_context}\n\n[规划阶段补充信息]\n{result}"
                     )
-                log_llm_decision(
+                self._log.llm_decision(
                     f"Planning asked user {len(ask_tools)} question(s), "
                     "re-planning with answers..."
                 )
@@ -336,12 +300,12 @@ class AgentOrchestrator:
                 intent_type = GENERIC_INTENT_ID
 
         state["intent_type"] = intent_type
-        log_llm_decision(f"Intent: {intent_type}")
+        self._log.llm_decision(f"Intent: {intent_type}")
 
         task_complete = response.get("task_complete", False)
         if task_complete:
             direct_response = response.get("response", "")
-            log_llm_decision(f"Task complete (direct): {direct_response[:100]}")
+            self._log.llm_decision(f"Task complete (direct): {direct_response[:100]}")
             state["final_result"] = direct_response
             return {
                 "task_complete": True,
@@ -371,7 +335,7 @@ class AgentOrchestrator:
         need_finalizer = response.get("need_finalizer", True)
         reason = response.get("reason", "")
 
-        log_llm_decision(
+        self._log.llm_decision(
             f"Graph created: {len(nodes)} nodes, "
             f"need_finalizer={need_finalizer}, reason={reason[:100]}"
         )
@@ -393,7 +357,7 @@ class AgentOrchestrator:
     def _task_graph_node_loop(self, state: AgentState):
         """Phase 2: 循环执行 DAG 节点，直到全部完成。"""
         state["orchestrator_phase"] = "node_loop"
-        log_section("Phase 2: Task Graph Node Loop")
+        self._log.section("Phase 2: Task Graph Node Loop")
 
         graph = self._get_graph(state["request_id"])
         if not graph:
@@ -404,7 +368,7 @@ class AgentOrchestrator:
 
         while not graph.is_all_done():
             if self.is_cancelled(state):
-                log_orchestrator("Node loop cancelled by user")
+                self._log.orchestrate("Node loop cancelled by user")
                 break
 
             # 找出所有 Ready 节点
@@ -412,10 +376,10 @@ class AgentOrchestrator:
             if not ready_nodes:
                 # 没有 Ready 节点但也没全部完成 → 检查是否卡死
                 if graph.get_running_count() == 0:
-                    log_orchestrator("No ready or running nodes — graph may be stuck or all done")
+                    self._log.orchestrate("No ready or running nodes — graph may be stuck or all done")
                     break
                 # 有 Running 但还没 Ready → 等下一个循环
-                log_orchestrator(f"Waiting for {graph.get_running_count()} running node(s)...")
+                self._log.orchestrate(f"Waiting for {graph.get_running_count()} running node(s)...")
                 self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
                 # 没有 Ready 节点会无限空转，加个安全等待
                 import time
@@ -430,7 +394,7 @@ class AgentOrchestrator:
             if all_non_parallel and len(nodes_to_run) > 1:
                 nodes_to_run = nodes_to_run[:1]
 
-            log_orchestrator(
+            self._log.orchestrate(
                 f"Running {len(nodes_to_run)} node(s): "
                 + ", ".join(f"{n.id}[{n.title[:30]}]" for n in nodes_to_run)
             )
@@ -469,7 +433,7 @@ class AgentOrchestrator:
             self._clear_stream_node(state["request_id"])
             self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
 
-        log_orchestrator("Task Graph Node Loop completed.")
+        self._log.orchestrate("Task Graph Node Loop completed.")
 
     def _execute_node(
         self,
@@ -481,9 +445,9 @@ class AgentOrchestrator:
         request_id = state["request_id"]
         # 并行节点线程没有外层 process_request 设置的上下文，这里补设，
         # 使工具（如 ask_user）能通过 get_request_context 拿到 request_id
-        set_request_context(request_id)
+        self._events.set_request_context(request_id)
         tool_definitions = self._build_tool_definitions()
-        intents_cfg = ConfigManager().get("intents", {}) or {}
+        intents_cfg = self._intent_provider.get_registered_intents()
         # 可用工具列表由 get_node_system_prompt 注入 {available_tools} 占位符，
         # 已包含在 system_prompt 内，预算检查直接按 system_prompt 计算。
         system_prompt = get_node_system_prompt(
@@ -507,7 +471,7 @@ class AgentOrchestrator:
                     "arguments": arguments,
                     "result": result[:1000] if result else "",
                 })
-            log_orchestrator(
+            self._log.orchestrate(
                 f"Node {node.id}: executed {len(node.initial_tool_calls)} "
                 "pre-planned tool call(s)"
             )
@@ -544,11 +508,11 @@ class AgentOrchestrator:
                 user_prompt,
             ):
                 err = f"Node {node.id}: prompt exceeds max_input_tokens limit"
-                log_error(err)
+                self._log.error(err)
                 graph.set_node_failed(node.id, err)
                 break
 
-            log_agent_to_llm(
+            self._log.agent_to_llm(
                 f"Node {node.id} iter {iteration}: calling LLM "
                 f"{'(streaming)' if emit_stream else '(silent)'}..."
             )
@@ -613,7 +577,7 @@ class AgentOrchestrator:
             if node_complete:
                 node.reason = response_data.get("reason", "")
                 graph.set_node_done(node.id, node_response)
-                log_llm_decision(
+                self._log.llm_decision(
                     f"Node {node.id} completed: {node_response[:100]}"
                 )
                 # 节点结果（LLM response 字段）推送到前端"最终结果"窗口
@@ -634,7 +598,7 @@ class AgentOrchestrator:
             if need_update:
                 new_nodes = response_data.get("task_graph_nodes", [])
                 if new_nodes and not graph.has_reached_max_updates():
-                    log_llm_decision(
+                    self._log.llm_decision(
                         f"Node {node.id}: updating graph with {len(new_nodes)} nodes"
                     )
                     graph.update_from_nodes(new_nodes)
@@ -648,23 +612,23 @@ class AgentOrchestrator:
                                 node.id,
                                 "Node removed during graph update"
                             )
-                        log_orchestrator(
+                        self._log.orchestrate(
                             f"Node {node.id} removed by graph update → Failed"
                         )
                         break
                 elif not new_nodes:
-                    log_error(
+                    self._log.error(
                         f"Node {node.id}: need_update_node=true but no nodes provided"
                     )
                     graph.set_node_failed(node.id, "Graph update with no nodes")
                     break
                 else:
-                    log_error(f"Node {node.id}: max graph updates reached")
+                    self._log.error(f"Node {node.id}: max graph updates reached")
                     graph.set_node_failed(node.id, "Max graph updates reached")
                     break
 
             # 既没有 tools、node_complete、need_update_node → 视为失败
-            log_error(
+            self._log.error(
                 f"Node {node.id} iter {iteration}: no tools/complete/update "
                 f"— marking failed"
             )
@@ -681,7 +645,7 @@ class AgentOrchestrator:
     def _task_finalizer(self, state: AgentState):
         """Phase 3: 将所有节点结果汇总为最终答案。"""
         state["orchestrator_phase"] = "finalizing"
-        log_section("Phase 3: Finalizer")
+        self._log.section("Phase 3: Finalizer")
 
         graph = self._get_graph(state["request_id"])
         if not graph:
@@ -695,7 +659,7 @@ class AgentOrchestrator:
             json_contract=COMMON_JSON_CONTRACT,
         )
 
-        intents_cfg = ConfigManager().get("intents", {}) or {}
+        intents_cfg = self._intent_provider.get_registered_intents()
         finalizer_system_prompt = get_finalizer_system_prompt(
             state.get("intent_type", ""), intents_cfg
         )
@@ -703,11 +667,11 @@ class AgentOrchestrator:
         if not self._check_token_budget(
             state["request_id"], finalizer_system_prompt, user_prompt
         ):
-            log_error("Finalizer prompt exceeds max_input_tokens limit, using raw results")
+            self._log.error("Finalizer prompt exceeds max_input_tokens limit, using raw results")
             state["final_result"] = self._collect_node_results(state)
             return
 
-        log_agent_to_llm("Requesting final summary from LLM...")
+        self._log.agent_to_llm("Requesting final summary from LLM...")
         finalizer_sampling = self._config.get_graph_sampling("finalizer")
         response = self.llm.ask_json(
             prompt=user_prompt,
@@ -724,7 +688,7 @@ class AgentOrchestrator:
 
         final_answer = response.get("final_answer", response.get("response", ""))
         state["final_result"] = final_answer or self._collect_node_results(state)
-        log_llm_decision(f"Final summary generated ({len(state['final_result'])} chars)")
+        self._log.llm_decision(f"Final summary generated ({len(state['final_result'])} chars)")
 
     # ═══════════════════════════════════════════════════════════════
     # Helpers
@@ -755,7 +719,7 @@ class AgentOrchestrator:
 
     def _build_tool_definitions(self) -> List[ToolDefinition]:
         tool_definitions = []
-        for tool in tool_registry.get_enabled_tools():
+        for tool in self._tools.get_enabled_tools():
             tool_definitions.append(ToolDefinition(
                 name=tool.name,
                 description=tool.description,
@@ -827,7 +791,7 @@ class AgentOrchestrator:
         estimator = self._get_estimator(request_id)
         estimated = sum(estimator.count_tokens(p) for p in text_parts)
         if estimated > max_tokens:
-            log_error(
+            self._log.error(
                 f"Token budget exceeded: ~{estimated} estimated "
                 f"({estimator.__class__.__name__}) > {max_tokens} max"
             )
@@ -853,7 +817,7 @@ class AgentOrchestrator:
         except Exception:
             pass
 
-        log_orchestrator(
+        self._log.orchestrate(
             f"_parse_llm_response: FALLBACK, content_len={len(content)}"
         )
         return {"response": content}
@@ -867,7 +831,7 @@ class AgentOrchestrator:
         name = tool_call.get("name", "")
         arguments = tool_call.get("arguments", {})
         tc_id = tool_call.get("id", "")
-        log_tool_call(
+        self._log.tool_call(
             f"Executing tool: {name}({json.dumps(arguments, ensure_ascii=False)})"
         )
 
@@ -876,7 +840,7 @@ class AgentOrchestrator:
             # 特殊处理 web_search / image_search（保持向后兼容）
             if name == "web_search":
                 query = arguments.get("query", "")
-                result_text = tool_registry.call_tool(
+                result_text = self._tools.call_tool(
                     "web_search", {"query": query}
                 )
                 results = json.loads(result_text) if result_text else []
@@ -886,7 +850,7 @@ class AgentOrchestrator:
             elif name == "image_search":
                 query = arguments.get("query", "")
                 max_results = arguments.get("max_results", 5)
-                result_text = tool_registry.call_tool(
+                result_text = self._tools.call_tool(
                     "image_search",
                     {"query": query, "max_results": max_results},
                 )
@@ -897,7 +861,7 @@ class AgentOrchestrator:
                     tc_id, name, f"搜索到 {len(results)} 张图片"
                 )
             else:
-                result_text = tool_registry.call_tool(name, arguments)
+                result_text = self._tools.call_tool(name, arguments)
                 preview = (
                     result_text[:500] + "..."
                     if len(result_text) > 500
@@ -905,7 +869,7 @@ class AgentOrchestrator:
                 )
                 self._emit_tool_result(tc_id, name, preview)
         except Exception as e:
-            log_error(f"Tool execution failed: {name}: {e}")
+            self._log.error(f"Tool execution failed: {name}: {e}")
             self._emit_tool_result(tc_id, name, f"错误: {e}")
             result_text = f"Error: {e}"
 
@@ -915,9 +879,9 @@ class AgentOrchestrator:
         self, tc_id: str, name: str, result_preview: str
     ):
         """Emit a tool_call_result event to the SSE stream."""
-        request_id = get_request_context()
+        request_id = self._events.get_request_context()
         if request_id:
-            _emit_llm_event(request_id, {
+            self._events.emit(request_id, {
                 "type": "tool_call_result",
                 "id": tc_id,
                 "name": name,
@@ -971,6 +935,8 @@ class AgentOrchestrator:
             "intent_type": state.get("intent_type"),
             "final_result": state.get("final_result", ""),
             "generated_files": state.get("generated_files", []),
+            "error": state.get("error"),
+            "cancelled": state.get("cancelled", False),
         }
 
     def _error_response(
@@ -981,11 +947,8 @@ class AgentOrchestrator:
         return {
             "success": False,
             "request_id": state.get("request_id", ""),
+            "intent_type": state.get("intent_type"),
             "error": error_msg or state.get("error", "Unknown error"),
             "final_result": state.get("final_result", ""),
             "generated_files": state.get("generated_files", []),
         }
-
-
-# Global orchestrator instance
-orchestrator = AgentOrchestrator()

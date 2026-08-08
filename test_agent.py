@@ -225,11 +225,11 @@ def test_07_tool_execution():
     print_header("Test 07: Tool Execution")
 
     from HelixCore.tools.base import tool_registry
-    from modules.config.config_manager import ConfigManager
     from modules.host.intent_store import intent_store
+    from modules.host.plugin_loader import discover_plugins, load_tool_config
     tool_registry.set_intent_provider(intent_store)
-    tool_registry.set_config_store(ConfigManager())
-    tool_registry.initialize()
+    discover_plugins(tool_registry)
+    load_tool_config(tool_registry)
 
     # Test web_fetch_batch
     print("  Testing web_fetch_batch...")
@@ -266,11 +266,11 @@ def test_08_ppt_creation():
     print_header("Test 08: PPT Generation")
 
     from HelixCore.tools.base import tool_registry
-    from modules.config.config_manager import ConfigManager
     from modules.host.intent_store import intent_store
+    from modules.host.plugin_loader import discover_plugins, load_tool_config
     tool_registry.set_intent_provider(intent_store)
-    tool_registry.set_config_store(ConfigManager())
-    tool_registry.initialize()
+    discover_plugins(tool_registry)
+    load_tool_config(tool_registry)
 
     ppt_config = {
         "color_scheme": "modern_blue",
@@ -316,11 +316,11 @@ def test_09_image_download():
     print_header("Test 09: Image Download")
 
     from HelixCore.tools.base import tool_registry
-    from modules.config.config_manager import ConfigManager
     from modules.host.intent_store import intent_store
+    from modules.host.plugin_loader import discover_plugins, load_tool_config
     tool_registry.set_intent_provider(intent_store)
-    tool_registry.set_config_store(ConfigManager())
-    tool_registry.initialize()
+    discover_plugins(tool_registry)
+    load_tool_config(tool_registry)
 
     try:
         saved = tool_registry.call_tool("image_download", {

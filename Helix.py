@@ -96,18 +96,50 @@ def main():
     log_info(f"Starting AI Hybrid Agent Service...")
     log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 
-    # Initialize plugin tool registry (auto-scans plugins/ directory)
+    # ═══ 组合根：显式装配全部依赖并构造 AgentOrchestrator ═══
     from modules.host.intent_store import intent_store
-    tool_registry.set_intent_provider(intent_store)
-    tool_registry.set_config_store(config)
-    tool_registry.initialize()
+    from modules.host.ai_engine_backend import AIEngineBackend
+    from modules.host.event_sink import SSEEventSink
+    from HelixCore.orchestrator.orchestrator import AgentOrchestrator
+    from modules.host.config_builder import build_agent_config_from_config_manager
+    from modules.host.llm_event_bus import LlmEventBusImpl
+    from modules.app.routes import configure as configure_routes
+
+    # ① 显式构造外部依赖
+    llm_backend = AIEngineBackend()
+    event_sink = SSEEventSink()
+    intent_provider = intent_store
+    agent_config = build_agent_config_from_config_manager()
+
+    # ② Host 驱动工具组装：扫描插件目录 + 读取 Helix.json 配置 + 装载 MCP，形成完整工具集
+    from modules.host.plugin_loader import discover_plugins, load_tool_config
+    from modules.host.log_sink import HostLogSink
+    host_log_sink = HostLogSink()
+    tool_registry.set_intent_provider(intent_provider)
+    tool_registry.set_logger(host_log_sink)
+    discover_plugins(tool_registry)
+    load_tool_config(tool_registry)
     log_info(f"Plugin tools registered: {len(tool_registry.get_all())} tool(s)")
 
     mcp_registry.initialize()
-
     from plugins.mcp_tools import register_mcp_tools
     register_mcp_tools(tool_registry)
     log_info(f"All tools registered: {len(tool_registry.get_all())} tool(s)")
+
+    # ③ 显式构造编排器：所有依赖显式传参（含已组装好的工具注册表）
+    orchestrator = AgentOrchestrator(
+        llm_backend=llm_backend,
+        config=agent_config,
+        event_sink=event_sink,
+        intent_provider=intent_provider,
+        tool_registry=tool_registry,
+        event_bus=LlmEventBusImpl(),
+        log=host_log_sink,
+        refresh_config=build_agent_config_from_config_manager,
+    )
+
+    # ④ 注入 routes（替代模块级全局单例 import）
+    configure_routes(orchestrator, tool_registry)
 
     # Create apps
     service_app = create_service_app()

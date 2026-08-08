@@ -8,9 +8,8 @@ from datetime import datetime, timezone, timedelta
 
 from pypinyin import pinyin, Style
 
-from modules.agents.tool_base import BaseTool
-from modules.core.user_question import user_question_broker
-from modules.llm.llm_events import get_request_context, emit as _emit_llm_event
+from HelixCore.tools.base import BaseTool
+from modules.host.tool_context import ToolContext
 from modules.utils.logger import log_tool_call
 
 
@@ -265,11 +264,7 @@ class AskUserTool(BaseTool):
     }
 
     def execute(self, question: str = "", **kwargs) -> str:
-        request_id = get_request_context()
-        if not request_id:
+        ctx = ToolContext.current()
+        if not ctx:
             return "错误: ask_user 需要活跃的请求上下文（request_id），当前无法提问"
-        if user_question_broker.is_waiting(request_id):
-            return "错误: 已有一个等待用户回答的问题，请等待其回答完成，不要重复提问"
-        log_tool_call(f"ask_user(question='{question[:200]}')")
-        _emit_llm_event(request_id, {"type": "ask_user", "question": question})
-        return user_question_broker.ask(request_id, question)
+        return ctx.ask_user(question)

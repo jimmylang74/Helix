@@ -6,7 +6,7 @@ import os
 from typing import Any
 from datetime import datetime
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call, log_agent_action
 from modules.utils.file_ops import FileOps
 

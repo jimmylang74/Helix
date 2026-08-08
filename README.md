@@ -149,25 +149,41 @@ curl -X POST http://localhost:11555/api/rpc \
 │   └── example_import.py      #   import 模式使用示例
 ├── doc/                       # 设计文档
 │   └── design.md              #   系统架构设计文档 (Mermaid)
-├── modules/                   # 核心模块
-│   ├── core/                  #   核心编排
+├── HelixCore/                 # 核心引擎包 (与 host 解耦, 依赖注入)
+│   ├── ports/                 #   注入端口 (Protocol)
+│   │   ├── llm.py             #     LLMBackend 端口
+│   │   ├── events.py          #     EventSink 端口
+│   │   └── intents.py         #     IntentProvider 端口
+│   ├── orchestrator/          #   编排核心
 │   │   ├── orchestrator.py    #     三阶段编排器 (规划→节点循环→总结)
 │   │   ├── task_graph.py      #     DAG 任务图 (TaskNode/NodeState 状态机)
 │   │   ├── agent_state.py     #     请求状态定义 (AgentState TypedDict)
-│   │   └── status_events.py   #     SSE 事件总线 (状态推送/断线回放)
+│   │   └── config.py          #     编排配置
+│   ├── tools/                 #   工具基座
+│   │   └── base.py            #     BaseTool 抽象基类 + ToolRegistry
+│   ├── prompts/               #   提示词模板
+│   │   └── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结，generic 兜底)
+│   └── utils/                 #   工具库
+│       └── tokenizer.py       #     Token 估算器
+├── modules/                   # host 侧模块 (注入实现)
+│   ├── core/                  #   核心编排
+│   │   ├── orchestrator.py    #     编排器装配 (注入 LLMBackend/EventSink/IntentProvider)
+│   │   ├── status_events.py   #     SSE 事件总线 (状态推送/断线回放)
+│   │   └── user_question.py   #     用户提问 broker
+│   ├── host/                  #   host 适配层 (注入实现)
+│   │   ├── ai_engine_backend.py #   LLMBackend 实现 (ai_engine 接入)
+│   │   ├── event_sink.py      #     EventSink 实现 (SSE)
+│   │   ├── intent_store.py    #     IntentProvider 实现
+│   │   └── tool_context.py    #     工具上下文 (ask_user/cancel)
 │   ├── llm/                   #   LLM 层
-│   │   └── llm_client.py      #     统一 LLM 客户端 (通过 ai_engine 接入所有 Provider)
+│   │   └── llm_events.py      #     LLM 事件总线
 │   ├── agents/                #   Agent 层
-│   │   ├── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
-│   │   ├── agent_tools.py     #     Agent 工具集 (兼容层)
-│   │   └── tool_base.py       #     BaseTool 抽象基类 + ToolRegistry
+│   │   └── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
 │   ├── mcp/                   #   MCP 协议层
 │   │   ├── mcp_client.py      #     MCP 客户端 (stdio/SSE 双传输)
 │   │   └── mcp_registry.py    #     MCP 注册中心 (生命周期/意图路由)
 │   ├── app/                   #   应用层
 │   │   └── routes.py          #     Flask 路由 (JSON-RPC API + Admin + Web UI)
-│   ├── prompts/               #   提示词模板
-│   │   └── task_graph_prompts.py #   DAG 三阶段提示词 (规划/节点执行/总结，generic 兜底)
 │   ├── config/                #   配置管理
 │   │   └── config_manager.py  #     配置管理器 (单例/线程安全)
 │   └── utils/                 #   工具库
@@ -233,7 +249,7 @@ python3 test_agent.py
 **快速上手**：继承 `BaseTool`，实现 `execute()` 方法，定义 `name`/`description`/`intents`/`parameters`，重启服务即可生效。
 
 ```python
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 
 class MyTool(BaseTool):
     name = "my_tool"

@@ -224,7 +224,11 @@ def test_07_tool_execution():
     """Test tool execution capabilities."""
     print_header("Test 07: Tool Execution")
 
-    from modules.agents.tool_base import tool_registry
+    from HelixCore.tools.base import tool_registry
+    from modules.config.config_manager import ConfigManager
+    from modules.host.intent_store import intent_store
+    tool_registry.set_intent_provider(intent_store)
+    tool_registry.set_config_store(ConfigManager())
     tool_registry.initialize()
 
     # Test web_fetch_batch
@@ -261,7 +265,11 @@ def test_08_ppt_creation():
     """Test PPT creation capability."""
     print_header("Test 08: PPT Generation")
 
-    from modules.agents.tool_base import tool_registry
+    from HelixCore.tools.base import tool_registry
+    from modules.config.config_manager import ConfigManager
+    from modules.host.intent_store import intent_store
+    tool_registry.set_intent_provider(intent_store)
+    tool_registry.set_config_store(ConfigManager())
     tool_registry.initialize()
 
     ppt_config = {
@@ -307,7 +315,11 @@ def test_09_image_download():
     """Test image download capability."""
     print_header("Test 09: Image Download")
 
-    from modules.agents.tool_base import tool_registry
+    from HelixCore.tools.base import tool_registry
+    from modules.config.config_manager import ConfigManager
+    from modules.host.intent_store import intent_store
+    tool_registry.set_intent_provider(intent_store)
+    tool_registry.set_config_store(ConfigManager())
     tool_registry.initialize()
 
     try:
@@ -328,7 +340,7 @@ def test_10_llm_client():
     print_header("Test 10: LLM Client")
 
     try:
-        from modules.llm.llm_client import LLMClient
+        from modules.host.ai_engine_backend import AIEngineBackend as LLMClient
 
         client = LLMClient()
         print_result("LLMClient initialization", True,

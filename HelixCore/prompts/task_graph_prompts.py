@@ -31,7 +31,7 @@ DOMAIN_SECTIONS，auto 模式拼接各可用意图配置的 planning_prompt 指�
 import json
 from typing import List, Optional
 
-from modules.agents.tool_base import ToolDefinition
+from HelixCore.tools.base import ToolDefinition
 
 # ═══════════════════════════════════════════════════════════════════
 # 公共规则（自 common_prompt.py 迁入）

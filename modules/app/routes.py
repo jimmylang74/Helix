@@ -15,10 +15,10 @@ from modules.core import status_events
 from modules.utils import log_watcher, history_store
 
 from modules.core.orchestrator import orchestrator
-from modules.core.user_question import user_question_broker
+from modules.host.tool_context import ToolContext
 from modules.config.config_manager import ConfigManager
-from modules.agents.intent_router import intent_router
-from modules.agents.tool_base import tool_registry
+from modules.host.intent_store import intent_store
+from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
 from modules.utils.logger import log_info, log_error, log_debug
@@ -92,7 +92,7 @@ def _agent_router(params):
         answer = params.get("answer", "")
         if not isinstance(answer, str) or not answer.strip():
             raise ValueError("Missing 'answer' field in params")
-        if not user_question_broker.answer(request_id, answer):
+        if not ToolContext(request_id).answer(answer):
             raise ValueError(f"Request '{request_id}' is not waiting for a user answer")
         log_info(f"[{request_id}] user answered: {answer[:100]}")
         return {
@@ -106,7 +106,7 @@ def _agent_router(params):
     user_request = params["request"]
     forced_intent = params.get("intent", "auto")
     if forced_intent != "auto":
-        registered = intent_router.get_registered_intents()
+        registered = intent_store.get_registered_intents()
         if forced_intent not in registered:
             raise ValueError(
                 f"Invalid intent: {forced_intent}. Must be one of: auto, "
@@ -179,14 +179,14 @@ def _config_update(params):
 # ---- Intents ----
 
 def _intents_get(params):
-    return {"intents": intent_router.get_registered_intents()}
+    return {"intents": intent_store.get_registered_intents()}
 
 
 def _intents_update(params):
     intent_type = params.get("intent_type", "")
     if not intent_type:
         raise ValueError("Missing 'intent_type' in params")
-    success = intent_router.update_intent(intent_type, params)
+    success = intent_store.update_intent(intent_type, params)
     return {"success": success}
 
 
@@ -194,7 +194,7 @@ def _intents_delete(params):
     intent_type = params.get("intent_type", "")
     if not intent_type:
         raise ValueError("Missing 'intent_type' in params")
-    success = intent_router.delete_intent(intent_type)
+    success = intent_store.delete_intent(intent_type)
     return {"success": success}
 
 
@@ -206,7 +206,7 @@ def _history_get(params):
 # ---- LLM ----
 
 def _llm_test(params):
-    from modules.llm.llm_client import LLMClient
+    from modules.host.ai_engine_backend import AIEngineBackend as LLMClient
     client = LLMClient()
     result = client.simple_chat(
         "Reply exactly with: OK. I am working correctly.",

@@ -8,7 +8,7 @@ calculator_tool.py - 安全计算器示例外部插件
 import ast
 import operator
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
 
 

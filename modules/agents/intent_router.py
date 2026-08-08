@@ -7,7 +7,7 @@ Pre-registered templates with admin configurable settings.
 import json
 from typing import Any, Dict, Optional
 from modules.config.config_manager import ConfigManager
-from modules.prompts.task_graph_prompts import (
+from HelixCore.prompts.task_graph_prompts import (
     GENERIC_INTENT_ID,
     GENERIC_INTENT_NAME,
     GENERIC_INTENT_DESC,

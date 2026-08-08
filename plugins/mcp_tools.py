@@ -4,7 +4,7 @@ MCP Tools Plugin - Adapts MCP-provided tools into BaseTool for unified ToolRegis
 
 from typing import Any
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.utils.logger import log_tool_call, log_error, log_info
 

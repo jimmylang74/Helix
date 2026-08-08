@@ -1,8 +1,9 @@
 """
-LLM Client — Unified interface via ai_engine submodule.
+AI Engine Backend — LLMBackend implementation via the ai_engine submodule.
 
 All LLM calls go through ai_engine.run_engine() using --output-format events.
 Events are captured from stdout and parsed into structured responses.
+Implements the HelixCore.ports.llm.LLMBackend protocol (formerly LLMClient).
 """
 
 import io
@@ -12,9 +13,9 @@ import re
 import sys
 from argparse import Namespace
 from contextlib import redirect_stdout
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from HelixCore.ports.llm import LLMBackend, LLMResponse
 from modules.config.config_manager import ConfigManager
 from modules.llm.llm_events import get_request_context, emit as _emit_event
 from modules.utils.logger import (
@@ -78,27 +79,20 @@ class _StdoutEventEmitter:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Data classes (unchanged interface for orchestrator compatibility)
+# LLMResponse 与 LLMBackend 协议均定义于 HelixCore.ports.llm（见顶部 import）。
 # ═══════════════════════════════════════════════════════════════════════
 
 
-@dataclass
-class LLMResponse:
-    """Structured LLM response."""
-    content: str
-    tool_calls: List[Dict[str, Any]] = field(default_factory=list)
-    finish_reason: str = "stop"
-    # ai_engine "usage" event dict (prompt_tokens/completion_tokens/reasoning_tokens); None if unreported.
-    usage: Optional[Dict[str, Any]] = None
-
-
 # ═══════════════════════════════════════════════════════════════════════
-# LLM Client
+# AI Engine Backend
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class LLMClient:
-    """Unified LLM client — delegates to ai_engine submodule."""
+class AIEngineBackend(LLMBackend):
+    """AI Engine 后端 — 通过 ai_engine 子模块实现 LLMBackend 协议。
+
+    原 LLMClient；重命名以体现其 Host 侧 LLMBackend 适配器角色。
+    """
 
     def __init__(self):
         self.config = ConfigManager()
@@ -201,6 +195,14 @@ class LLMClient:
         self._provider = self.config.get("llm.provider", "ollama_native")
         self._log_file = self._resolve_log_path()
         log_info(f"LLM client refreshed: provider={self._provider}")
+
+    def get_provider_model(self) -> tuple[str, str]:
+        """Return ``(provider, model)`` for token estimation (LLMBackend 协议)."""
+        llm_config = self.config.get_llm_config()
+        return (
+            llm_config.get("provider", "ollama_native"),
+            llm_config.get("model", ""),
+        )
 
     # ── Internal helpers ──────────────────────────────────────────
 
@@ -427,21 +429,21 @@ class LLMClient:
 
         # Direct JSON parse
         if text.startswith("{") and text.endswith("}"):
-            parsed = LLMClient._try_parse_json(text)
+            parsed = AIEngineBackend._try_parse_json(text)
             if parsed is not None:
                 return parsed
 
         # Fenced code block
         json_match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
         if json_match:
-            parsed = LLMClient._try_parse_json(json_match.group(1).strip())
+            parsed = AIEngineBackend._try_parse_json(json_match.group(1).strip())
             if parsed is not None:
                 return parsed
 
         # Brace-delimited
         brace_match = re.search(r"\{.*\}", text, re.DOTALL)
         if brace_match:
-            parsed = LLMClient._try_parse_json(brace_match.group(0))
+            parsed = AIEngineBackend._try_parse_json(brace_match.group(0))
             if parsed is not None:
                 return parsed
 

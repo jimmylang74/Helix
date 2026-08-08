@@ -10,7 +10,7 @@ import json
 import urllib.request
 import urllib.parse
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
 
 

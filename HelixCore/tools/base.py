@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from HelixCore.ports.intents import IntentProvider
 from modules.utils.logger import log_info, log_error, log_warning
 
 
@@ -108,17 +109,33 @@ class ToolRegistry:
         self._initialized = True
         self._tools: Dict[str, BaseTool] = {}
         self._tools_lock = threading.Lock()
+        # Host 组合根注入（P4）：避免 HelixCore 反向依赖 modules.agents / modules.config
+        self._intent_provider: Optional[IntentProvider] = None
+        self._config_store: Optional[Any] = None
         self._plugins_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "plugins"
         )
         self._user_plugins_dir = os.path.join(self._plugins_dir, "user")
 
+    def set_intent_provider(self, provider: Optional[IntentProvider]) -> None:
+        """Host 组合根注入意图提供者（P4，替代对 modules.agents 的 lazy import）。"""
+        self._intent_provider = provider
+
+    def set_config_store(self, store: Optional[Any]) -> None:
+        """Host 组合根注入配置存取对象（P4，替代对 modules.config 的 lazy import）。
+
+        对象需提供 get(key_path, default) 与 update_section(section, data)
+        （modules.config.config_manager.ConfigManager 即满足）。
+        """
+        self._config_store = store
+
     def _get_all_registered_intent_ids(self) -> List[str]:
-        """Return all registered intent IDs from the intent router."""
+        """Return all registered intent IDs from the injected intent provider."""
+        if self._intent_provider is None:
+            return []
         try:
-            from modules.agents.intent_router import intent_router
-            return list(intent_router.get_registered_intents().keys())
+            return list(self._intent_provider.get_registered_intents().keys())
         except Exception:
             return []
 
@@ -265,9 +282,11 @@ class ToolRegistry:
 
     def load_enabled_state(self):
         """Load enable/disable state and intents from Helix.json."""
+        if self._config_store is None:
+            log_warning("ToolRegistry: config store not injected, skipping tool config load")
+            return
         try:
-            from modules.config.config_manager import ConfigManager
-            config = ConfigManager()
+            config = self._config_store
             tools_config = config.get("plugins", {})
             with self._tools_lock:
                 for name, tool in self._tools.items():
@@ -282,9 +301,11 @@ class ToolRegistry:
 
     def save_enabled_state(self):
         """Persist tool config (enabled + intents) to Helix.json."""
+        if self._config_store is None:
+            log_warning("ToolRegistry: config store not injected, skipping tool config save")
+            return
         try:
-            from modules.config.config_manager import ConfigManager
-            config = ConfigManager()
+            config = self._config_store
             tools_config = config.get("plugins", {})
             with self._tools_lock:
                 for name, tool in self._tools.items():

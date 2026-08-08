@@ -784,7 +784,7 @@ Orchestrator._execute_tool_call(state, tc):
 
 ```python
 # plugins/my_custom_tool.py
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 
 class MyCustomTool(BaseTool):
     name = "my_tool"
@@ -839,7 +839,7 @@ stateDiagram-v2
 
 ### 8.2 AgentState 关键字段
 
-`AgentState` 是 `modules/core/agent_state.py` 中定义的最小化状态 TypedDict：
+`AgentState` 是 `HelixCore/orchestrator/agent_state.py` 中定义的最小化状态 TypedDict：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -857,7 +857,7 @@ stateDiagram-v2
 
 ### 8.3 TaskGraph 节点数据模型
 
-任务图由 `modules/core/task_graph.py` 定义，是 Phase 2 的核心数据结构：
+任务图由 `HelixCore/orchestrator/task_graph.py` 定义，是 Phase 2 的核心数据结构：
 
 ```python
 class TaskNode:
@@ -1014,7 +1014,7 @@ graph TB
     subgraph Source["数据来源"]
         Logger["Logger<br/>modules/utils/logger.py"]
         AIEngine["ai_engine<br/>run_engine()"]
-        LLMClient["LLMClient._call_engine()<br/>modules/llm/llm_client.py"]
+        LLMClient["LLMClient._call_engine()<br/>modules/host/ai_engine_backend.py"]
     end
 
     subgraph Sink1["通路 ① 控制台 + 运行日志"]
@@ -1125,7 +1125,7 @@ sequenceDiagram
 
 | 组件 | 文件 | 职责 |
 |------|------|------|
-| `_StdoutEventEmitter` | `modules/llm/llm_client.py` | 包装 `StringIO` 缓冲区，`write()` 时同时解析 NDJSON 并 `emit()` 到事件总线 |
+| `_StdoutEventEmitter` | `modules/host/ai_engine_backend.py` | 包装 `StringIO` 缓冲区，`write()` 时同时解析 NDJSON 并 `emit()` 到事件总线 |
 | `llm_events` 事件总线 | `modules/llm/llm_events.py` | thread-local `request_id` 上下文 + per-request `Queue[]` + SSE `stream()` 生成器 |
 | `Orchestrator` | `modules/core/orchestrator.py` | `process_request()` 入口调用 `set_request_context()`，`finally` 调用 `llm_cleanup()` |
 | SSE endpoint | `modules/app/routes.py` | `GET /api/llm-stream?request_id=xxx` 返回 `text/event-stream` 响应 |

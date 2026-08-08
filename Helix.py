@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.utils.logger import init_logger, log_info, log_error, log_orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
-from modules.agents.tool_base import tool_registry
+from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 
 
@@ -97,6 +97,9 @@ def main():
     log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 
     # Initialize plugin tool registry (auto-scans plugins/ directory)
+    from modules.host.intent_store import intent_store
+    tool_registry.set_intent_provider(intent_store)
+    tool_registry.set_config_store(config)
     tool_registry.initialize()
     log_info(f"Plugin tools registered: {len(tool_registry.get_all())} tool(s)")
 

@@ -15,13 +15,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from modules.core.agent_state import (
+from HelixCore.orchestrator.agent_state import (
     AgentState, create_initial_state
 )
-from modules.core.task_graph import TaskGraph, NodeState
-from modules.agents.tool_base import tool_registry, ToolDefinition
-from modules.llm.llm_client import LLMClient, LLMResponse
-from modules.prompts.task_graph_prompts import (
+from HelixCore.orchestrator.task_graph import TaskGraph, NodeState
+from HelixCore.orchestrator.config import AgentConfig, SamplingParams
+from HelixCore.tools.base import tool_registry, ToolDefinition
+from HelixCore.ports.events import EventSink
+from HelixCore.ports.llm import LLMBackend, LLMResponse
+from HelixCore.prompts.task_graph_prompts import (
     USER_PROMPT_TASK_PLANNING,
     USER_PROMPT_FINALIZER,
     get_node_system_prompt,
@@ -33,7 +35,11 @@ from modules.prompts.task_graph_prompts import (
     ASK_USER_RULES,
     COMMON_JSON_CONTRACT,
 )
-from modules.agents.intent_router import intent_router
+from HelixCore.utils.tokenizer import TokenEstimator, create_estimator_for_config
+from modules.host.ai_engine_backend import AIEngineBackend
+from modules.host.event_sink import SSEEventSink
+from HelixCore.ports.intents import IntentProvider
+from modules.host.intent_store import IntentStore
 from modules.utils.logger import (
     log_orchestrator, log_llm_decision,
     log_error, log_info, log_section, log_agent_to_llm, log_llm_to_agent, log_tool_call
@@ -42,18 +48,29 @@ from modules.llm.llm_events import (
     set_request_context, clear_request_context,
     cleanup as llm_cleanup, emit as _emit_llm_event, get_request_context
 )
-from modules.core import status_events
-from modules.core.user_question import user_question_broker
+from modules.host.tool_context import ToolContext
 from modules.utils import history_store
 from modules.config.config_manager import ConfigManager
-from modules.agents.tokenizer import TokenEstimator, create_estimator_for_config
 
 
 class AgentOrchestrator:
     """Three-phase orchestrator with DAG task graph."""
 
-    def __init__(self):
-        self.llm = LLMClient()
+    def __init__(
+        self,
+        llm_backend: Optional[LLMBackend] = None,
+        config: Optional[AgentConfig] = None,
+        event_sink: Optional[EventSink] = None,
+        intent_provider: Optional[IntentProvider] = None,
+    ):
+        # LLMBackend 由 Host 注入；默认用 ai_engine 适配器（P4 组合根收敛注入）
+        self.llm: LLMBackend = llm_backend or AIEngineBackend()
+        # AgentConfig 由 Host 注入；默认从 Helix.json 读取（P4 组合根收敛注入）
+        self._config: AgentConfig = config or self._build_config_from_config_manager()
+        # EventSink 由 Host 注入；默认用 SSE 事件总线适配器（P4 组合根收敛注入）
+        self._event_sink: EventSink = event_sink or SSEEventSink()
+        # IntentProvider 由 Host 注入；默认用 IntentStore 适配器（P4 组合根收敛注入）
+        self._intent_provider: IntentProvider = intent_provider or IntentStore()
         self._active_states: Dict[str, AgentState] = {}
         self._states_lock = threading.Lock()
         self._graphs: Dict[str, TaskGraph] = {}
@@ -100,7 +117,7 @@ class AgentOrchestrator:
                 # 直接回答，不需要节点执行
                 state["final_result"] = planning_result.get("response", "")
                 state["orchestrator_phase"] = "done"
-                status_events.emit(request_id, state, completed=True)
+                self._event_sink.emit(request_id, state, completed=True)
                 log_section(f"Request completed (direct): {request_id}")
                 return self._build_success_result(state)
 
@@ -118,7 +135,7 @@ class AgentOrchestrator:
             # 推送最终结果（finalizer 的 final_answer 或拼接结果）到前端
             graph = self._get_graph(request_id)
             graph_nodes = graph.to_dict_list() if graph else None
-            status_events.emit(request_id, state, graph_nodes=graph_nodes, completed=True)
+            self._event_sink.emit(request_id, state, graph_nodes=graph_nodes, completed=True)
             result = self._build_success_result(state)
             log_section(f"Request completed: {request_id}")
             return result
@@ -131,7 +148,7 @@ class AgentOrchestrator:
             state["orchestrator_phase"] = "done"
             graph = self._get_graph(request_id)
             graph_nodes = graph.to_dict_list() if graph else None
-            status_events.emit(request_id, state, graph_nodes=graph_nodes)
+            self._event_sink.emit(request_id, state, graph_nodes=graph_nodes)
             return self._error_response(state, str(e))
         finally:
             # 任务结束后持久化一条历史记录 (成功/失败/取消全覆盖), 供"使用记录"页面展示
@@ -146,11 +163,11 @@ class AgentOrchestrator:
             })
             llm_cleanup(request_id)
             # 唤醒可能仍在等待用户回答的 ask_user，避免节点线程阻塞到超时
-            user_question_broker.cancel(request_id)
+            ToolContext(request_id).cancel()
             # 任务结束即释放：前端快速测试页改走"不销毁"方案，无需为已完成任务保留状态与缓冲
             with self._states_lock:
                 self._active_states.pop(request_id, None)
-            status_events.cleanup(request_id)
+            self._event_sink.cleanup(request_id)
             with self._graphs_lock:
                 self._graphs.pop(request_id, None)
             with self._stream_lock:
@@ -168,11 +185,11 @@ class AgentOrchestrator:
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
         # 唤醒等待用户回答的 ask_user，让节点线程退出阻塞
-        user_question_broker.cancel(request_id)
+        ToolContext(request_id).cancel()
         log_orchestrator(f"Request {request_id} cancelled by user")
         graph = self._get_graph(request_id)
         graph_nodes = graph.to_dict_list() if graph else None
-        status_events.emit(request_id, state, graph_nodes=graph_nodes)
+        self._event_sink.emit(request_id, state, graph_nodes=graph_nodes)
         return True
 
     def is_cancelled(self, state: AgentState) -> bool:
@@ -198,8 +215,34 @@ class AgentOrchestrator:
         }
 
     def refresh_llm(self):
-        """Refresh LLM client (call after config change)."""
+        """Refresh LLM backend + runtime config (call after config change)."""
         self.llm.refresh()
+        self.update_config()
+
+    def update_config(self, config: Optional[AgentConfig] = None):
+        """Hot-reload runtime config. Host may inject a new AgentConfig snapshot."""
+        if config is not None:
+            self._config = config
+        else:
+            self._config = self._build_config_from_config_manager()
+
+    @staticmethod
+    def _build_config_from_config_manager() -> AgentConfig:
+        """Build an AgentConfig snapshot from Helix.json (host-side read)."""
+        cm = ConfigManager()
+        sampling = {
+            phase: cm.get_graph_sampling(phase)
+            for phase in ("planning", "execution", "finalizer")
+        }
+        return AgentConfig(
+            node_parallel_count=int(cm.get("server.node_parallel_count", 1)),
+            max_graph_updates=int(cm.get("llm.max_graph_updates", 5)),
+            planning_max_ask_rounds=int(cm.get("llm.planning_max_ask_rounds", 5)),
+            max_input_tokens=int(cm.get("llm.max_input_tokens", 32768)),
+            planning=SamplingParams(**sampling["planning"]),
+            execution=SamplingParams(**sampling["execution"]),
+            finalizer=SamplingParams(**sampling["finalizer"]),
+        )
 
     # ═══════════════════════════════════════════════════════════════
     # Phase 1 — Task Planning
@@ -231,8 +274,8 @@ class AgentOrchestrator:
             log_agent_to_llm("Sending request to LLM for task planning...")
 
         # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划（上限 llm.planning_max_ask_rounds 轮）
-        max_ask_rounds = ConfigManager().get("llm.planning_max_ask_rounds", 5)
-        planning_sampling = ConfigManager().get_graph_sampling("planning")
+        max_ask_rounds = self._config.planning_max_ask_rounds
+        planning_sampling = self._config.get_graph_sampling("planning")
         planning_context = state["user_request"]
         for ask_round in range(max_ask_rounds + 1):
             user_prompt = USER_PROMPT_TASK_PLANNING.format(
@@ -252,8 +295,8 @@ class AgentOrchestrator:
             response = self.llm.ask_json(
                 prompt=user_prompt,
                 system_prompt=system_prompt,
-                temperature=planning_sampling["temperature"],
-                top_p=planning_sampling["top_p"],
+                temperature=planning_sampling.temperature,
+                top_p=planning_sampling.top_p,
             )
 
             self._record_usage(
@@ -289,7 +332,7 @@ class AgentOrchestrator:
             intent_type = forced_intent
         else:
             intent_type = response.get("intent_type", GENERIC_INTENT_ID)
-            if intent_type not in intent_router.get_enabled_intent_ids():
+            if intent_type not in self._intent_provider.get_enabled_intent_ids():
                 intent_type = GENERIC_INTENT_ID
 
         state["intent_type"] = intent_type
@@ -319,7 +362,7 @@ class AgentOrchestrator:
                 "can_parallel": False,
             }]
 
-        max_updates = ConfigManager().get("llm.max_graph_updates", 5)
+        max_updates = self._config.max_graph_updates
         graph = TaskGraph(nodes=nodes, max_graph_updates=max_updates)
 
         with self._graphs_lock:
@@ -334,7 +377,7 @@ class AgentOrchestrator:
         )
 
         graph_nodes = graph.to_dict_list()
-        status_events.emit(state["request_id"], state, graph_nodes=graph_nodes)
+        self._event_sink.emit(state["request_id"], state, graph_nodes=graph_nodes)
 
         return {
             "task_complete": False,
@@ -357,7 +400,7 @@ class AgentOrchestrator:
             state["error"] = "No task graph found"
             return
 
-        parallel_count = ConfigManager().get("server.node_parallel_count", 1)
+        parallel_count = self._config.node_parallel_count
 
         while not graph.is_all_done():
             if self.is_cancelled(state):
@@ -373,7 +416,7 @@ class AgentOrchestrator:
                     break
                 # 有 Running 但还没 Ready → 等下一个循环
                 log_orchestrator(f"Waiting for {graph.get_running_count()} running node(s)...")
-                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
+                self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
                 # 没有 Ready 节点会无限空转，加个安全等待
                 import time
                 time.sleep(0.1)
@@ -397,7 +440,7 @@ class AgentOrchestrator:
                 node = nodes_to_run[0]
                 self._set_stream_node(state["request_id"], node.id)
                 graph.set_node_running(node.id)
-                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
+                self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
                 self._execute_node(state, node)
             else:
                 threads = []
@@ -407,7 +450,7 @@ class AgentOrchestrator:
                 # 第一个节点流式，其他静默
                 nodes_to_run[0].can_parallel = True  # 确保被标记
                 self._set_stream_node(state["request_id"], nodes_to_run[0].id)
-                status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
+                self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
 
                 for i, node in enumerate(nodes_to_run):
                     is_stream = (i == 0)
@@ -424,7 +467,7 @@ class AgentOrchestrator:
                     t.join()
 
             self._clear_stream_node(state["request_id"])
-            status_events.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
+            self._event_sink.emit(state["request_id"], state, graph_nodes=graph.to_dict_list())
 
         log_orchestrator("Task Graph Node Loop completed.")
 
@@ -446,7 +489,7 @@ class AgentOrchestrator:
         system_prompt = get_node_system_prompt(
             state["intent_type"], intents_cfg, tools=tool_definitions
         )
-        execution_sampling = ConfigManager().get_graph_sampling("execution")
+        execution_sampling = self._config.get_graph_sampling("execution")
 
         # 重置节点的 conversation history
         node.node_conversation_history = []
@@ -515,8 +558,8 @@ class AgentOrchestrator:
                 prompt=user_prompt,
                 system_prompt=system_prompt,
                 emit_stream=emit_stream,
-                temperature=execution_sampling["temperature"],
-                top_p=execution_sampling["top_p"],
+                temperature=execution_sampling.temperature,
+                top_p=execution_sampling.top_p,
             )
 
             # 统计该节点 LLM 调用的输入/输出 token
@@ -574,7 +617,7 @@ class AgentOrchestrator:
                     f"Node {node.id} completed: {node_response[:100]}"
                 )
                 # 节点结果（LLM response 字段）推送到前端"最终结果"窗口
-                status_events.emit(
+                self._event_sink.emit(
                     request_id,
                     state,
                     graph_nodes=graph.to_dict_list(),
@@ -665,12 +708,12 @@ class AgentOrchestrator:
             return
 
         log_agent_to_llm("Requesting final summary from LLM...")
-        finalizer_sampling = ConfigManager().get_graph_sampling("finalizer")
+        finalizer_sampling = self._config.get_graph_sampling("finalizer")
         response = self.llm.ask_json(
             prompt=user_prompt,
             system_prompt=finalizer_system_prompt,
-            temperature=finalizer_sampling["temperature"],
-            top_p=finalizer_sampling["top_p"],
+            temperature=finalizer_sampling.temperature,
+            top_p=finalizer_sampling.top_p,
         )
 
         self._record_usage(
@@ -728,10 +771,10 @@ class AgentOrchestrator:
         Ollama this picks the HF → tiktoken → simple chain, since litellm
         drops usage on the stream path).
         """
-        llm_config = self.llm.config.get_llm_config()
+        provider, model = self.llm.get_provider_model()
         return create_estimator_for_config(
-            provider=llm_config.get("provider", "ollama_native"),
-            model=llm_config.get("model", "qwen2.5:7b"),
+            provider=provider,
+            model=model,
             streaming=True,
         )
 
@@ -749,7 +792,7 @@ class AgentOrchestrator:
 
         Updates ``state["token_usage"]`` with the last call's counts
         (current) and the request-wide sums (total); the next
-        ``status_events.emit`` carries them to the frontend.
+        ``self._event_sink.emit`` carries them to the frontend.
         """
         estimator = self._get_estimator(state["request_id"])
         usage = estimator.estimate_usage(input_text, output_text)
@@ -780,7 +823,7 @@ class AgentOrchestrator:
         使用当前请求的 token 估算器（按 LLM 配置经 create_estimator_for_config
         选择：HF tokenizer → tiktoken → 字节粗估），与 _record_usage 的统计口径一致。
         """
-        max_tokens = ConfigManager().get("llm.max_input_tokens", 32768)
+        max_tokens = self._config.max_input_tokens
         estimator = self._get_estimator(request_id)
         estimated = sum(estimator.count_tokens(p) for p in text_parts)
         if estimated > max_tokens:

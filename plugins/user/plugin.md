@@ -17,7 +17,7 @@
 ## BaseTool 接口
 
 ```python
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 
 class MyTool(BaseTool):
     """工具的简短说明。"""
@@ -84,7 +84,7 @@ def execute(self, param1: str = "", param2: int = 0, **kwargs) -> str:
 ## 常用导入
 
 ```python
-from modules.agents.tool_base import BaseTool          # 必须
+from HelixCore.tools.base import BaseTool          # 必须
 from modules.utils.logger import log_tool_call          # 可选：记录工具调用
 from modules.utils.file_ops import FileOps               # 可选：文件操作封装
 ```
@@ -101,7 +101,7 @@ weather_tool.py - 天气查询示例插件
 import json
 import urllib.request
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
 
 
@@ -154,7 +154,7 @@ calculator_tool.py - 简单计算器插件
 import ast
 import operator
 
-from modules.agents.tool_base import BaseTool
+from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
 
 

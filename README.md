@@ -150,10 +150,7 @@ curl -X POST http://localhost:11555/api/rpc \
 ├── doc/                       # 设计文档
 │   └── design.md              #   系统架构设计文档 (Mermaid)
 ├── HelixCore/                 # 核心引擎包 (与 host 解耦, 依赖注入)
-│   ├── ports/                 #   注入端口 (Protocol)
-│   │   ├── llm.py             #     LLMBackend 端口
-│   │   ├── events.py          #     EventSink 端口
-│   │   └── intents.py         #     IntentProvider 端口
+│   ├── interface.py           #   注入端口统一契约 (ABC: LLMBackend/EventSink/LlmEventBus/IntentProvider/LogSink)
 │   ├── orchestrator/          #   编排核心
 │   │   ├── orchestrator.py    #     三阶段编排器 (规划→节点循环→总结)
 │   │   ├── task_graph.py      #     DAG 任务图 (TaskNode/NodeState 状态机)
@@ -166,19 +163,18 @@ curl -X POST http://localhost:11555/api/rpc \
 │   └── utils/                 #   工具库
 │       └── tokenizer.py       #     Token 估算器
 ├── modules/                   # host 侧模块 (注入实现)
-│   ├── core/                  #   核心编排
-│   │   ├── orchestrator.py    #     编排器装配 (注入 LLMBackend/EventSink/IntentProvider)
+│   ├── agent/                 #   Agent 层 (意图路由 + 协作设施)
+│   │   ├── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
 │   │   ├── status_events.py   #     SSE 事件总线 (状态推送/断线回放)
 │   │   └── user_question.py   #     用户提问 broker
 │   ├── host/                  #   host 适配层 (注入实现)
 │   │   ├── ai_engine_backend.py #   LLMBackend 实现 (ai_engine 接入)
 │   │   ├── event_sink.py      #     EventSink 实现 (SSE)
 │   │   ├── intent_store.py    #     IntentProvider 实现
+│   │   ├── llm_event_bus.py   #     LlmEventBus 实现 (llm_events 包装)
 │   │   └── tool_context.py    #     工具上下文 (ask_user/cancel)
 │   ├── llm/                   #   LLM 层
 │   │   └── llm_events.py      #     LLM 事件总线
-│   ├── agents/                #   Agent 层
-│   │   └── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
 │   ├── mcp/                   #   MCP 协议层
 │   │   ├── mcp_client.py      #     MCP 客户端 (stdio/SSE 双传输)
 │   │   └── mcp_registry.py    #     MCP 注册中心 (生命周期/意图路由)

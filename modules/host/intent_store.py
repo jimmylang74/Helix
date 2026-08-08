@@ -1,9 +1,9 @@
 """
 Intent Store — IntentProvider implementation via the IntentRouter.
 
-Wraps modules.agents.intent_router (real intent routing/storage logic) so the
-orchestrator depends only on the HelixCore.ports.intents.IntentProvider
-protocol. Implements the HelixCore.ports.intents.IntentProvider protocol
+Wraps modules.agent.intent_router (real intent routing/storage logic) so the
+orchestrator depends only on the HelixCore.interface.IntentProvider
+protocol. Implements the HelixCore.interface.IntentProvider protocol
 (formerly direct intent_router calls).
 
 The ``router`` constructor argument is injectable for testing; it defaults to
@@ -12,7 +12,7 @@ the real global intent_router instance.
 
 from typing import Any, Dict, Optional
 
-from HelixCore.ports.intents import IntentProvider
+from HelixCore.interface import IntentProvider
 
 
 class IntentStore(IntentProvider):
@@ -20,7 +20,7 @@ class IntentStore(IntentProvider):
 
     def __init__(self, router: Any = None):
         if router is None:
-            from modules.agents.intent_router import intent_router as default_router
+            from modules.agent.intent_router import intent_router as default_router
 
             router = default_router
         self._router = router

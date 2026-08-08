@@ -9,19 +9,32 @@ import os
 import sys
 import uuid
 import threading
+from datetime import datetime
+from typing import Any
 from flask import Blueprint, request, jsonify, render_template, send_from_directory, Response
 from modules.llm.llm_events import stream as llm_event_stream
-from modules.core import status_events
+from modules.agent import status_events
 from modules.utils import log_watcher, history_store
 
-from modules.core.orchestrator import orchestrator
 from modules.host.tool_context import ToolContext
+from modules.host.plugin_loader import save_tool_config
 from modules.config.config_manager import ConfigManager
 from modules.host.intent_store import intent_store
-from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
 from modules.utils.logger import log_info, log_error, log_debug
+
+
+# 运行时注入：编排器与工具注册表由组合根（Helix.py）显式构造后经 configure() 注入
+_orchestrator: Any = None
+_tool_registry: Any = None
+
+
+def configure(orchestrator, tool_registry):
+    """组合根注入编排器与工具注册表实例（替代模块级全局单例 import）。"""
+    global _orchestrator, _tool_registry
+    _orchestrator = orchestrator
+    _tool_registry = tool_registry
 
 
 # Blueprints
@@ -117,7 +130,24 @@ def _agent_router(params):
     log_info(f"[{request_id}] intent={forced_intent}, request={user_request[:100]}...")
 
     def _run():
-        orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
+        created_at = datetime.now().isoformat(timespec="seconds")
+        result = None
+        try:
+            result = _orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
+        finally:
+            # Host 侧收尾：请求结束（成功/失败/取消/异常）即唤醒可能仍阻塞的 ask_user
+            ToolContext(request_id).cancel()
+            # 记录使用记录（成功/失败/取消全覆盖），供"使用记录"页面展示
+            if result is not None:
+                history_store.record({
+                    "request_id": request_id,
+                    "user_request": user_request,
+                    "intent_type": result.get("intent_type", ""),
+                    "success": not result.get("error") and not result.get("cancelled"),
+                    "created_at": created_at,
+                    "error": result.get("error"),
+                    "generated_files": result.get("generated_files", []),
+                })
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -133,7 +163,7 @@ def _agent_status(params):
     request_id = params.get("request_id", "")
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
-    state = orchestrator.get_state(request_id)
+    state = _orchestrator.get_state(request_id)
     if not state:
         raise ValueError(f"Request '{request_id}' not found")
     return state
@@ -144,10 +174,13 @@ def _agent_cancel(params):
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
 
-    cancelled = orchestrator.cancel_request(request_id)
+    cancelled = _orchestrator.cancel_request(request_id)
 
     if not cancelled:
         raise ValueError(f"Request '{request_id}' not found or already completed")
+
+    # 先由编排器置 cancelled 标志，再唤醒等待中的 ask_user（Host 侧负责）
+    ToolContext(request_id).cancel()
 
     return {"success": True, "message": "Request cancelled"}
 
@@ -170,7 +203,7 @@ def _config_update(params):
             config.set(key, value)
     if section == "llm" or any(k.startswith("llm") for k in params.get("settings", {}).keys()):
         try:
-            orchestrator.refresh_llm()
+            _orchestrator.refresh_llm()
         except Exception as e:
             log_error(f"LLM refresh failed: {e}")
     return {"config": config.get_all()}
@@ -274,7 +307,7 @@ def _mcp_servers_save(params):
     try:
         mcp_registry.reload()
         from plugins.mcp_tools import register_mcp_tools
-        register_mcp_tools(tool_registry)
+        register_mcp_tools(_tool_registry)
     except Exception as e:
         log_error(f"MCP registry reload failed: {e}")
     return {"success": True}
@@ -292,7 +325,7 @@ def _mcp_servers_delete(params):
     try:
         mcp_registry.reload()
         from plugins.mcp_tools import register_mcp_tools
-        register_mcp_tools(tool_registry)
+        register_mcp_tools(_tool_registry)
     except Exception as e:
         log_error(f"MCP registry reload failed: {e}")
     return {"success": True}
@@ -323,15 +356,15 @@ def _mcp_tools(params):
 def _mcp_reload(params):
     mcp_registry.reload()
     from plugins.mcp_tools import register_mcp_tools
-    register_mcp_tools(tool_registry)
+    register_mcp_tools(_tool_registry)
     return {"success": True}
 
 
 # ---- Plugins ----
 
 def _plugins_get(params):
-    tools  = tool_registry.get_all_as_list()
-    intents = tool_registry.get_intents()
+    tools  = _tool_registry.get_all_as_list()
+    intents = _tool_registry.get_intents()
     return {"tools": tools, "intents": sorted(intents), "total": len(tools)}
 
 
@@ -339,16 +372,16 @@ def _plugins_toggle(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = tool_registry.get(tool_name)
+    tool = _tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     enabled = params.get("enabled")
     if enabled is None:
         enabled = not tool.enabled
-    success = tool_registry.set_enabled(tool_name, enabled)
+    success = _tool_registry.set_enabled(tool_name, enabled)
     if not success:
         raise ValueError(f"Tool '{tool_name}' not found")
-    tool_registry.save_enabled_state()
+    save_tool_config(_tool_registry)
     return {"name": tool_name, "enabled": enabled}
 
 
@@ -356,11 +389,11 @@ def _plugins_intents(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = tool_registry.get(tool_name)
+    tool = _tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     tool.intents = list(params.get("intents", []))
-    tool_registry.save_enabled_state()
+    save_tool_config(_tool_registry)
     return {"name": tool_name, "intents": tool.intents}
 
 
@@ -368,7 +401,7 @@ def _plugins_detail(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = tool_registry.get(tool_name)
+    tool = _tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     return {"tool": tool.to_dict()}

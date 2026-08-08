@@ -1,9 +1,9 @@
 """
 SSE Event Sink — EventSink implementation via the status_events SSE bus.
 
-Wraps modules.core.status_events (thread-safe in-memory event bus) so the
-orchestrator depends only on the HelixCore.ports.events.EventSink protocol.
-Implements the HelixCore.ports.events.EventSink protocol (formerly direct
+Wraps modules.agent.status_events (thread-safe in-memory event bus) so the
+orchestrator depends only on the HelixCore.interface.EventSink protocol.
+Implements the HelixCore.interface.EventSink protocol (formerly direct
 status_events.emit / status_events.cleanup calls).
 
 The ``bus`` constructor argument is injectable for testing; it defaults to
@@ -12,7 +12,7 @@ the real status_events module.
 
 from typing import Any, Dict, List, Optional
 
-from HelixCore.ports.events import EventSink
+from HelixCore.interface import EventSink
 
 
 class SSEEventSink(EventSink):
@@ -20,7 +20,7 @@ class SSEEventSink(EventSink):
 
     def __init__(self, bus: Any = None):
         if bus is None:
-            from modules.core import status_events as default_bus
+            from modules.agent import status_events as default_bus
 
             bus = default_bus
         self._bus = bus

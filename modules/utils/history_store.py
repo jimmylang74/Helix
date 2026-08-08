@@ -1,7 +1,7 @@
 """
 History Store — 请求历史持久化存储 (JSON 文件, 线程安全).
 
-任务完成/失败/取消后由 Orchestrator 调用 record() 写入,
+任务完成/失败/取消后由 Host 侧 (routes.py `_run`) 调用 record() 写入,
 Web 控制台 "使用记录" 页面通过 history.get 读取.
 """
 

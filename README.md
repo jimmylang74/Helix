@@ -61,6 +61,20 @@
 - Python 3.12+
 - Ollama / OpenAI / Anthropic / Gemini / DeepSeek (或任意 ai_engine 支持的 Provider)
 
+### MCP 工具外部依赖
+
+内建的两个 MCP Server（[mcp/searxng_server.py](mcp/searxng_server.py)、[mcp/image_search_server.py](mcp/image_search_server.py)）额外依赖以下外部环境条件，配置项位于 `Helix.json` 的 `mcp_servers.<name>.env`：
+
+| MCP Server | 工具 | 外部依赖 | 配置项 |
+|------------|------|---------|--------|
+| `mcp/searxng_server.py` | `web_search` | 一个**可访问的 SearXNG 实例**，且**必须启用 JSON 输出格式**（其 `settings.yml` 的 `search.formats` 需包含 `json`，官方默认仅 `html`）；本服务需能出站访问该实例 | `SEARXNG_BASE_URL`（代码默认 `http://localhost:8888`）、`SEARXNG_MAX_RESULTS` |
+| `mcp/image_search_server.py` | `image_search` | Pexels 与/或 Unsplash 的 **API Key**；本服务需能出站访问 `api.pexels.com` / `api.unsplash.com` | `IMAGE_PROVIDER`（`pexels`/`unsplash`）、`PEXELS_API_KEY`、`UNSPLASH_API_KEY` |
+
+注意：
+
+- `web_search` 客户端固定请求 JSON 结果（POST `format=json` 并解析 `results` 字段，无 HTML 回退）。实例未启用 JSON 格式时 SearXNG 返回 HTTP 403，工具将报 "Search error: HTTP 403"。
+- 未配置 Pexels/Unsplash API Key 时 `image_search` **不会报错**，而是静默降级返回占位图（mock）结果。
+
 ### 安装依赖
 
 ```bash

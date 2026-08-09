@@ -755,8 +755,13 @@ class AgentOrchestrator:
         """Estimate one LLM call's input/output tokens and accumulate totals.
 
         Updates ``state["token_usage"]`` with the last call's counts
-        (current) and the request-wide sums (total); the next
-        ``self._event_sink.emit`` carries them to the frontend.
+        (current) and the request-wide sums (total), then immediately pushes
+        a fresh status snapshot through the injected ``event_sink`` so the
+        frontend's token stats refresh after every single LLM call — not
+        only at node/request completion. HelixCore 与 Host 已解耦：此处仅经
+        AgentOrchestrator 构造时由 Host 注入的 EventSink 端口发送，不依赖
+        任何 Host 侧具体实现（规划阶段图尚未创建时 graph 为 None，前端按
+        planning 占位展示，无副作用）。
         """
         estimator = self._get_estimator(state["request_id"])
         usage = estimator.estimate_usage(input_text, output_text)
@@ -780,6 +785,14 @@ class AgentOrchestrator:
                 usage_state.get("total_output_tokens", 0) + usage.output_tokens
             )
             usage_state["tokenizer"] = estimator.__class__.__name__
+            # 持锁 emit：status_events 序列化快照时读取 token_usage，
+            # 锁内推送避免并行节点线程并发写同一 dict 导致读到不一致的中间值。
+            graph = self._get_graph(state["request_id"])
+            self._event_sink.emit(
+                state["request_id"],
+                state,
+                graph_nodes=graph.to_dict_list() if graph else None,
+            )
 
     def _check_token_budget(self, request_id: str, *text_parts: str) -> bool:
         """用 tokenizer 计算输入 token 是否超过限制。超过返回 False。

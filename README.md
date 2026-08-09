@@ -3,6 +3,8 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
+[中文](README.md) | [English](README_EN.md)
+
 混合驱动AI Agent服务，基于 Python / Flask / python-pptx / ai_engine 构建。
 
 ## 架构
@@ -54,7 +56,27 @@
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash) 及外部 SSE MCP Server
 - **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看、任务 DAG 状态实时可视化（SSE 流）
 
+## 作者开发环境
+
+- **操作系统**: Ubuntu 24.04
+- **LLM 运行时**: Ollama + qwen3.5:27b
+- **GPU**: NVIDIA V100 16G × 2
+
 ## 快速开始
+
+### 拉取代码
+
+项目包含 git submodule（`ai_engine`），请使用 `--recursive` 参数拉取：
+
+```bash
+git clone --recursive https://github.com/jimmylang74/Helix.git
+```
+
+若已用普通 `git clone` 拉取，可执行以下命令补拉 submodule：
+
+```bash
+git submodule update --init --recursive
+```
 
 ### 环境要求
 
@@ -152,7 +174,8 @@ curl -X POST http://localhost:11555/api/rpc \
 ├── Helix.py                  # 主入口 (Flask 双端口: API + Admin)
 ├── Helix.json                 # 配置文件 (LLM/MCP/意图/工具)
 ├── requirements.txt           # Python 依赖
-├── README.md                  # 说明文档
+├── README.md                  # 说明文档 (中文)
+├── README_EN.md               # 说明文档 (英文)
 ├── API.md                     # API 文档
 ├── debugout.log               # 运行日志输出
 ├── llm_engine.log             # LLM 引擎交互日志 (ai_engine --verbose --log)

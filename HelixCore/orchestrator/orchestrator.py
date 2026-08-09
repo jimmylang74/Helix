@@ -321,7 +321,6 @@ class AgentOrchestrator:
             nodes = [{
                 "id": "node_1",
                 "title": f"Process: {state['user_request'][:100]}",
-                "tools": [],
                 "depends": [],
                 "can_parallel": False,
             }]
@@ -458,7 +457,9 @@ class AgentOrchestrator:
         # 重置节点的 conversation history
         node.node_conversation_history = []
 
-        # planning 阶段预计划的初始 tool calls：直接执行，再进入 LLM 迭代
+        # planning 阶段预计划的初始 tool calls：直接执行，再进入 LLM 迭代。
+        # 结果仅记录进 tool_results（由 ## Tool Results History 呈现）；
+        # Latest Node Graph Execution Conversation 只保留每次 LLM 的回复。
         if node.initial_tool_calls and not node.tool_results:
             for i, tc in enumerate(node.initial_tool_calls):
                 name = tc.get("name", "")
@@ -469,7 +470,7 @@ class AgentOrchestrator:
                 node.tool_results.append({
                     "tool": name,
                     "arguments": arguments,
-                    "result": result[:1000] if result else "",
+                    "result": result if result else "",
                 })
             self._log.orchestrate(
                 f"Node {node.id}: executed {len(node.initial_tool_calls)} "
@@ -494,7 +495,7 @@ class AgentOrchestrator:
             user_prompt = USER_PROMPT_NODE_EXECUTION.format(
                 node_id=node.id,
                 node_title=node.title,
-                node_tools=", ".join(node.tools) if node.tools else "(no suggestion)",
+                initial_tool_calls=self._format_initial_tool_calls(node),
                 tool_results=tool_results_str,
                 conversation_history=conv,
                 graph_state=graph_state_str,
@@ -550,7 +551,7 @@ class AgentOrchestrator:
                     node.tool_results.append({
                         "tool": name,
                         "arguments": arguments,
-                        "result": result[:1000] if result else "",
+                        "result": result if result else "",
                     })
                 continue
 
@@ -566,7 +567,7 @@ class AgentOrchestrator:
                     node.tool_results.append({
                         "tool": name,
                         "arguments": arguments,
-                        "result": result[:1000] if result else "",
+                        "result": result if result else "",
                     })
                 continue
 
@@ -902,7 +903,11 @@ class AgentOrchestrator:
             })
 
     def _format_node_conversation(self, node: Any) -> str:
-        """格式化节点的 conversation history 用于 prompt。"""
+        """格式化节点的 conversation history 用于 prompt。
+
+        仅保留每次 LLM 的回复（assistant）；内容完整不截断，
+        避免 LLM 因结果被截断而误判执行失败。
+        """
         history = getattr(node, "node_conversation_history", [])
         if not history:
             return "(no conversation yet)"
@@ -910,20 +915,39 @@ class AgentOrchestrator:
         for msg in history[-6:]:  # 只保留最近 6 条
             role = msg.get("role", "unknown")
             content = msg.get("content", "")
-            parts.append(f"[{role}]: {content[:800]}")
+            parts.append(f"[{role}]: {content}")
         return "\n\n".join(parts)
 
     def _format_tool_results(self, node: Any) -> str:
-        """格式化节点上最近的 tool 执行结果。"""
+        """格式化节点上的 tool 执行结果（含初始调用与各迭代调用）。
+
+        每条记录两行：第一行为完整工具调用（工具名 + JSON 参数），
+        第二行为完整结果内容（不截断，避免 LLM 误判执行失败）。
+        """
         results = getattr(node, "tool_results", [])
         if not results:
             return "(no tool results yet)"
         parts = []
         for r in results[-10:]:  # 最近 10 条
             tool_name = r.get("tool", "?")
+            args_str = json.dumps(r.get("arguments", {}), ensure_ascii=False)
             result = r.get("result", "")
-            parts.append(f"[{tool_name}]: {result[:500]}")
+            parts.append(f"{tool_name}({args_str})\n{result}")
         return "\n\n".join(parts)
+
+    def _format_initial_tool_calls(self, node: Any) -> str:
+        """格式化节点预计划的初始工具调用（Current Node 段与 conversation 注入）。"""
+        calls = getattr(node, "initial_tool_calls", []) or []
+        if not calls:
+            return "(none)"
+        parts = []
+        for tc in calls:
+            name = tc.get("name", "?")
+            args_str = json.dumps(tc.get("arguments", {}), ensure_ascii=False)
+            if len(args_str) > 200:
+                args_str = args_str[:200] + "..."
+            parts.append(f"{name}({args_str})")
+        return ", ".join(parts)
 
     def _collect_node_results(self, state: AgentState) -> str:
         """当不需要 finalizer 时，从图节点收集结果。"""

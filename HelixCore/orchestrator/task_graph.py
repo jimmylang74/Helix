@@ -28,14 +28,12 @@ class TaskNode:
         self,
         node_id: str,
         title: str,
-        tools: Optional[List[str]] = None,
         depends: Optional[List[str]] = None,
         can_parallel: bool = False,
         initial_tool_calls: Optional[List[Dict[str, Any]]] = None,
     ):
         self.id = node_id
         self.title = title
-        self.tools = tools or []
         self.depends = depends or []
         self.can_parallel = can_parallel
         self.state = NodeState.PENDING
@@ -55,7 +53,6 @@ class TaskNode:
         return {
             "id": self.id,
             "title": self.title,
-            "tools": list(self.tools),
             "initial_tool_calls": list(self.initial_tool_calls),
             "depends": list(self.depends),
             "can_parallel": self.can_parallel,
@@ -91,7 +88,6 @@ class TaskGraph:
         node = TaskNode(
             node_id=node_id,
             title=node_data.get("title", ""),
-            tools=node_data.get("tools", []),
             depends=node_data.get("depends", []),
             can_parallel=node_data.get("can_parallel", False),
             initial_tool_calls=node_data.get("initial_tool_calls") or [],
@@ -116,7 +112,6 @@ class TaskGraph:
                 if nid in self._nodes:
                     existing = self._nodes[nid]
                     existing.title = n.get("title", existing.title)
-                    existing.tools = n.get("tools", existing.tools)
                     existing.depends = n.get("depends", existing.depends)
                     existing.can_parallel = n.get("can_parallel", existing.can_parallel)
                     existing.initial_tool_calls = (
@@ -126,7 +121,6 @@ class TaskGraph:
                     self._nodes[nid] = TaskNode(
                         node_id=nid,
                         title=n.get("title", ""),
-                        tools=n.get("tools", []),
                         depends=n.get("depends", []),
                         can_parallel=n.get("can_parallel", False),
                         initial_tool_calls=n.get("initial_tool_calls") or [],

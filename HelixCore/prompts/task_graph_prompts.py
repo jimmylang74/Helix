@@ -86,11 +86,6 @@ DOMAIN_SECTION_GENERIC = """## 通用任务领域补充
 - 需要最新或外部信息时,使用 `web_search` 搜索、`web_fetch_batch` 抓取页面内容
 - 涉及文件读写、代码执行、命令操作时,使用对应的文件/Shell 工具
 - 多来源信息需交叉验证,结论注明来源与不确定性
-
-### 强制约束
-- 你负责的是任务规划,不是直接产出最终答案。禁止直接输出研究成果或处理结果来替代节点图
-- `task_complete` 仅在问题完全不需要任何工具时可设为 true;需要工具的任务必须包含对应工具调用节点,不得短路
-- `tools` 字段只能使用 Available Tools 中的真实工具名,不要编造
 """
 
 # 内部定义意图仅 generic（固定兜底）；ppt/coding 等其余意图的提示词
@@ -112,20 +107,18 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 ## 任务分解原则
 - 每个节点有**单一且明确的目标**
 - 节点粒度适中：一个节点 = 一组可以批量调用的工具
-- 工具列表是建议性的，LLM 实际使用工具时可以灵活选择
 - 将最大的依赖链放在前面，减少等待
 
-## 工具选择
-- 每个节点的 `tools` 字段必须从下方 **Available Tools** 列表中选择真实存在的工具名
-- 只列出与节点目标相关的工具；若没有合适工具，`tools` 可留空
-- 不要编造 Available Tools 中不存在的工具名
+## 工具选择 (initial_tool_calls)
+- 工具名必须从下方 **Available Tools** 列表中选择真实存在的工具，不要编造
+- 只选择与节点目标相关的工具；若没有合适工具，`initial_tool_calls` 可留空 `[]`
+- `arguments` 参数格式参考各工具的 Parameters 定义
 
 {available_tools}
 
-## 初始工具调用 (initial_tool_calls)
-- 对于**简单节点**（工具参数可以预先确定的），在 `initial_tool_calls` 中提供完整的工具调用，格式为 `{"name": "...", "arguments": {...}}`
-- 系统会在节点执行时**直接执行**这些调用，再把结果交给 LLM 分析，避免多余的往返
-- 对于**复杂节点**（参数依赖中间结果，如搜索词依赖前序节点的输出），必须将 `initial_tool_calls` 留空，执行阶段再决定
+## 初始工具调用
+- 对于**简单节点**（工具参数可以预先确定的），在 `initial_tool_calls` 中提供完整的工具调用，**可以一次提供多个调用**，系统会在节点执行时批量直接执行，再把结果交给 LLM 分析，避免多余的往返
+- 对于**复杂节点**（参数依赖中间结果，如搜索词依赖前序节点的输出），必须将 `initial_tool_calls` 留空 `[]`，执行阶段再决定
 
 ## 规划阶段提问
 - 若任务信息不足、缺少关键参数、**无法完成规划**，在 JSON 顶层返回 `"tools"` 字段调用 ask_user 提问，格式为 `{"tools": [{"name": "ask_user", "arguments": {"question": "..."}}]}`
@@ -152,9 +145,9 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
     {{
       "id": "node_1",
       "title": "节点的明确任务描述",
-      "tools": ["web_search", "web_fetch"],
       "initial_tool_calls": [
-        {{"name": "web_search", "arguments": {{"query": "..."}}}}
+        {{"name": "web_search", "arguments": {{"query": "..."}}}},
+        {{"name": "web_fetch", "arguments": {{"url": "..."}}}}
       ],
       "depends": [],
       "can_parallel": false
@@ -162,7 +155,6 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
     {{
       "id": "node_2",
       "title": "节点2描述",
-      "tools": ["read_file", "write_file"],
       "initial_tool_calls": [],
       "depends": ["node_1"],
       "can_parallel": false
@@ -195,11 +187,10 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 - `task_graph_nodes`: 任务节点列表
   - `id`: 节点唯一标识 (node_1, node_2, ...)
   - `title`: 节点任务描述（LLM 执行时理解）
-  - `tools`: 建议使用的工具列表（必须从 Available Tools 中选择，可为空，LLM 执行时可自由选择）
-  - `initial_tool_calls`: 节点的初始工具调用（可选）。仅当参数可预先确定时填写完整的 `{{"name", "arguments"}}`，系统会先直接执行再进入 LLM 迭代；复杂节点必须留空 `[]`
+  - `initial_tool_calls`: 节点的初始工具调用（可选）。仅当参数可预先确定时填写完整的调用列表，**可包含多个** `{{"name", "arguments"}}`，系统会先批量直接执行再进入 LLM 迭代；复杂节点必须留空 `[]`
   - `depends`: 依赖的节点 ID 列表
   - `can_parallel`: 是否可以与其他无依赖节点并行
-- `task_complete`: 如果用户的问题可以直接回答（不需要工具），设为 true
+- `task_complete`: 如果用户的问题可以直接回答（不需要任何工具），设为 true 并填写 `response`；需要工具的任务必须返回 `task_graph_nodes` 节点图，不得跳过规划直接回答
 - `response`: 当 task_complete 为 true 时，直接回复用户
 - `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 ask_user 提问（见上方替代示例）；系统会先提问并携带回答重新规划。其余情况省略该字段或留空 `[]`
 - `reason`: 你的分解思路
@@ -272,12 +263,12 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 ## Current Node
 - **Node ID**: {node_id}
 - **Title**: {node_title}
-- **Suggested Tools**: {node_tools}
+- **Initial Tool Calls**: {initial_tool_calls}
 
-## Tool Results (from previous call)
+## Tool Results History
 {tool_results}
 
-## Latest Tool Call Conversation
+## Latest Node Graph Execution Conversation
 {conversation_history}
 
 ## Entire Task Graph Status
@@ -315,7 +306,7 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 
 ### 重要规则
 1. 尽可能一次返回多个工具调用，减少往返次数
-2. 工具的调用结果会在下一次迭代中通过 "Tool Results" 提供
+2. 工具的调用结果会在下一次迭代中通过 "Tool Results History" 提供
 3. 如果当前路径走不通（如工具连续失败），返回 need_update_node=true 切换路径
 4. 切换路径时，在 task_graph_nodes 中提供新的完整节点图，失败的路径节点不再包含
 5. 已失败的节点路径会通过 "Failed paths (avoid)" 提示你，不要重复尝试

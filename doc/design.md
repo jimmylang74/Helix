@@ -182,7 +182,7 @@ sequenceDiagram
             Orch->>Orch: 串行执行 或 threading.Thread 并行<br/>(node_parallel_count, 仅首个 emit_stream)
             Orch->>Tools: 预执行 initial_tool_calls (规划阶段预计划)
             Orch->>LLM: ask_with_tools(get_node_system_prompt(intent_type) +<br/>USER_PROMPT_NODE_EXECUTION + 工具目录, emit_stream)
-            Note over Orch: system: SYSTEM_PROMPT_NODE_PPT/_RESEARCH/_CODING<br/>(按 intent_type 映射, 缺省 SYSTEM_PROMPT_NODE_DEFAULT)<br/>user: USER_PROMPT_NODE_EXECUTION(node_id, node_title,<br/>node_tools, tool_results, conversation_history, graph_state)
+            Note over Orch: system: SYSTEM_PROMPT_NODE_PPT/_RESEARCH/_CODING<br/>(按 intent_type 映射, 缺省 SYSTEM_PROMPT_NODE_DEFAULT)<br/>user: USER_PROMPT_NODE_EXECUTION(node_id, node_title,<br/>tool_results, conversation_history, graph_state)
             LLM->>Engine: run_engine(args)
             Engine->>Provider: litellm 调用
             Engine-->>LLM: NDJSON 事件流
@@ -354,7 +354,7 @@ sequenceDiagram
             Note over Orch: 超出预算 → 跳出循环
         end
 
-        Orch->>Orch: user_prompt = USER_PROMPT_NODE_EXECUTION.format(<br/>node_id, node_title, node_tools,<br/>tool_results, conversation_history, graph_state)
+        Orch->>Orch: user_prompt = USER_PROMPT_NODE_EXECUTION.format(<br/>node_id, node_title,<br/>tool_results, conversation_history, graph_state)
         Orch->>LLM: ask_with_tools(prompt, tool_definitions,<br/>system_prompt, emit_stream)
         LLM-->>Orch: llm_response (content + tool_calls?)
         Orch->>Node: node_conversation_history.append(assistant)

@@ -234,8 +234,6 @@ SYSTEM_PROMPT_NODE_GENERIC = """# Generic Node Execution Agent
 5. 如果此路不通，可以更新任务图切换到其他路径
 
 ## 工具使用规范
-- web_search: 搜索网络信息
-- web_fetch: 获取指定 URL 的内容
 - 涉及文件读写、代码执行等一般性任务时，使用对应的文件/Shell 工具
 - 工具调用可以一次返回多个，系统会并行执行
 
@@ -294,6 +292,36 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 }}
 ```
 
+当前路径走不通、需要切换路径时，返回 `need_update_node=true`，并在 `task_graph_nodes` 中提供**新的完整节点图**（已完成的节点保留原 id，失败路径的节点不再包含）：
+
+```json
+{{
+  "reason": "node_2 路径执行失败，切换为 node_3 替代路径",
+  "response": "",
+  "node_complete": false,
+  "tools": [],
+  "need_update_node": true,
+  "task_graph_nodes": [
+    {{
+      "id": "node_1",
+      "title": "已完成的节点，保留原 id 以保留其结果",
+      "initial_tool_calls": [],
+      "depends": [],
+      "can_parallel": false
+    }},
+    {{
+      "id": "node_3",
+      "title": "替代路径节点：搜索备选方案并整理结果",
+      "initial_tool_calls": [
+        {{"name": "web_search", "arguments": {{"query": "备选方案关键词"}}}}
+      ],
+      "depends": ["node_1"],
+      "can_parallel": false
+    }}
+  ]
+}}
+```
+
 ### 字段说明
 - `reason`: 你的分析思考过程
 - `response`: 节点的完成总结（当 node_complete=true 时）
@@ -302,7 +330,12 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
   - false: 需要继续调用工具
 - `tools`: 当 node_complete=false 时，需要调用的工具列表（可多个，系统会批量执行）
 - `need_update_node`: 是否需要更新任务图（当前路径走不通时，切换到其他路径）
-- `task_graph_nodes`: 当 need_update_node=true 时，新的节点图定义
+- `task_graph_nodes`: 任务节点列表（当 need_update_node=true 时必填，否则留空 `[]`）
+  - `id`: 节点唯一标识 (node_1, node_2, ...)；**已完成的节点保留原 id** 以保留其结果，失败路径的节点不再包含
+  - `title`: 节点任务描述（LLM 执行时理解）
+  - `initial_tool_calls`: 节点的初始工具调用（可选）。仅当参数可预先确定时填写完整的调用列表，**可包含多个** `{{"name", "arguments"}}`，系统会先批量直接执行再进入 LLM 迭代；复杂节点必须留空 `[]`
+  - `depends`: 依赖的节点 ID 列表
+  - `can_parallel`: 是否可以与其他无依赖节点并行
 
 ### 重要规则
 1. 尽可能一次返回多个工具调用，减少往返次数

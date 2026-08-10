@@ -970,7 +970,14 @@ select.form-control {
     word-break: break-word;
     white-space: pre-wrap;
 }
-.llm-log-sending-detail-label { color: #78909c; font-weight: bold; }
+.llm-log-sending-detail-label {
+    color: #000000;
+    background-color: #ffffff;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
 
 .llm-log-collapsible-header {
     display: flex;

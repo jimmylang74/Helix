@@ -17,6 +17,8 @@
 ## BaseTool 接口
 
 ```python
+import json
+
 from HelixCore.tools.base import BaseTool
 
 class MyTool(BaseTool):
@@ -37,8 +39,8 @@ class MyTool(BaseTool):
     }
 
     def execute(self, query: str = "", **kwargs) -> str:
-        """执行工具逻辑，返回字符串结果给 LLM。"""
-        return f"结果: {query}"
+        """执行工具逻辑，返回 JSON 字符串结果给 LLM。"""
+        return json.dumps({"success": True, "result": f"结果: {query}"})
 ```
 
 ## 字段说明
@@ -49,7 +51,7 @@ class MyTool(BaseTool):
 | `description` | `str` | 是 | 给 LLM 看的说明，要清晰准确，它直接影响调用质量 |
 | `intents` | `list` | 是 | 该工具支持哪些意图（见下表）。设为 `["*"]` 表示所有意图可用 |
 | `parameters` | `dict` | 是 | JSON Schema 格式的参数定义，LLM 按此格式传参 |
-| `execute()` | method | 是 | 核心逻辑，接收参数，返回 `str` 给 LLM |
+| `execute()` | method | 是 | 核心逻辑，接收参数，返回 JSON 字符串给 LLM（必须含 `success` 字段） |
 
 ## 意图（Intents）说明
 
@@ -67,18 +69,40 @@ class MyTool(BaseTool):
 ## execute() 规范
 
 ```python
+import json
+
 def execute(self, param1: str = "", param2: int = 0, **kwargs) -> str:
     """
     规范：
     - 所有参数使用关键字参数并提供默认值
-    - 返回值必须是 str（LLM 只接收文本）
-    - 异常应被 catch 并返回错误描述字符串，不要让异常逃逸
+    - 返回值必须是 JSON 字符串（用 json.dumps 序列化 dict，LLM 只接收文本）
+    - 返回值必须包含 success 字段，标记执行成功与否：
+        * 成功: {"success": true, ...业务数据...}
+        * 失败: {"success": false, "error": "错误描述"}
+    - 异常应被 catch 并返回 success=false 的 JSON 字符串，不要让异常逃逸
     """
     try:
         # 你的逻辑
-        return "成功的结果"
+        return json.dumps({"success": True, "result": "成功的结果"})
     except Exception as e:
-        return f"工具执行失败: {e}"
+        return json.dumps({"success": False, "error": f"工具执行失败: {e}"})
+```
+
+### 返回格式约定
+
+返回的 JSON 字符串顶层必须包含：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `success` | bool | **必须**。`true` 表示执行成功，`false` 表示失败 |
+| `error` | str | 失败时的错误描述（仅 `success=false` 时提供） |
+| 其他 | - | 业务数据，按工具需求自定义 |
+
+示例：
+
+```json
+{"success": true, "city": "北京", "tempC": 32}
+{"success": false, "error": "城市不存在"}
 ```
 
 ## 常用导入
@@ -100,6 +124,7 @@ weather_tool.py - 天气查询示例插件
 
 import json
 import urllib.request
+import urllib.parse
 
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
@@ -109,8 +134,11 @@ class WeatherTool(BaseTool):
     """查询指定城市的天气信息。"""
 
     name = "weather"
-    description = "查询指定城市的当前天气。返回温度、天气状况、风力等信息。"
-    intents = ["generic", "*"]
+    description = (
+        "查询指定城市的天气信息，返回当前实况以及今天和未来两天的三天预报，"
+        "包括最高/最低温度、天气状况、湿度、风力等。支持中文城市名。"
+    )
+    intents = ["generic"]
     parameters = {
         "type": "object",
         "properties": {
@@ -126,22 +154,53 @@ class WeatherTool(BaseTool):
         log_tool_call(f"weather(city='{city}')")
         try:
             # 示例：使用 wttr.in 免费天气 API
-            url = f"https://wttr.in/{city}?format=j1"
+            url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
             req = urllib.request.Request(url, headers={"User-Agent": "Helix-Agent"})
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode())
 
             current = data["current_condition"][0]
-            result = (
-                f"城市: {city}\n"
-                f"温度: {current['temp_C']}°C\n"
-                f"体感: {current['FeelsLikeC']}°C\n"
-                f"天气: {current['weatherDesc'][0]['value']}\n"
-                f"风速: {current['windspeedKmph']} km/h"
-            )
-            return result
+
+            # wttr.in 提供 3 天预报（今天 + 未来 2 天）
+            forecast = []
+            for day in data.get("weather", [])[:3]:
+                hourly = day.get("hourly") or []
+                # 取接近正午的时刻点（索引 4 对应 12:00）作为当日天气描述
+                daytime = hourly[4] if len(hourly) > 4 else (hourly[0] if hourly else {})
+                weather_desc = ""
+                if daytime.get("weatherDesc"):
+                    weather_desc = daytime["weatherDesc"][0]["value"]
+                forecast.append({
+                    "日期": day.get("date", ""),
+                    "最高温度": day.get("maxtempC", ""),
+                    "最低温度": day.get("mintempC", ""),
+                    "平均温度": day.get("avgtempC", ""),
+                    "天气": weather_desc,
+                    "湿度": daytime.get("humidity", ""),
+                    "风速": daytime.get("windspeedKmph", ""),
+                    "风向": daytime.get("winddir16Point", ""),
+                })
+
+            return json.dumps({
+                "success": True,
+                "城市": city,
+                "当前": {
+                    "温度": current["temp_C"],
+                    "体感温度": current["FeelsLikeC"],
+                    "天气": current["weatherDesc"][0]["value"],
+                    "湿度": current["humidity"],
+                    "风速": current["windspeedKmph"],
+                    "风向": current["winddir16Point"],
+                    "观测时间": current["observation_time"],
+                },
+                "预报": forecast,
+            }, ensure_ascii=False)
         except Exception as e:
-            return f"天气查询失败: {e}"
+            return json.dumps({
+                "success": False,
+                "城市": city,
+                "error": str(e),
+            }, ensure_ascii=False)
 ```
 
 ### 示例 2：计算器工具
@@ -152,6 +211,7 @@ calculator_tool.py - 简单计算器插件
 """
 
 import ast
+import json
 import operator
 
 from HelixCore.tools.base import BaseTool
@@ -211,11 +271,15 @@ class CalculatorTool(BaseTool):
         try:
             tree = ast.parse(expression, mode="eval")
             result = self._safe_eval(tree)
-            return f"{expression} = {result}"
+            return json.dumps({
+                "success": True,
+                "expression": expression,
+                "result": result,
+            }, ensure_ascii=False)
         except ZeroDivisionError:
-            return "错误: 除数不能为零"
+            return json.dumps({"success": False, "error": "除数不能为零"})
         except Exception as e:
-            return f"计算失败: {e}"
+            return json.dumps({"success": False, "error": f"计算失败: {e}"})
 ```
 
 ## 目录结构参考

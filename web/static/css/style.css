@@ -429,6 +429,17 @@ select.form-control {
     color: #c62828;
 }
 
+/* MCP server status */
+.mcp-status-connected {
+    color: #2e7d32;
+    font-weight: 600;
+}
+
+.mcp-status-disconnected {
+    color: #c62828;
+    font-weight: 600;
+}
+
 /* Plugin source badges */
 .badge-source-internal {
     background: #e0f2f1;

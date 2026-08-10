@@ -22,6 +22,7 @@ from modules.config.config_manager import ConfigManager
 from modules.host.intent_store import intent_store
 from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
+from modules.mcp import mcp_events
 from modules.utils.logger import log_info, log_error, log_debug
 
 
@@ -35,6 +36,23 @@ def configure(orchestrator, tool_registry):
     global _orchestrator, _tool_registry
     _orchestrator = orchestrator
     _tool_registry = tool_registry
+    mcp_registry.on_server_state_change = _on_mcp_state_change
+    mcp_registry.start_reconnect_monitor()
+
+
+def _on_mcp_state_change(name: str, connected: bool, tools_count: int):
+    """React to MCP state transitions detected by the reconnect monitor."""
+    try:
+        from plugins.mcp_tools import register_mcp_tools
+        register_mcp_tools(_tool_registry)
+    except Exception as e:
+        log_error(f"MCP state change handler failed: {e}")
+    mcp_events.broadcast({
+        "type": "update",
+        "name": name,
+        "connected": connected,
+        "tools_count": tools_count,
+    })
 
 
 # Blueprints
@@ -281,10 +299,10 @@ def _llm_logs(params):
 
 # ---- MCP ----
 
-def _mcp_servers_get(params):
+def _mcp_status_snapshot():
+    """Build {server: {connected, tools_count}} for all configured MCP servers."""
     config = ConfigManager()
     mcp_servers = config.get("mcp_servers", {})
-    mcp_registry.initialize()
     status_info = {}
     for name in mcp_servers:
         client = mcp_registry.get_client(name)
@@ -292,7 +310,14 @@ def _mcp_servers_get(params):
             "connected": client.is_connected() if client else False,
             "tools_count": len(client.get_tools()) if client and client.is_connected() else 0,
         }
-    return {"servers": mcp_servers, "status": status_info}
+    return status_info
+
+
+def _mcp_servers_get(params):
+    config = ConfigManager()
+    mcp_servers = config.get("mcp_servers", {})
+    mcp_registry.initialize()
+    return {"servers": mcp_servers, "status": _mcp_status_snapshot()}
 
 
 def _mcp_servers_save(params):
@@ -588,6 +613,21 @@ def create_admin_routes(app):
         cursor = int(request.args.get("cursor", 0))
         return Response(
             status_events.stream(request_id, cursor=cursor),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.route("/api/mcp-status-stream")
+    def mcp_status_stream():
+        def gen():
+            yield "data: " + json.dumps({"type": "snapshot", "status": _mcp_status_snapshot()}) + "\n\n"
+            yield from mcp_events.stream(keepalive=30)
+
+        return Response(
+            gen(),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

@@ -3,10 +3,15 @@ calculator_tool.py - 安全计算器示例外部插件
 
 演示如何通过 AST 安全求值实现一个无沙箱风险的计算器工具。
 继承 BaseTool → 用 ast.parse + 白名单运算符 → 安全执行数学表达式。
+
+返回值遵循插件约定：JSON 格式字符串，且必须包含 success 字段
+（true 表示成功，false 表示失败）。
 """
 
 import ast
+import json
 import operator
+from typing import Any, Callable, Dict
 
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
@@ -29,7 +34,8 @@ class CalculatorTool(BaseTool):
         "required": ["expression"]
     }
 
-    _operators = {
+    # 允许的运算符（安全限制）
+    _operators: Dict[type, Callable[..., Any]] = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
         ast.Mult: operator.mul,
@@ -64,8 +70,12 @@ class CalculatorTool(BaseTool):
         try:
             tree = ast.parse(expression, mode="eval")
             result = self._safe_eval(tree)
-            return f"{expression} = {result}"
+            return json.dumps({
+                "success": True,
+                "expression": expression,
+                "result": result,
+            }, ensure_ascii=False)
         except ZeroDivisionError:
-            return "错误: 除数不能为零"
+            return json.dumps({"success": False, "error": "除数不能为零"})
         except Exception as e:
-            return f"计算失败: {e}"
+            return json.dumps({"success": False, "error": f"计算失败: {e}"})

@@ -7,6 +7,8 @@ let currentEditServer = null;
 let llmProviderInfo = {};
 let confirmModalResolve = null;
 let llmExtraConfig = {};
+let mcpStatusCache = {};
+let mcpServersCache = {};
 
 async function initConfigPage() {
     if (window.__configInited) return;
@@ -17,6 +19,7 @@ async function initConfigPage() {
     loadIntents();
     loadMCPServers();
     loadPlugins();
+    initMCPStatusStream();
 }
 
 if (document.readyState === 'loading') {
@@ -322,6 +325,8 @@ async function loadMCPServers() {
 
     const mcpServers = configResult.config.mcp_servers || {};
     const status = mcpResult.success ? (mcpResult.status || {}) : {};
+    mcpStatusCache = status;
+    mcpServersCache = mcpServers;
 
     // Built-in: SearXNG
     const searxng = mcpServers.searxng || {};
@@ -336,7 +341,10 @@ async function loadMCPServers() {
     document.getElementById('mcpImageSearchPexelsKey').value = (img.env && img.env.PEXELS_API_KEY) || '';
     document.getElementById('mcpImageSearchUnsplashKey').value = (img.env && img.env.UNSPLASH_API_KEY) || '';
 
-    // Custom servers table
+    renderCustomMCPServers(mcpServers);
+}
+
+function renderCustomMCPServers(mcpServers) {
     const customNames = Object.keys(mcpServers).filter(n => n !== 'searxng' && n !== 'image_search');
     const tbody = document.getElementById('mcpCustomServersTable');
     if (customNames.length === 0) {
@@ -345,15 +353,16 @@ async function loadMCPServers() {
     }
     tbody.innerHTML = customNames.map(name => {
         const s = mcpServers[name];
-        const st = status[name] || {};
+        const st = mcpStatusCache[name] || {};
         const connected = st.connected ? __('config.mcp.connected') : __('config.mcp.disconnected');
+        const statusClass = st.connected ? 'mcp-status-connected' : 'mcp-status-disconnected';
         const toolsCount = st.tools_count || 0;
         const addr = s.type === 'server' ? (s.url || '-') : (s.command || '') + ' ' + (s.args || []).join(' ');
         return `<tr>
             <td><code>${name}</code></td>
             <td>${s.type === 'server' ? 'Server' : 'Local'}</td>
             <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${addr}">${addr}</td>
-            <td>${connected}</td>
+            <td><span class="${statusClass}">${connected}</span></td>
             <td>${toolsCount}</td>
             <td>
                 <button class="btn btn-sm btn-outline" onclick="editCustomMCPServer('${name}')">${__('config.mcp.edit')}</button>
@@ -361,6 +370,34 @@ async function loadMCPServers() {
             </td>
         </tr>`;
     }).join('');
+}
+
+function initMCPStatusStream() {
+    if (window.__mcpStatusStream) return;
+    const es = new EventSource('/api/mcp-status-stream');
+    window.__mcpStatusStream = es;
+    es.onmessage = (event) => {
+        let payload;
+        try {
+            payload = JSON.parse(event.data);
+        } catch (e) {
+            return;
+        }
+        if (payload.type === 'snapshot') {
+            mcpStatusCache = payload.status || {};
+        } else if (payload.type === 'update') {
+            mcpStatusCache[payload.name] = {
+                connected: payload.connected,
+                tools_count: payload.tools_count,
+            };
+        }
+        renderCustomMCPServers(mcpServersCache);
+    };
+    es.onerror = () => {
+        es.close();
+        window.__mcpStatusStream = null;
+        setTimeout(initMCPStatusStream, 3000);
+    };
 }
 
 // ── Built-in MCP: SearXNG ──────────────────────────────────

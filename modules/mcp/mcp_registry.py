@@ -4,7 +4,7 @@ Loads MCP server configurations from ConfigManager and provides tools for the or
 """
 
 import threading
-from typing import Any
+from typing import Any, Callable
 
 from modules.config.config_manager import ConfigManager
 from modules.mcp.mcp_client import MCPClient, MCPTool, create_mcp_client
@@ -40,27 +40,33 @@ class MCPRegistry:
         self._clients: dict[str, MCPClient] = {}
         self._clients_lock = threading.Lock()
         self._initialized_flag = False
+        self._lifecycle_lock = threading.RLock()
+        self._reloading = False
+        self._reconnect_thread: threading.Thread | None = None
+        self._reconnect_stop = threading.Event()
+        self.on_server_state_change: Callable[[str, bool, int], None] | None = None
 
     # ── Initialization ─────────────────────────────────────────
 
     def initialize(self):
         """Load and connect all enabled MCP servers from config."""
-        if self._initialized_flag:
-            return
+        with self._lifecycle_lock:
+            if self._initialized_flag:
+                return
 
-        mcp_config = self.config.get("mcp_servers", {})
-        if not mcp_config:
-            log_info("MCP Registry: no MCP servers configured")
+            mcp_config = self.config.get("mcp_servers", {})
+            if not mcp_config:
+                log_info("MCP Registry: no MCP servers configured")
+                self._initialized_flag = True
+                return
+
+            for name, server_cfg in mcp_config.items():
+                if not server_cfg.get("enabled", True):
+                    continue
+                self._register_server(name, server_cfg)
+
             self._initialized_flag = True
-            return
-
-        for name, server_cfg in mcp_config.items():
-            if not server_cfg.get("enabled", True):
-                continue
-            self._register_server(name, server_cfg)
-
-        self._initialized_flag = True
-        log_info(f"MCP Registry initialized with {len(self._clients)} server(s)")
+            log_info(f"MCP Registry initialized with {len(self._clients)} server(s)")
 
     def _register_server(self, name: str, config: dict[str, Any]) -> MCPClient | None:
         """Register and connect to a single MCP server."""
@@ -80,9 +86,14 @@ class MCPRegistry:
 
     def reload(self):
         """Reload all MCP servers from config (disconnect + reconnect)."""
-        self.shutdown()
-        self._initialized_flag = False
-        self.initialize()
+        self._reloading = True
+        try:
+            with self._lifecycle_lock:
+                self.shutdown()
+                self._initialized_flag = False
+                self.initialize()
+        finally:
+            self._reloading = False
 
     def shutdown(self):
         """Disconnect all MCP clients."""
@@ -95,6 +106,68 @@ class MCPRegistry:
             self._clients.clear()
         self._initialized_flag = False
         log_info("MCP Registry: all servers disconnected")
+
+    # ── Reconnect Monitor ─────────────────────────────────────
+
+    def start_reconnect_monitor(self):
+        """Start the periodic health-check / reconnect daemon thread."""
+        if self._reconnect_thread and self._reconnect_thread.is_alive():
+            return
+        self._reconnect_stop = threading.Event()
+        self._reconnect_thread = threading.Thread(
+            target=self._reconnect_loop,
+            daemon=True,
+            name="mcp-reconnect-monitor",
+        )
+        self._reconnect_thread.start()
+        log_info("MCP Registry: reconnect monitor started")
+
+    def stop_reconnect_monitor(self):
+        if self._reconnect_stop:
+            self._reconnect_stop.set()
+        self._reconnect_thread = None
+
+    def _reconnect_loop(self):
+        while not self._reconnect_stop.wait(self._get_reconnect_interval()):
+            self._check_and_reconnect()
+
+    def _get_reconnect_interval(self) -> float:
+        try:
+            val = float(self.config.get("mcp", {}).get("reconnect_interval", 10))
+            return val if val > 0 else 10.0
+        except Exception:
+            return 10.0
+
+    def _check_and_reconnect(self):
+        """One monitor pass: health-check connected servers, reconnect dead ones."""
+        if self._reloading:
+            return
+        if not self._initialized_flag:
+            with self._lifecycle_lock:
+                if not self._initialized_flag:
+                    self.initialize()
+        for name, client in self.get_all_clients().items():
+            if not client.enabled:
+                continue
+            if client.is_connected():
+                if not client.health_check():
+                    log_warning(f"MCP Registry: '{name}' health check failed, marking disconnected")
+                    client.disconnect()
+                    self._notify_state_change(name, False)
+            elif client.connect():
+                tools = client.list_tools()
+                log_info(f"MCP Registry: '{name}' reconnected ({len(tools)} tools)")
+                self._notify_state_change(name, True)
+
+    def _notify_state_change(self, name: str, connected: bool):
+        if self.on_server_state_change is None:
+            return
+        try:
+            client = self.get_client(name)
+            tools_count = len(client.get_tools()) if client else 0
+            self.on_server_state_change(name, connected, tools_count)
+        except Exception as e:
+            log_error(f"MCP Registry: state change callback failed for '{name}': {e}")
 
     # ── Client Management ─────────────────────────────────────
 

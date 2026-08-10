@@ -118,19 +118,31 @@ class MCPClient:
     # ── Connection Management ──────────────────────────────────
 
     def connect(self) -> bool:
-        """Establish connection to the MCP server. Returns True on success."""
+        """Establish connection to the MCP server. Returns True on success.
+
+        Idempotent: disconnects first if already connected, so it can be
+        called repeatedly by the reconnect monitor. On failure all partial
+        transport state is torn down to avoid leaking threads/subprocesses
+        across repeated reconnect attempts.
+        """
+        if self._connected:
+            self.disconnect()
         try:
             if self.transport_type == "server":
-                return self._connect_auto()
+                ok = self._connect_auto()
             else:
-                return self._connect_stdio()
+                ok = self._connect_stdio()
         except Exception as e:
             log_error(f"MCP [{self.name}] connection failed: {e}")
-            return False
+            ok = False
+        if not ok:
+            self.disconnect()
+        return ok
 
     def disconnect(self):
         """Disconnect from the MCP server."""
         self._connected = False
+        self._tools = []
         if self.transport_type == "server":
             if self._active_protocol == "streamable_http":
                 self._disconnect_streamable_http()
@@ -457,7 +469,7 @@ class MCPClient:
         finally:
             self._pending.pop(msg_id, None)
 
-    def _send_streamable_http(self, msg: dict[str, Any]):
+    def _send_streamable_http(self, msg: dict[str, Any], timeout: float = 30):
         """Send JSON-RPC message via Streamable HTTP."""
         if not self._http_session or not self._http_endpoint:
             raise MCPError(-1, "Streamable HTTP session not initialized")
@@ -473,7 +485,7 @@ class MCPClient:
             self._http_endpoint,
             json=msg,
             headers=headers,
-            timeout=30,
+            timeout=timeout,
         )
 
         if resp.status_code == 202:
@@ -599,7 +611,7 @@ class MCPClient:
 
     # ── JSON-RPC Message Handling ──────────────────────────────
 
-    def _send_request(self, method: str, params: object = None) -> dict[str, Any] | None:
+    def _send_request(self, method: str, params: object = None, timeout: float = 30) -> dict[str, Any] | None:
         """Send a JSON-RPC request and wait for response."""
         req_id = self._next_id()
         msg = {
@@ -615,14 +627,14 @@ class MCPClient:
         try:
             if self.transport_type == "server":
                 if self._active_protocol == "streamable_http":
-                    self._send_streamable_http(msg)
+                    self._send_streamable_http(msg, timeout=timeout)
                 else:
-                    self._send_sse(msg)
+                    self._send_sse(msg, timeout=timeout)
             else:
                 self._send_stdio(msg)
 
             try:
-                resp = resp_queue.get(timeout=30)
+                resp = resp_queue.get(timeout=timeout)
             except queue.Empty:
                 log_error(f"MCP [{self.name}] request timeout: {method}")
                 return None
@@ -655,7 +667,7 @@ class MCPClient:
         except Exception as e:
             log_error(f"MCP [{self.name}] notification failed: {e}")
 
-    def _send_sse(self, msg: dict[str, Any]):
+    def _send_sse(self, msg: dict[str, Any], timeout: float = 10):
         """Send JSON-RPC message via SSE message endpoint."""
         if not self._message_url:
             raise MCPError(-1, "No message endpoint URL")
@@ -665,7 +677,7 @@ class MCPClient:
         resp = session.post(
             self._message_url,
             json=msg,
-            timeout=10,
+            timeout=timeout,
             headers={"Content-Type": "application/json"},
         )
         if resp.status_code not in (200, 202):
@@ -744,6 +756,60 @@ class MCPClient:
         return "\n".join(text_parts)
 
     # ── Health Check ───────────────────────────────────────────
+
+    def health_check(self, timeout: float = 5.0) -> bool:
+        """Check whether the connection to the MCP server is still alive.
+
+        Transport-level liveness first (cheap), then a JSON-RPC ping probe
+        to catch hung or half-open connections. Used by the reconnect monitor.
+        """
+        if not self._connected:
+            return False
+        try:
+            if self.transport_type == "local":
+                if self._process is None or self._process.poll() is not None:
+                    return False
+            elif self._active_protocol == "sse":
+                if self._sse_thread is None or not self._sse_thread.is_alive():
+                    return False
+            return self._ping(timeout=timeout)
+        except Exception:
+            return False
+
+    def _ping(self, timeout: float = 5.0) -> bool:
+        """Send a JSON-RPC ``ping`` and report whether the server answered.
+
+        Any JSON-RPC response (result or error) proves the server is
+        reachable; only transport failures or timeouts count as down.
+        """
+        if not self._connected:
+            return False
+        req_id = self._next_id()
+        msg = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "ping",
+            "params": {},
+        }
+        resp_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._pending[req_id] = resp_queue
+        try:
+            if self.transport_type == "server":
+                if self._active_protocol == "streamable_http":
+                    self._send_streamable_http(msg, timeout=timeout)
+                else:
+                    self._send_sse(msg, timeout=timeout)
+            else:
+                self._send_stdio(msg)
+            try:
+                resp_queue.get(timeout=timeout)
+            except queue.Empty:
+                return False
+            return True
+        except Exception:
+            return False
+        finally:
+            self._pending.pop(req_id, None)
 
     def test_connection(self) -> dict[str, Any]:
         """Test the MCP connection and return diagnostic info."""

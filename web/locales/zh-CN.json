@@ -114,7 +114,7 @@
   "config.mcp.cancel": "取消",
   "config.mcp.testingLabel": "测试中...",
   "config.mcp.connected": "🟢 已连接",
-  "config.mcp.disconnected": "🔴 未连接",
+  "config.mcp.disconnected": "🔴 已断开",
   "config.mcp.all": "所有",
   "config.mcp.edit": "编辑",
   "config.mcp.delete": "删除",

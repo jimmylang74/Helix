@@ -52,6 +52,9 @@
       "finalizer_prompt": "# AI Agent — Task Finalizer\n\n你是 AI Agent 总结分析专家。你的任务是将所有节点的执行结果汇总为用户可以直接使用的最终答案。\n\n- 编码任务：输出生成的代码和说明"
     }
   },
+  "mcp": {
+    "reconnect_interval": 10
+  },
   "mcp_servers": {
     "searxng": {
       "type": "local",

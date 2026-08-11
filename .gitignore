@@ -10,4 +10,5 @@ llm_engine.log
 .playwright-mcp/
 AGENTS.md
 db/
+catch/
 

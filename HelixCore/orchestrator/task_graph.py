@@ -114,9 +114,18 @@ class TaskGraph:
                     existing.title = n.get("title", existing.title)
                     existing.depends = n.get("depends", existing.depends)
                     existing.can_parallel = n.get("can_parallel", existing.can_parallel)
-                    existing.initial_tool_calls = (
-                        n.get("initial_tool_calls") or existing.initial_tool_calls
-                    )
+                    if "initial_tool_calls" in n:
+                        # 新图为权威：LLM 显式给出的初始工具（含空列表）直接生效，
+                        # 避免替代节点沿用旧路径的初始工具
+                        existing.initial_tool_calls = n.get("initial_tool_calls") or []
+                    # 新图重新包含此前失败的节点 → 视为替代路径，重置后重新执行
+                    if existing.state == NodeState.FAILED:
+                        existing.state = NodeState.PENDING
+                        existing.error = None
+                        existing.response = ""
+                        existing.tool_results = []
+                        existing.retry_count = 0
+                        self._failed_node_ids.discard(nid)
                 else:
                     self._nodes[nid] = TaskNode(
                         node_id=nid,

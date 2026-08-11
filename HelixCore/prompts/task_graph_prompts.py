@@ -331,7 +331,7 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 - `tools`: 当 node_complete=false 时，需要调用的工具列表（可多个，系统会批量执行）
 - `need_update_node`: 是否需要更新任务图（当前路径走不通时，切换到其他路径）
 - `task_graph_nodes`: 任务节点列表（当 need_update_node=true 时必填，否则留空 `[]`）
-  - `id`: 节点唯一标识 (node_1, node_2, ...)；**已完成的节点保留原 id** 以保留其结果，失败路径的节点不再包含
+  - `id`: 节点唯一标识 (node_1, node_2, ...)；**已完成的节点保留原 id** 以保留其结果，失败路径的节点不再包含。**当前节点（触发本次更新的节点）必须从新图中移除，禁止保留或复用自身 id**；该方向若仍需推进，使用新的 id（如 node_3、node_4）
   - `title`: 节点任务描述（LLM 执行时理解）
   - `initial_tool_calls`: 节点的初始工具调用（可选）。仅当参数可预先确定时填写完整的调用列表，**可包含多个** `{{"name", "arguments"}}`，系统会先批量直接执行再进入 LLM 迭代；复杂节点必须留空 `[]`
   - `depends`: 依赖的节点 ID 列表
@@ -343,6 +343,8 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 3. 如果当前路径走不通（如工具连续失败），返回 need_update_node=true 切换路径
 4. 切换路径时，在 task_graph_nodes 中提供新的完整节点图，失败的路径节点不再包含
 5. 已失败的节点路径会通过 "Failed paths (avoid)" 提示你，不要重复尝试
+6. **节点 id 全局唯一，禁止复用**：当前节点（触发本次更新的节点）的 id 必须从新图中移除；任何已失败/被移除的节点 id 也不得再次出现，否则系统会视为全新节点重新执行，导致重复工作
+7. 返回新图前逐一核对 `task_graph_nodes` 中的每个 id：不得与当前节点 id 或任何已存在/已失败的节点 id 相同；确需保留已完成节点时，id 必须与原文完全一致
 
 {json_contract}
 """

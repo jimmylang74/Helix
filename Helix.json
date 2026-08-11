@@ -104,6 +104,11 @@
       "type": "server",
       "enabled": true,
       "url": "http://192.168.10.39:8002/mcp"
+    },
+    "flight_search": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://127.0.0.1:8003/mcp"
     }
   },
   "default_location": {

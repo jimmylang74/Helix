@@ -469,7 +469,7 @@ class MCPClient:
         finally:
             self._pending.pop(msg_id, None)
 
-    def _send_streamable_http(self, msg: dict[str, Any], timeout: float = 30):
+    def _send_streamable_http(self, msg: dict[str, Any], timeout: float = 120):
         """Send JSON-RPC message via Streamable HTTP."""
         if not self._http_session or not self._http_endpoint:
             raise MCPError(-1, "Streamable HTTP session not initialized")
@@ -611,7 +611,7 @@ class MCPClient:
 
     # ── JSON-RPC Message Handling ──────────────────────────────
 
-    def _send_request(self, method: str, params: object = None, timeout: float = 30) -> dict[str, Any] | None:
+    def _send_request(self, method: str, params: object = None, timeout: float = 120) -> dict[str, Any] | None:
         """Send a JSON-RPC request and wait for response."""
         req_id = self._next_id()
         msg = {

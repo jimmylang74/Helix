@@ -608,15 +608,29 @@ class AgentOrchestrator:
                     # update_from_nodes 将消失的节点设为 FAILED，但仍保留在 _nodes 中
                     current = graph.get_node(node.id)
                     if current is None or current.state == NodeState.FAILED:
-                        if current is None:
-                            graph.set_node_failed(
-                                node.id,
-                                "Node removed during graph update"
-                            )
+                        # LLM 返回的 reason 即为当前节点失败的原因，
+                        # 覆盖 update_from_nodes 写入的占位错误 "Removed by graph update"
+                        fail_reason = (
+                            response_data.get("reason", "") or "Removed by graph update"
+                        )
+                        graph.set_node_failed(node.id, fail_reason)
                         self._log.orchestrate(
-                            f"Node {node.id} removed by graph update → Failed"
+                            f"Node {node.id} removed by graph update → Failed: "
+                            f"{fail_reason}"
                         )
                         break
+
+                    # 当前节点仍在新图中：LLM 复用了本节点 id 作为替代路径节点。
+                    # 清空旧路径执行上下文（失败的 tool 结果、旧初始工具），
+                    # 状态回 PENDING，由主循环按新图的 title/初始工具重新调度执行。
+                    self._log.orchestrate(
+                        f"Node {node.id} kept in updated graph → reset & re-execute"
+                    )
+                    current.state = NodeState.PENDING
+                    current.tool_results = []
+                    current.node_conversation_history = []
+                    current.retry_count = 0
+                    break
                 elif not new_nodes:
                     self._log.error(
                         f"Node {node.id}: need_update_node=true but no nodes provided"

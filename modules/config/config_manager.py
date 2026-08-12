@@ -46,6 +46,11 @@ class ConfigManager:
                     self._data["server"]["rpc_port"] = self._data["server"].pop("service_port")
                 # Cleanup: generic 为固定内部意图，不写入配置文件（遗留配置可能残留）
                 changed = False
+                # Migrate: server.proxy 缺失时补默认值（显式置空可禁用代理，不覆盖）
+                server_cfg = self._data.get("server")
+                if isinstance(server_cfg, dict) and "proxy" not in server_cfg:
+                    server_cfg["proxy"] = self._defaults()["server"]["proxy"]
+                    changed = True
                 intents = self._data.get("intents")
                 if isinstance(intents, dict) and "generic" in intents:
                     del intents["generic"]
@@ -103,7 +108,8 @@ class ConfigManager:
                 "debug": True,
                 "language": "zh-CN",
                 "node_parallel_count": 1,
-                "log_file": "debugout.log"
+                "log_file": "debugout.log",
+                "proxy": "http://192.168.10.2:7890"
             },
             "default_location": {
                 "city": "Nanjing"

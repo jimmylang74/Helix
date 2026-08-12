@@ -101,6 +101,7 @@ async function loadConfig() {
     document.getElementById('defaultLocationCity').value = defaultLocation.city || 'Nanjing';
     document.getElementById('nodeParallelCount').value = server.node_parallel_count || 1;
     document.getElementById('serverLogFile').value = server.log_file || 'debugout.log';
+    document.getElementById('serverProxy').value = server.proxy || 'http://192.168.10.2:7890';
 }
 
 function onProviderChange() {
@@ -759,6 +760,7 @@ async function saveServerConfig() {
         language: selectedLang,
         node_parallel_count: parseInt(document.getElementById('nodeParallelCount').value) || 1,
         log_file: document.getElementById('serverLogFile').value || 'debugout.log',
+        proxy: document.getElementById('serverProxy').value.trim() || 'http://192.168.10.2:7890',
     };
     const defaultCity = document.getElementById('defaultLocationCity').value.trim() || 'Nanjing';
     await apiCall('config.update', { settings: { 'default_location.city': defaultCity } });

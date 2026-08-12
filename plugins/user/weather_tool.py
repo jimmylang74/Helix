@@ -12,6 +12,7 @@ weather_tool.py - 天气查询示例外部插件
 import json
 import urllib.request
 import urllib.parse
+from typing import Any
 
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call
@@ -37,17 +38,61 @@ class WeatherTool(BaseTool):
         "required": ["city"]
     }
 
+    # ── 网络请求 ──
+
+    @staticmethod
+    def _open_wttr(url: str, proxy: str = "") -> Any:
+        """请求 wttr.in 并返回解析后的 JSON。
+
+        proxy 为空时使用直连（空 ProxyHandler 屏蔽环境变量代理，
+        保证"首次不使用代理"）；非空时走指定 HTTP 代理。
+        """
+        handlers = []
+        if proxy:
+            handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        else:
+            handlers.append(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(*handlers)
+        req = urllib.request.Request(url, headers={"User-Agent": "Helix-Agent/1.0"})
+        with opener.open(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+
+    @staticmethod
+    def _load_proxy_from_config() -> str:
+        """从 Helix.json 读取 server.proxy 配置值（默认空字符串）。"""
+        try:
+            from modules.config.config_manager import ConfigManager
+            return ConfigManager().get("server.proxy", "") or ""
+        except Exception:
+            return ""
+
     def execute(self, city: str = "", **kwargs) -> str:
         log_tool_call(f"weather(city='{city}')")
-        try:
-            url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
-            req = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Helix-Agent/1.0"},
-            )
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode())
+        url = f"https://wttr.in/{urllib.parse.quote(city)}?format=j1"
 
+        # 1. 首次直连（不使用代理）
+        try:
+            data = self._open_wttr(url)
+        except Exception as direct_err:
+            # 2. 直连失败 → 使用 Helix.json 中的 proxy 设置重试
+            proxy = self._load_proxy_from_config()
+            if not proxy:
+                return json.dumps({
+                    "success": False,
+                    "城市": city,
+                    "error": f"直连失败: {direct_err}",
+                }, ensure_ascii=False)
+            try:
+                data = self._open_wttr(url, proxy)
+            except Exception as proxy_err:
+                # 3. 代理重试也失败 → 返回错误信息
+                return json.dumps({
+                    "success": False,
+                    "城市": city,
+                    "error": f"直连失败: {direct_err}；代理({proxy})重试失败: {proxy_err}",
+                }, ensure_ascii=False)
+
+        try:
             current = data["current_condition"][0]
 
             # wttr.in 提供 3 天预报（今天 + 未来 2 天）

@@ -6,7 +6,8 @@
     "debug": true,
     "language": "zh-CN",
     "node_parallel_count": 1,
-    "log_file": "debugout.log"
+    "log_file": "debugout.log",
+    "proxy": "http://192.168.10.2:7890"
   },
   "llm": {
     "provider": "ollama_native",

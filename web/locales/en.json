@@ -217,6 +217,8 @@
   "config.server.nodeParallelCountHint": "Number of task graph nodes to execute in parallel (default 1)",
   "config.server.logFile": "Log File",
   "config.server.logFileHint": "Service runtime log file (debugout.log, requires restart)",
+  "config.server.proxy": "HTTP Proxy",
+  "config.server.proxyHint": "HTTP proxy used by external tools (e.g. weather) to access the internet",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
   "history.title": "History",

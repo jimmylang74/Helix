@@ -228,6 +228,7 @@
   "history.requestContent": "请求内容",
   "history.status": "状态",
   "history.time": "时间",
+  "history.sessionGroup": "会话集",
   "history.noRecords": "暂无使用记录",
   "history.success": "成功",
   "history.failure": "失败",

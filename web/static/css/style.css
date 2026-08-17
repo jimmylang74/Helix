@@ -1240,3 +1240,29 @@ select.form-control {
     background: #fce4ec;
     color: #c62828;
 }
+
+.session-group-row {
+    border-left: 3px solid var(--session-color, #888);
+}
+
+.session-group-first {
+    border-top-left-radius: 4px;
+}
+
+.session-group-last {
+    border-bottom-left-radius: 4px;
+}
+
+.session-group-continuation {
+    background: color-mix(in srgb, var(--session-color, #888) 5%, transparent);
+}
+
+.session-group-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}

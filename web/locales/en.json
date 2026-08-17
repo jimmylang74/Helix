@@ -228,6 +228,7 @@
   "history.requestContent": "Request Content",
   "history.status": "Status",
   "history.time": "Time",
+  "history.sessionGroup": "Session",
   "history.noRecords": "No records",
   "history.success": "Success",
   "history.failure": "Failed",

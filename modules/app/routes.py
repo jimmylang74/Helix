@@ -165,6 +165,8 @@ def _agent_router(params):
                     "created_at": created_at,
                     "error": result.get("error"),
                     "generated_files": result.get("generated_files", []),
+                    "final_answer": result.get("final_result", ""),
+                    "session_id": history_store.get_current_session_id(),
                 })
 
     threading.Thread(target=_run, daemon=True).start()
@@ -252,6 +254,11 @@ def _intents_delete(params):
 def _history_get(params):
     limit = int(params.get("limit", 100)) if params else 100
     return {"history": history_store.get_history(limit)}
+
+
+def _history_clear_session(params):
+    old_id = history_store.archive_current_session()
+    return {"success": True, "archived_session_id": old_id, "new_session_id": history_store.get_current_session_id()}
 
 
 # ---- LLM ----
@@ -450,6 +457,7 @@ METHODS = {
     "intents.delete":      _intents_delete,
     # Logs / History
     "history.get":         _history_get,
+    "history.clear_session": _history_clear_session,
     # LLM
     "llm.test":            _llm_test,
     "llm.providers":       _llm_providers,

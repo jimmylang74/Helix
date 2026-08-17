@@ -23,28 +23,81 @@ if (document.readyState === 'loading') {
 window._spaPageRefresh = window._spaPageRefresh || {};
 window._spaPageRefresh['/history'] = refreshHistory;
 
+const _sessionColors = [
+    '#4A90D9', '#50B86C', '#E67E22', '#9B59B6', '#1ABC9C',
+    '#E74C3C', '#3498DB', '#2ECC71', '#F39C12', '#8E44AD'
+];
+let _sessionIdColorMap = {};
+
+function _getSessionColor(sessionId) {
+    if (!sessionId) return '#888';
+    if (!_sessionIdColorMap[sessionId]) {
+        const colorIdx = Object.keys(_sessionIdColorMap).length % _sessionColors.length;
+        _sessionIdColorMap[sessionId] = _sessionColors[colorIdx];
+    }
+    return _sessionIdColorMap[sessionId];
+}
+
+function _buildSessionGroups(history) {
+    const groups = [];
+    const groupMap = {};
+    for (const item of history) {
+        const sid = item.session_id || '_none_';
+        if (!groupMap[sid]) {
+            const g = { sessionId: sid, items: [] };
+            groupMap[sid] = g;
+            groups.push(g);
+        }
+        groupMap[sid].items.push(item);
+    }
+    return groups;
+}
+
 async function refreshHistory() {
     const result = await apiCall('history.get');
     const tbody = document.getElementById('historyTable');
 
     if (!result.success || !result.history || result.history.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('history.noRecords') + '</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('history.noRecords') + '</td></tr>';
         return;
     }
 
-    tbody.innerHTML = result.history.map((item, idx) => `
-        <tr class="history-table-row" onclick="showHistoryDetail(${idx})" style="cursor:pointer;">
-            <td><code>${item.request_id || '-'}</code></td>
-            <td><span class="badge badge-info">${item.intent_type || '-'}</span></td>
-            <td>${escapeHtml((item.user_request || '').substring(0, 60))}${(item.user_request || '').length > 60 ? '...' : ''}</td>
-            <td>
-                <span class="badge ${item.success ? 'badge-success' : 'badge-danger'}">
-                    ${item.success ? __('common.success') : __('common.failed')}
-                </span>
-            </td>
-            <td>${item.created_at || '-'}</td>
-        </tr>
-    `).join('');
+    const groups = _buildSessionGroups(result.history);
+    let flatIdx = 0;
+    let html = '';
+
+    for (const group of groups) {
+        const color = _getSessionColor(group.sessionId);
+        const count = group.items.length;
+        for (let i = 0; i < group.items.length; i++) {
+            const item = group.items[i];
+            const isFirst = i === 0;
+            const isLast = i === group.items.length - 1;
+            const rowClasses = ['history-table-row'];
+            if (count > 1) {
+                rowClasses.push('session-group-row');
+                if (isFirst) rowClasses.push('session-group-first');
+                if (isLast) rowClasses.push('session-group-last');
+                if (!isFirst) rowClasses.push('session-group-continuation');
+            }
+            html += `
+                <tr class="${rowClasses.join(' ')}" onclick="showHistoryDetail(${flatIdx})" style="cursor:pointer;${count > 1 ? `--session-color:${color};` : ''}">
+                    <td><code>${item.request_id || '-'}</code></td>
+                    <td><span class="badge badge-info">${item.intent_type || '-'}</span></td>
+                    <td>${escapeHtml((item.user_request || '').substring(0, 60))}${(item.user_request || '').length > 60 ? '...' : ''}</td>
+                    <td>
+                        <span class="badge ${item.success ? 'badge-success' : 'badge-danger'}">
+                            ${item.success ? __('common.success') : __('common.failed')}
+                        </span>
+                    </td>
+                    <td>${item.created_at || '-'}</td>
+                    <td><span class="session-group-badge" style="background:${color};">${__('history.sessionGroup')} (${count - i})</span></td>
+                </tr>`;
+            flatIdx++;
+        }
+    }
+
+    tbody.innerHTML = html;
     window._historyRecords = result.history;
 }
 

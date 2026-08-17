@@ -258,6 +258,9 @@ SYSTEM_PROMPT_NODE_DEFAULT = """# AI Agent Node Execution
 
 USER_PROMPT_NODE_EXECUTION = """# Node Execution
 
+## User Request
+{user_request}
+
 ## Current Node
 - **Node ID**: {node_id}
 - **Title**: {node_title}

@@ -193,6 +193,11 @@ function setupTestForm() {
         clearState();
     });
 
+    const clearContextBtn = document.getElementById('clearContextBtn');
+    if (clearContextBtn) {
+        clearContextBtn.addEventListener('click', clearSessionContext);
+    }
+
     const requestInput = document.getElementById('requestInput');
     requestInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -200,6 +205,21 @@ function setupTestForm() {
             form.requestSubmit();
         }
     });
+}
+
+async function clearSessionContext() {
+    const confirmed = confirm(__('qt.confirmClearSession'));
+    if (!confirmed) return;
+    try {
+        const result = await apiCall('history.clear_session');
+        if (result.success) {
+            showToast(__('qt.sessionCleared'), 'success');
+        } else {
+            showToast(result.error || __('qt.clearFailed'), 'error');
+        }
+    } catch (e) {
+        showToast(__('qt.clearFailed') + ': ' + e.message, 'error');
+    }
 }
 
 async function submitWithStreaming(requestType, requestInput) {

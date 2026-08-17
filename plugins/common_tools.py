@@ -11,6 +11,7 @@ from pypinyin import pinyin, Style
 from HelixCore.tools.base import BaseTool
 from modules.host.tool_context import ToolContext
 from modules.utils.logger import log_tool_call
+from modules.utils import history_store
 
 
 # ──────────────────────────────────────────────────────────
@@ -268,3 +269,60 @@ class AskUserTool(BaseTool):
         if not ctx:
             return "错误: ask_user 需要活跃的请求上下文（request_id），当前无法提问"
         return ctx.ask_user(question)
+
+
+# ──────────────────────────────────────────────────────────
+# Tool: 获取当前会话集上下文
+# ──────────────────────────────────────────────────────────
+
+class GetContextTool(BaseTool):
+    """获取当前会话集的历史上下文。"""
+
+    name = "get_context"
+    description = (
+        "获取当前会话集中之前已完成请求的上下文。"
+        "当用户的请求涉及引用前文结果、基于之前的结果继续操作"
+        "（如'将前面的结果发送给某人'、'基于刚才的结果做个总结'）时，"
+        "必须先调用此工具获取前文上下文，再据此回答或执行。"
+    )
+    intents = ["*"]
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+    def execute(self, **kwargs) -> str:
+        log_tool_call("get_context()")
+        context_list = history_store.get_session_context()
+        if not context_list:
+            return "当前会话集中没有历史记录"
+        parts = []
+        for i, item in enumerate(context_list, 1):
+            parts.append(f"--- 请求 {i} ---\n用户请求: {item['user_request']}\n最终结果: {item['final_answer']}")
+        return "\n\n".join(parts)
+
+
+# ──────────────────────────────────────────────────────────
+# Tool: 清除当前会话集上下文
+# ──────────────────────────────────────────────────────────
+
+class ClearContextTool(BaseTool):
+    """清除当前会话集上下文，将之前的所有会话变为历史。"""
+
+    name = "clear_context"
+    description = (
+        "清除当前会话集上下文，将之前的所有会话记录归档为历史。"
+        "当用户明确要求清除对话上下文、重新开始、忘记之前的内容时调用。"
+    )
+    intents = ["*"]
+    parameters = {
+        "type": "object",
+        "properties": {},
+        "required": [],
+    }
+
+    def execute(self, **kwargs) -> str:
+        log_tool_call("clear_context()")
+        old_id = history_store.archive_current_session()
+        return f"会话上下文已清除。旧会话集 {old_id} 已归档，新会话集 {history_store.get_current_session_id()} 已开始。"

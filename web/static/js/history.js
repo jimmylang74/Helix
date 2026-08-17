@@ -32,11 +32,11 @@ async function refreshHistory() {
         return;
     }
 
-    tbody.innerHTML = result.history.map(item => `
-        <tr>
+    tbody.innerHTML = result.history.map((item, idx) => `
+        <tr class="history-table-row" onclick="showHistoryDetail(${idx})" style="cursor:pointer;">
             <td><code>${item.request_id || '-'}</code></td>
             <td><span class="badge badge-info">${item.intent_type || '-'}</span></td>
-            <td>${(item.user_request || '').substring(0, 60)}...</td>
+            <td>${escapeHtml((item.user_request || '').substring(0, 60))}${(item.user_request || '').length > 60 ? '...' : ''}</td>
             <td>
                 <span class="badge ${item.success ? 'badge-success' : 'badge-danger'}">
                     ${item.success ? __('common.success') : __('common.failed')}
@@ -45,6 +45,53 @@ async function refreshHistory() {
             <td>${item.created_at || '-'}</td>
         </tr>
     `).join('');
+    window._historyRecords = result.history;
+}
+
+function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+}
+
+function showHistoryDetail(idx) {
+    const records = window._historyRecords || [];
+    const item = records[idx];
+    if (!item) return;
+
+    document.getElementById('detailRequestId').textContent = item.request_id || '-';
+    document.getElementById('detailIntentType').textContent = item.intent_type || '-';
+    document.getElementById('detailCreatedAt').textContent = item.created_at || '-';
+    document.getElementById('detailStatus').innerHTML = item.success
+        ? '<span class="badge badge-success">' + __('common.success') + '</span>'
+        : '<span class="badge badge-danger">' + __('common.failed') + '</span>';
+    document.getElementById('detailUserRequest').textContent = item.user_request || '-';
+    document.getElementById('detailFinalAnswer').textContent = item.final_answer || '-';
+
+    const errorGroup = document.getElementById('detailErrorGroup');
+    if (item.error) {
+        errorGroup.style.display = '';
+        document.getElementById('detailError').textContent = item.error;
+    } else {
+        errorGroup.style.display = 'none';
+    }
+
+    const filesGroup = document.getElementById('detailFilesGroup');
+    const files = item.generated_files || [];
+    if (files.length > 0) {
+        filesGroup.style.display = '';
+        document.getElementById('detailFiles').innerHTML = files.map(f =>
+            '<a href="/output/' + encodeURIComponent(f) + '" target="_blank">' + escapeHtml(f) + '</a>'
+        ).join(', ');
+    } else {
+        filesGroup.style.display = 'none';
+    }
+
+    document.getElementById('historyDetailModal').style.display = 'flex';
+}
+
+function closeHistoryDetail() {
+    document.getElementById('historyDetailModal').style.display = 'none';
 }
 
 async function loadOutputFiles() {

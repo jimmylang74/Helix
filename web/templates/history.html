@@ -36,6 +36,52 @@
         </div>
     </div>
 </div>
+
+<div id="historyDetailModal" class="history-modal-overlay" onclick="if(event.target===this)closeHistoryDetail()">
+    <div class="history-modal-content">
+        <div class="history-modal-header">
+            <h3 data-i18n="history.detailTitle">使用记录详情</h3>
+            <button class="history-modal-close" onclick="closeHistoryDetail()">&times;</button>
+        </div>
+        <div class="history-modal-body">
+            <div class="history-detail-field">
+                <label data-i18n="history.requestId">请求 ID</label>
+                <div id="detailRequestId" class="history-detail-value"></div>
+            </div>
+            <div class="history-detail-field">
+                <label data-i18n="history.type">类型</label>
+                <div id="detailIntentType" class="history-detail-value"></div>
+            </div>
+            <div class="history-detail-field">
+                <label data-i18n="history.time">时间</label>
+                <div id="detailCreatedAt" class="history-detail-value"></div>
+            </div>
+            <div class="history-detail-field">
+                <label data-i18n="history.status">状态</label>
+                <div id="detailStatus" class="history-detail-value"></div>
+            </div>
+            <div class="history-detail-field">
+                <label data-i18n="history.detailUserRequest">用户请求</label>
+                <div id="detailUserRequest" class="history-detail-text-block"></div>
+            </div>
+            <div class="history-detail-field">
+                <label data-i18n="history.detailFinalAnswer">最终结果</label>
+                <div id="detailFinalAnswer" class="history-detail-text-block history-detail-result"></div>
+            </div>
+            <div class="history-detail-field" id="detailErrorGroup" style="display:none;">
+                <label data-i18n="history.detailError">错误信息</label>
+                <div id="detailError" class="history-detail-text-block history-detail-error"></div>
+            </div>
+            <div class="history-detail-field" id="detailFilesGroup" style="display:none;">
+                <label data-i18n="history.detailGeneratedFiles">生成文件</label>
+                <div id="detailFiles" class="history-detail-value"></div>
+            </div>
+        </div>
+        <div class="history-modal-footer">
+            <button class="btn btn-outline" onclick="closeHistoryDetail()" data-i18n="history.detailClose">关闭</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

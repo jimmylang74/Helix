@@ -493,6 +493,7 @@ class AgentOrchestrator:
             tool_results_str = self._format_tool_results(node)
 
             user_prompt = USER_PROMPT_NODE_EXECUTION.format(
+                user_request=state["user_request"],
                 node_id=node.id,
                 node_title=node.title,
                 initial_tool_calls=self._format_initial_tool_calls(node),

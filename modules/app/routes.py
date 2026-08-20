@@ -476,6 +476,15 @@ METHODS = {
     "plugins.detail":      _plugins_detail,
 }
 
+try:
+    from imBots.routes import IMBOT_METHODS
+    METHODS.update(IMBOT_METHODS)
+    log_info(f"[Routes] iBot methods registered: {list(IMBOT_METHODS.keys())}")
+except ImportError as e:
+    log_error(f"[Routes] Failed to import IMBOT_METHODS: {e}")
+except Exception as e:
+    log_error(f"[Routes] Failed to register IMBOT_METHODS: {e}")
+
 
 # ============================================================
 # Single JSON-RPC 2.0 entry point

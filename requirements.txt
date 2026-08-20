@@ -9,4 +9,5 @@ requests>=2.30
 Pillow>=10.0
 pypinyin>=0.50
 json_repair>=0.61
+qrcode>=7.0
 

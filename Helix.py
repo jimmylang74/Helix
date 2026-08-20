@@ -141,6 +141,29 @@ def main():
     # ④ 注入 routes（替代模块级全局单例 import）
     configure_routes(orchestrator, tool_registry)
 
+    # ⑤ iBot channel manager setup
+    from imBots.manager import ChannelManager
+    from imBots.wechat.channel import WeChatChannel
+    from imBots.wechat.authenticator import WeChatAuthenticator
+    from imBots.wechat.ilink_client import ILinkBotsClient
+    from imBots.routes import configure as configure_imbot_routes
+
+    imbot_config = config.get("imbot", {})
+    poll_timeout = imbot_config.get("poll_timeout", 50)
+    proxy = imbot_config.get("proxy", "") or config.get("server.proxy", "")
+
+    ilink_client = ILinkBotsClient(proxy=proxy or None)
+    wechat_auth = WeChatAuthenticator(client=ilink_client)
+    wechat_channel = WeChatChannel(
+        client=ilink_client,
+        authenticator=wechat_auth,
+        poll_timeout=poll_timeout,
+    )
+    channel_manager = ChannelManager()
+    channel_manager.register(wechat_channel)
+    wechat_channel.restore_session()
+    configure_imbot_routes(channel_manager)
+
     # Create apps
     service_app = create_service_app()
     admin_app = create_admin_app()

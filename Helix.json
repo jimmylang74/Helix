@@ -112,6 +112,10 @@
       "url": "http://127.0.0.1:8003/mcp"
     }
   },
+  "imbot": {
+    "poll_timeout": 50,
+    "proxy": ""
+  },
   "default_location": {
     "city": "南京"
   },

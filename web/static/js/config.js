@@ -20,6 +20,7 @@ async function initConfigPage() {
     loadMCPServers();
     loadPlugins();
     initMCPStatusStream();
+    ilinkbot.init();
 }
 
 if (document.readyState === 'loading') {

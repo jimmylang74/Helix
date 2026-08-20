@@ -11,6 +11,7 @@
     <button class="tab-btn" data-tab="plugins" data-i18n="config.tab.plugins">插件管理</button>
     <button class="tab-btn" data-tab="intents" data-i18n="config.tab.intents">意图管理</button>
     <button class="tab-btn" data-tab="server" data-i18n="config.tab.server">服务设置</button>
+    <button class="tab-btn" data-tab="ilinkbot" data-i18n="config.tab.ilinkbot">iLinkBot</button>
 </div>
 
 <!-- LLM Config -->
@@ -470,6 +471,58 @@
     </div>
 </div>
 
+<!-- iLinkBot Config -->
+<div class="tab-content" id="tab-ilinkbot">
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.ilinkbot.title">微信 iLinkBot</h3>
+            <span id="ilinkbotStatusBadge" class="badge badge-secondary" data-i18n="config.ilinkbot.disconnected">未连接</span>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label data-i18n="config.ilinkbot.pollTimeout">长轮询超时 (秒)</label>
+                <input type="number" id="ilinkbotPollTimeout" class="form-control" value="50" min="5" max="120">
+                <small class="text-muted" data-i18n="config.ilinkbot.pollTimeoutHint">getupdates 长轮询等待时间，默认 50 秒</small>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;">
+                <button class="btn btn-primary" id="ilinkbotQrBtn" onclick="ilinkbot.requestQR()">
+                    <span data-i18n="config.ilinkbot.scanLogin">扫码登录</span>
+                </button>
+                <button class="btn btn-success" id="ilinkbotStartBtn" onclick="ilinkbot.start()" style="display:none;">
+                    <span data-i18n="config.ilinkbot.start">启动</span>
+                </button>
+                <button class="btn btn-danger" id="ilinkbotStopBtn" onclick="ilinkbot.stop()" style="display:none;">
+                    <span data-i18n="config.ilinkbot.stop">停止</span>
+                </button>
+                <button class="btn btn-outline" id="ilinkbotLogoutBtn" onclick="ilinkbot.logout()" style="display:none;">
+                    <span data-i18n="config.ilinkbot.logout">退出登录</span>
+                </button>
+            </div>
+            <div id="ilinkbotQrArea" style="display:none;text-align:center;padding:16px;border:1px dashed var(--border);border-radius:8px;margin-bottom:16px;">
+                <p id="ilinkbotQrHint" data-i18n="config.ilinkbot.scanHint">请用微信扫描二维码登录</p>
+                <img id="ilinkbotQrImg" style="max-width:240px;margin:8px auto;display:block;" alt="QR Code">
+                <p id="ilinkbotQrStatus" class="text-muted"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.ilinkbot.chatTitle">消息</h3>
+            <span id="ilinkbotMsgCount" class="text-muted"></span>
+        </div>
+        <div class="card-body">
+            <div id="ilinkbotChatBox" style="height:360px;overflow-y:auto;border:1px solid var(--border);border-radius:6px;padding:8px;margin-bottom:12px;background:var(--bg-secondary,#f8f9fa);">
+                <p class="text-muted" style="text-align:center;padding:40px 0;" data-i18n="config.ilinkbot.noMessages">暂无消息</p>
+            </div>
+            <div style="display:flex;gap:8px;">
+                <input type="text" id="ilinkbotMsgInput" class="form-control" data-i18n-placeholder="config.ilinkbot.msgPlaceholder" placeholder="输入消息..." onkeydown="if(event.key==='Enter')ilinkbot.send()">
+                <button class="btn btn-primary" onclick="ilinkbot.send()" data-i18n="config.ilinkbot.send">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Confirm Dialog Modal -->
 <div id="confirmModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1001;align-items:center;justify-content:center;" onclick="if(event.target===this)closeConfirmModal(false)">
     <div style="background:white;border-radius:8px;padding:24px;max-width:400px;width:90%;box-shadow:0 4px 20px rgba(0,0,0,0.15);" onclick="event.stopPropagation()">
@@ -486,4 +539,5 @@
 
 {% block scripts %}
 <script src="/static/js/config.js"></script>
+<script src="/static/js/ilinkbot.js"></script>
 {% endblock %}

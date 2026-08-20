@@ -282,6 +282,26 @@ def get_context_token(channel: str) -> Optional[str]:
             conn.close()
 
 
+def get_to_user_id(channel: str) -> Optional[str]:
+    """Return the sender_id from the most recent incoming message.
+
+    Used to resolve ``to_user_id`` for outgoing messages when no in-memory
+    state is available (e.g. after a server restart).
+    """
+    with _lock:
+        conn = _init()
+        try:
+            row = conn.execute(
+                "SELECT sender_id FROM messages "
+                "WHERE channel = ? AND direction = 'incoming' AND sender_id != '' "
+                "ORDER BY id DESC LIMIT 1",
+                (channel,),
+            ).fetchone()
+            return row["sender_id"] if row else None
+        finally:
+            conn.close()
+
+
 def _prune_old(conn: sqlite3.Connection, channel: str) -> None:
     """Delete oldest messages beyond the retention limit."""
     conn.execute(

@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.utils.logger import init_logger, log_info, log_error, log_orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
+from imBots.routes import imbot_bp
 from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 
@@ -40,6 +41,7 @@ def create_service_app() -> Flask:
     # 破坏 generic 固定排首位的前端展示保证）
     app.json.sort_keys = False
     app.register_blueprint(api_bp)
+    app.register_blueprint(imbot_bp)
     return app
 
 
@@ -56,6 +58,7 @@ def create_admin_app() -> Flask:
     app.json.sort_keys = False
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
+    app.register_blueprint(imbot_bp)
     create_admin_routes(app)
 
     # Add CORS headers

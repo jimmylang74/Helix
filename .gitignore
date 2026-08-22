@@ -11,4 +11,5 @@ llm_engine.log
 AGENTS.md
 db/
 catch/
+*.bak
 

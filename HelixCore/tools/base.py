@@ -83,29 +83,17 @@ class BaseTool(ABC):
 
 class ToolRegistry:
     """
-    Singleton registry for all plugin tools (memory-resident).
+    Registry for tools (memory-resident), instantiable per scope.
 
     - Provides tool registration, lookup and execution
     - Manages enable/disable state in memory
     - 装配（扫描 plugins/、读写 Helix.json 的 plugins 段）由 Host 完成：
       modules.host.plugin_loader.discover_plugins / load_tool_config / save_tool_config
+    - 全局实例为模块级 ``tool_registry``；每个通道另建私有实例承载其通道工具，
+      实现按通道隔离（见 modules/channels/runtime.py）。
     """
 
-    _instance = None
-    _lock = threading.Lock()
-
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self, logger: Optional[LogSink] = None):
-        if self._initialized:
-            return
-        self._initialized = True
         self._tools: Dict[str, BaseTool] = {}
         self._tools_lock = threading.Lock()
         # Host 组合根注入（P4）：避免 HelixCore 反向依赖 modules.*

@@ -71,5 +71,3 @@ class UserQuestionBroker:
         with self._lock:
             return request_id in self._pending
 
-
-user_question_broker = UserQuestionBroker()

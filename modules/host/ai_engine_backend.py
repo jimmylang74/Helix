@@ -21,12 +21,10 @@ from modules.llm.llm_events import get_request_context, emit as _emit_event
 from modules.utils.logger import (
     log_agent_to_llm, log_llm_to_agent, log_error, log_info, log_llm_decision,
 )
+from modules.utils.paths import project_path
 
 # ── ai_engine submodule path ────────────────────────────────────────
-_AI_ENGINE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "ai_engine",
-)
+_AI_ENGINE_DIR = project_path("ai_engine")
 if _AI_ENGINE_DIR not in sys.path:
     sys.path.insert(0, _AI_ENGINE_DIR)
 
@@ -219,9 +217,7 @@ class AIEngineBackend(LLMBackend):
             return None
         # Relative paths are relative to project root
         if not os.path.isabs(log_file):
-            project_root = os.path.dirname(os.path.dirname(os.path.dirname(
-                os.path.abspath(__file__))))
-            log_file = os.path.join(project_root, log_file)
+            log_file = project_path(log_file)
         return log_file
 
     def _build_engine_args(

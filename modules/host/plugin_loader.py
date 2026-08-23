@@ -19,12 +19,9 @@ from typing import Dict
 from HelixCore.tools.base import BaseTool, ToolRegistry
 from modules.config.config_manager import ConfigManager
 from modules.utils.logger import log_error, log_info, log_warning
+from modules.utils.paths import PROJECT_ROOT, project_path
 
-# plugins/ 目录：从本模块（modules/host/）上溯到项目根
-_PLUGINS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "plugins",
-)
+_PLUGINS_DIR = project_path("plugins")
 _USER_PLUGINS_DIR = os.path.join(_PLUGINS_DIR, "user")
 
 
@@ -40,9 +37,8 @@ def discover_plugins(registry: ToolRegistry) -> None:
         return
 
     # Ensure project root is importable (plugins package + plugins.user.*)
-    project_root = os.path.dirname(_PLUGINS_DIR)
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
+    if PROJECT_ROOT not in sys.path:
+        sys.path.insert(0, PROJECT_ROOT)
 
     _scan_plugin_dir(registry, _PLUGINS_DIR, source="内部插件")
 

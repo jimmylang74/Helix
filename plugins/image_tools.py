@@ -9,6 +9,7 @@ from datetime import datetime
 
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call, log_agent_action, log_error
+from modules.utils.paths import project_path
 
 
 class ImageDownloadTool(BaseTool):
@@ -32,9 +33,7 @@ class ImageDownloadTool(BaseTool):
     def execute(self, urls: List[str] = None, **kwargs) -> List[str]:
         urls = urls or []
         log_tool_call(f"image_download({len(urls)} images)")
-        download_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "download"
-        )
+        download_dir = project_path("download")
         os.makedirs(download_dir, exist_ok=True)
 
         saved = []

@@ -3,6 +3,11 @@ WeChat iLinkBot channel adapter.
 
 Runs a background polling thread that calls getupdates() in a loop,
 broadcasts incoming messages via SSE, and provides a send() method.
+
+Each incoming text message is routed to this channel's private runtime:
+pending ask_user answers go to the broker, messages from a sender with an
+active request get a busy hint, otherwise a worker thread runs the private
+orchestrator and sends the final result back to the sender.
 """
 
 import json
@@ -11,18 +16,21 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from imBots.base import ChannelAdapter, ChannelMessage, ChannelStatus
-from imBots import events
-from imBots.store import (
+from modules.channels.base import ChannelAdapter, ChannelMessage, ChannelStatus
+from modules.channels import events
+from modules.channels.store import (
+    archive_agent_session,
+    get_active_agent_context,
     get_context_token,
     get_messages as store_get_messages,
     get_to_user_id,
+    save_agent_context,
     save_message,
     update_session_status,
 )
-from imBots.wechat.authenticator import WeChatAuthenticator
-from imBots.wechat.ilink_client import ILinkBotsClient
-from modules.utils.logger import log_error, log_info
+from imChannels.wechat.authenticator import WeChatAuthenticator
+from imChannels.wechat.ilink_client import ILinkBotsClient
+from modules.utils.logger import log_error, log_info, log_tool_call
 
 
 def _extract_text(message: Dict[str, Any]) -> str:
@@ -62,6 +70,11 @@ class WeChatChannel(ChannelAdapter):
         self._stop_event = threading.Event()
         self._last_error: Optional[str] = None
         self._last_from_user_id: Optional[str] = None
+
+        # 本通道私有 agent 会话状态（配合 runtime 使用；上下文持久化见 store.agent_sessions）
+        self._request_sender: Dict[str, str] = {}    # request_id → sender_id
+        self._active_by_sender: Dict[str, str] = {}  # sender_id → 运行中的 request_id
+        self._pending_ask: Dict[str, str] = {}       # sender_id → 等待回答的 request_id
 
     # ── Properties ─────────────────────────────────────────────────────
 
@@ -197,6 +210,46 @@ class WeChatChannel(ChannelAdapter):
             },
         )
 
+    # ── 通道工具落点（ask_user / 会话上下文）───────────────────────────
+
+    def ask_user(self, request_id: str, question: str) -> str:
+        if self.runtime is None or self.runtime.broker is None:
+            return "错误: 微信通道运行时尚未装配，无法提问"
+        broker = self.runtime.broker
+        if broker.is_waiting(request_id):
+            return "错误: 已有一个等待用户回答的问题，请等待其回答完成，不要重复提问"
+        log_tool_call(f"[wechat] ask_user(question='{question[:200]}')")
+        sender_id = self._request_sender.get(request_id, "")
+        if not sender_id:
+            return "错误: 无法定位提问目标用户，请基于已有信息继续任务"
+        self.send(f"[提问] {question}", to_user_id=sender_id)
+        self._pending_ask[sender_id] = request_id
+        try:
+            return broker.ask(request_id, question)
+        finally:
+            self._pending_ask.pop(sender_id, None)
+
+    def get_context(self) -> str:
+        """返回本通道进行中会话的全部内容（已归档会话不参与拼装）。"""
+        entries = get_active_agent_context(self.CHANNEL_TYPE)
+        if not entries:
+            return "本通道暂无进行中的会话记录"
+        parts = []
+        for i, item in enumerate(entries, 1):
+            parts.append(
+                f"--- 请求 {i} ---\n"
+                f"用户请求: {item['user_request']}\n"
+                f"最终结果: {item['final_answer']}"
+            )
+        return "\n\n".join(parts)
+
+    def clear_context(self) -> str:
+        """归档当前会话（全部记录保存入库）并开始新会话。"""
+        archived_id, count = archive_agent_session(self.CHANNEL_TYPE)
+        if count == 0:
+            return "本通道没有进行中的会话，无需清除"
+        return f"微信通道已开始新会话：旧会话 {archived_id}（{count} 条记录）已保存到数据库。"
+
     # ── Polling loop ───────────────────────────────────────────────────
 
     def _poll_loop(self) -> None:
@@ -298,6 +351,60 @@ class WeChatChannel(ChannelAdapter):
             f"[WeChat] Message received: {sender_name}({sender_id}): "
             f"{content[:80]}"
         )
+
+        # Route to the channel's private agent runtime
+        self._dispatch_incoming(sender_id, sender_name, content)
+
+    # ── Agent dispatch（私有 runtime 路由）─────────────────────────────
+
+    def _dispatch_incoming(self, sender_id: str, sender_name: str, content: str) -> None:
+        """按发送方状态路由：待回答提问 / 任务进行中 / 新起 worker。"""
+        if self.runtime is None:
+            log_error("[WeChat] Runtime not assembled — dropping agent processing")
+            return
+
+        pending_req = self._pending_ask.get(sender_id)
+        if pending_req:
+            answered = self.runtime.broker.answer(pending_req, content)
+            if not answered:
+                log_error(f"[WeChat] Answer for '{pending_req}' arrived too late — dropped")
+            return
+
+        if sender_id in self._active_by_sender:
+            self.send("[提示] 当前有任务正在处理中，请稍候再发送新消息", to_user_id=sender_id)
+            return
+
+        threading.Thread(
+            target=self._run_agent,
+            args=(sender_id, sender_name, content),
+            daemon=True,
+            name=f"wechat-agent-{sender_id[:8]}",
+        ).start()
+
+    def _run_agent(self, sender_id: str, sender_name: str, content: str) -> None:
+        """Worker 线程：跑本通道私有编排器并把最终结果回发微信。"""
+        request_id = f"req_{uuid.uuid4().hex[:12]}"
+        self._request_sender[request_id] = sender_id
+        self._active_by_sender[sender_id] = request_id
+        try:
+            result = self.runtime.orchestrator.process_request(content, request_id)
+            final = result.get("final_result") or ""
+            error = result.get("error")
+            reply = final if final else (f"处理失败: {error}" if error else "")
+            if reply:
+                self.send(reply, to_user_id=sender_id)
+                save_agent_context(self.CHANNEL_TYPE, content, reply)
+        except Exception as e:
+            log_error(f"[WeChat] Agent request {request_id} failed: {e}")
+            try:
+                self.send(f"处理出错: {e}", to_user_id=sender_id)
+            except Exception as send_err:
+                log_error(f"[WeChat] Failed to deliver error message: {send_err}")
+        finally:
+            self._active_by_sender.pop(sender_id, None)
+            self._request_sender.pop(request_id, None)
+            # 请求结束即唤醒可能仍阻塞的 ask_user（与 RPC 路径收尾一致）
+            self.runtime.broker.cancel(request_id)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────

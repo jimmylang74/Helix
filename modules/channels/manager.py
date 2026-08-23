@@ -6,7 +6,7 @@ Central point to register, start, stop, and query channel adapters.
 
 from typing import Any, Dict, List, Optional
 
-from imBots.base import ChannelAdapter
+from modules.channels.base import ChannelAdapter
 from modules.utils.logger import log_error, log_info
 
 
@@ -35,6 +35,10 @@ class ChannelManager:
     def get(self, channel_type: str) -> Optional[ChannelAdapter]:
         """Get a registered channel adapter."""
         return self._channels.get(channel_type)
+
+    def channels(self) -> List[ChannelAdapter]:
+        """Return all registered channel adapters."""
+        return list(self._channels.values())
 
     def start_all(self) -> None:
         """Start all registered channels."""
@@ -69,3 +73,37 @@ class ChannelManager:
                     "error": str(e),
                 })
         return result
+
+    # ── 每通道私有 runtime 的跨通道操作 ────────────────────────────────
+
+    def _runtimes(self) -> List[Any]:
+        return [
+            ch.runtime
+            for ch in self._channels.values()
+            if getattr(ch, "runtime", None) is not None
+        ]
+
+    def deliver_answer(self, request_id: str, answer: str) -> bool:
+        """Route a user answer to whichever channel broker holds the pending ask."""
+        for rt in self._runtimes():
+            if rt.broker.answer(request_id, answer):
+                log_info(f"[ChannelManager] Answer delivered via '{rt.channel_type}' ({request_id})")
+                return True
+        return False
+
+    def cancel_request(self, request_id: str) -> bool:
+        """Cancel across channels: flag the owning orchestrator, wake blocked ask_user."""
+        cancelled = False
+        for rt in self._runtimes():
+            if rt.orchestrator.cancel_request(request_id):
+                cancelled = True
+            if rt.broker.cancel(request_id):
+                cancelled = True
+        return cancelled
+
+    def refresh_mcp_tools(self) -> None:
+        """Re-register MCP tools into every channel's private registry."""
+        from plugins.mcp_tools import register_mcp_tools
+
+        for rt in self._runtimes():
+            register_mcp_tools(rt.tool_registry)

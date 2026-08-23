@@ -165,6 +165,10 @@ class ChannelAdapter(ABC):
     background thread and exposes a simple start / stop / send interface.
     """
 
+    # 通道私有运行时（组合根调用 build_channel_runtime 后挂载，
+    # 见 modules/channels/runtime.py）
+    runtime: Any = None
+
     @property
     @abstractmethod
     def channel_type(self) -> str:
@@ -208,4 +212,24 @@ class ChannelAdapter(ABC):
 
         Returns True if a valid session was restored and polling can resume.
         """
+        ...
+
+    # ── 通道相关工具的通道侧实现（注册见 runtime.py）─────────────────
+
+    @abstractmethod
+    def ask_user(self, request_id: str, question: str) -> str:
+        """向本通道用户提问并阻塞等待回答（本通道 ask_user 工具的落点）。
+
+        request_id 为发起本次 agent 请求的请求 ID；返回交给 LLM 的回答文本。
+        """
+        ...
+
+    @abstractmethod
+    def get_context(self) -> str:
+        """返回本通道会话历史上下文（本通道 get_context 工具的落点）。"""
+        ...
+
+    @abstractmethod
+    def clear_context(self) -> str:
+        """清除本通道会话历史并开启新会话（clear_context 工具的落点）。"""
         ...

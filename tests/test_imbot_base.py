@@ -1,6 +1,6 @@
-"""Unit tests for imBots.base data models."""
+"""Unit tests for modules.channels.base data models."""
 
-from imBots.base import BotConfig, ChannelMessage, ChannelStatus
+from modules.channels.base import BotConfig, ChannelMessage, ChannelStatus
 
 
 class TestChannelMessage:

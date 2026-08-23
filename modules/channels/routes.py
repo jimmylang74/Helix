@@ -10,10 +10,10 @@ from typing import Any, Dict
 
 from flask import Blueprint, Response, request
 
-from imBots import events
-from imBots.manager import ChannelManager
-from imBots.store import get_messages as store_get_messages
-from imBots.wechat.channel import WeChatChannel
+from modules.channels import events
+from modules.channels.manager import ChannelManager
+from modules.channels.store import get_messages as store_get_messages
+from imChannels.wechat.channel import WeChatChannel
 from modules.utils.logger import log_error, log_info
 
 # Module-level reference set by configure()

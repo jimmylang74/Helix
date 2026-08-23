@@ -14,7 +14,9 @@ from typing import Any
 from flask import Blueprint, request, jsonify, render_template, send_from_directory, Response
 from modules.llm.llm_events import stream as llm_event_stream
 from modules.agent import status_events
-from modules.utils import log_watcher, history_store
+from modules.utils import log_watcher
+from modules.channels.web import history_store
+from modules.utils.paths import PROJECT_ROOT, project_path
 
 from HelixCore.tools.base import tool_registry as global_tool_registry
 from modules.host.plugin_loader import save_tool_config
@@ -288,10 +290,7 @@ def _llm_test(params):
 
 def _llm_providers(params):
     import subprocess
-    ai_engine_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "ai_engine", "ai_engine.py",
-    )
+    ai_engine_path = project_path("ai_engine", "ai_engine.py")
     result = subprocess.run(
         [sys.executable, ai_engine_path, "--get-provider"],
         capture_output=True, text=True, timeout=10,
@@ -306,10 +305,7 @@ def _llm_logs(params):
     log_file = config.get("llm.log_file", "llm_engine.log")
     lines    = int(params.get("lines", 200))
     if not os.path.isabs(log_file):
-        log_file = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            log_file,
-        )
+        log_file = project_path(log_file)
     if not os.path.exists(log_file):
         return {"logs": [], "total_lines": 0}
     with open(log_file, "r", encoding="utf-8") as f:
@@ -581,19 +577,13 @@ def create_admin_routes(app):
 
     @app.route("/output/<path:filename>")
     def download_file(filename):
-        output_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "output",
-        )
+        output_dir = project_path("output")
         return send_from_directory(output_dir, filename)
 
     # Locale serving route (not RPC — serves static JSON)
     @app.route("/api/admin/locale/<lang>")
     def serve_locale(lang):
-        locale_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "..", "web", "locales",
-        )
+        locale_dir = project_path("web", "locales")
         safe_lang = lang.replace("..", "").replace("/", "").replace("\\", "")
         filepath = os.path.join(locale_dir, f"{safe_lang}.json")
         if not os.path.exists(filepath):
@@ -619,12 +609,11 @@ def create_admin_routes(app):
 
     @app.route("/api/log-stream")
     def log_stream():
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         cursor = int(request.args.get("cursor", 0))
         config = ConfigManager()
         log_file = config.get("server.log_file", "debugout.log")
         return Response(
-            log_watcher.stream(log_file, project_root, cursor=cursor),
+            log_watcher.stream(log_file, PROJECT_ROOT, cursor=cursor),
             mimetype="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

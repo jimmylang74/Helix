@@ -13,6 +13,8 @@ import threading
 import uuid
 from typing import Any, Dict, List, Optional
 
+from modules.utils.paths import project_path
+
 _db_path_cache: Optional[str] = None
 _lock = threading.Lock()
 
@@ -25,11 +27,7 @@ ACTIVE_SESSION_ID = "active"
 def _db_path() -> str:
     global _db_path_cache
     if _db_path_cache is None:
-        # store.py 位于 <root>/modules/channels/ 下，需三级 dirname 回到项目根
-        _db_path_cache = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "db", "imbot.db",
-        )
+        _db_path_cache = project_path("db", "imbot.db")
     return _db_path_cache
 
 

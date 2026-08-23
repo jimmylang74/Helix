@@ -167,7 +167,7 @@ class AgentOrchestrator:
         state["cancelled"] = True
         state["orchestrator_phase"] = "done"
         state["error"] = "Cancelled by user"
-        # 唤醒等待用户回答的 ask_user 由 Host 侧负责（ToolContext.cancel），HelixCore 不感知 ask_user
+        # 唤醒等待用户回答的 ask_user 由 Host 侧负责（broker.cancel），HelixCore 不感知 ask_user
         self._log.orchestrate(f"Request {request_id} cancelled by user")
         graph = self._get_graph(request_id)
         graph_nodes = graph.to_dict_list() if graph else None

@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.utils.logger import init_logger, log_info, log_error, log_orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
-from imBots.routes import imbot_bp
+from modules.channels.routes import imbot_bp
 from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
 
@@ -99,27 +99,20 @@ def main():
     log_info(f"Starting AI Hybrid Agent Service...")
     log_info(f"RPC port: {rpc_port}, Admin port: {admin_port}, Host: {host}, Debug: {debug}")
 
-    # ═══ 组合根：显式装配全部依赖并构造 AgentOrchestrator ═══
-    from modules.host.intent_store import intent_store
-    from modules.host.ai_engine_backend import AIEngineBackend
-    from modules.host.event_sink import SSEEventSink
-    from HelixCore.orchestrator.orchestrator import AgentOrchestrator
-    from modules.host.config_builder import build_agent_config_from_config_manager
-    from modules.host.llm_event_bus import LlmEventBusImpl
+    # ═══ 组合根：装配共享工具池，再为每个通道构建私有运行时 ═══
     from modules.app.routes import configure as configure_routes
+    from modules.channels.manager import ChannelManager
+    from modules.channels.routes import configure as configure_channel_routes
+    from modules.channels.runtime import build_channel_runtime
+    from modules.channels.web.channel import WebChannel
+    from imChannels.wechat.authenticator import WeChatAuthenticator
+    from imChannels.wechat.channel import WeChatChannel
+    from imChannels.wechat.ilink_client import ILinkBotsClient
 
-    # ① 显式构造外部依赖
-    llm_backend = AIEngineBackend()
-    event_sink = SSEEventSink()
-    intent_provider = intent_store
-    agent_config = build_agent_config_from_config_manager()
-
-    # ② Host 驱动工具组装：扫描插件目录 + 读取 Helix.json 配置 + 装载 MCP，形成完整工具集
+    # ① Host 驱动共享工具池：扫描插件目录 + 读取 Helix.json 配置 + 装载 MCP。
+    #    该池仅作为通用工具来源；各通道私有 registry 在装配时从此复制，
+    #    并追加本通道专属的 ask_user / get_context / clear_context 实例。
     from modules.host.plugin_loader import discover_plugins, load_tool_config
-    from modules.host.log_sink import HostLogSink
-    host_log_sink = HostLogSink()
-    tool_registry.set_intent_provider(intent_provider)
-    tool_registry.set_logger(host_log_sink)
     discover_plugins(tool_registry)
     load_tool_config(tool_registry)
     log_info(f"Plugin tools registered: {len(tool_registry.get_all())} tool(s)")
@@ -129,32 +122,17 @@ def main():
     register_mcp_tools(tool_registry)
     log_info(f"All tools registered: {len(tool_registry.get_all())} tool(s)")
 
-    # ③ 显式构造编排器：所有依赖显式传参（含已组装好的工具注册表）
-    orchestrator = AgentOrchestrator(
-        llm_backend=llm_backend,
-        config=agent_config,
-        event_sink=event_sink,
-        intent_provider=intent_provider,
-        tool_registry=tool_registry,
-        event_bus=LlmEventBusImpl(),
-        log=host_log_sink,
-        refresh_config=build_agent_config_from_config_manager,
-    )
+    mcp_registry.initialize()
+    from plugins.mcp_tools import register_mcp_tools
+    register_mcp_tools(tool_registry)
+    log_info(f"All tools registered: {len(tool_registry.get_all())} tool(s)")
 
-    # ④ 注入 routes（替代模块级全局单例 import）
-    configure_routes(orchestrator, tool_registry)
-
-    # ⑤ iBot channel manager setup
-    from imBots.manager import ChannelManager
-    from imBots.wechat.channel import WeChatChannel
-    from imBots.wechat.authenticator import WeChatAuthenticator
-    from imBots.wechat.ilink_client import ILinkBotsClient
-    from imBots.routes import configure as configure_imbot_routes
+    # ② 构造并注册通道（Web 快速测试 + 微信）
+    web_channel = WebChannel()
 
     imbot_config = config.get("imbot", {})
     poll_timeout = imbot_config.get("poll_timeout", 50)
     proxy = imbot_config.get("proxy", "") or config.get("server.proxy", "")
-
     ilink_client = ILinkBotsClient(proxy=proxy or None)
     wechat_auth = WeChatAuthenticator(client=ilink_client)
     wechat_channel = WeChatChannel(
@@ -162,10 +140,23 @@ def main():
         authenticator=wechat_auth,
         poll_timeout=poll_timeout,
     )
+
     channel_manager = ChannelManager()
+    channel_manager.register(web_channel)
     channel_manager.register(wechat_channel)
+
+    # ③ 每通道装配私有运行时（独立 LLM 后端/日志、事件出口、broker、
+    #    工具表与编排器）；须在共享工具池就绪后执行，私有 registry
+    #    才能复制到完整工具集
+    for ch in (web_channel, wechat_channel):
+        build_channel_runtime(ch)
+
     wechat_channel.restore_session()
-    configure_imbot_routes(channel_manager)
+
+    # ④ 注入 routes：RPC agent/* 与用户应答/取消经 ChannelManager 落到对应通道，
+    #    imbot/* 管理接口同样经 ChannelManager 分发
+    configure_routes(channel_manager)
+    configure_channel_routes(channel_manager)
 
     # Create apps
     service_app = create_service_app()

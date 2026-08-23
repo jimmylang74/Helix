@@ -94,11 +94,17 @@ class AIEngineBackend(LLMBackend):
     原 LLMClient；重命名以体现其 Host 侧 LLMBackend 适配器角色。
     """
 
-    def __init__(self):
+    def __init__(self, log_file: Optional[str] = None):
+        """log_file 为通道级覆盖项；None 时回退 Helix.json 的 llm.log_file。"""
         self.config = ConfigManager()
         self._provider = self.config.get("llm.provider", "ollama_native")
-        self._log_file = self._resolve_log_path()
+        self._explicit_log_file = log_file
+        self._log_file = log_file or self._resolve_log_path()
         log_info(f"LLM client initialized: provider={self._provider} (via ai_engine)")
+
+    @property
+    def log_file(self) -> Optional[str]:
+        return self._log_file
 
     # ── Public API (orchestrator-compatible) ───────────────────────
 

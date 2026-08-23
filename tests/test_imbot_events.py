@@ -1,4 +1,4 @@
-"""Unit tests for imBots.events SSE broadcasting."""
+"""Unit tests for modules.channels.events SSE broadcasting."""
 
 import json
 import queue
@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-import imBots.events as events_mod
+import modules.channels.events as events_mod
 
 
 @pytest.fixture(autouse=True)

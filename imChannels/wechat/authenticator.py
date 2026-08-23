@@ -11,9 +11,9 @@ import qrcode
 from io import BytesIO
 import base64
 
-from imBots.base import BotConfig, ChannelAuthenticator
-from imBots.store import save_session, get_session
-from imBots.wechat.ilink_client import ILinkBotsClient
+from modules.channels.base import BotConfig, ChannelAuthenticator
+from modules.channels.store import save_session, get_session
+from imChannels.wechat.ilink_client import ILinkBotsClient
 from modules.utils.logger import log_error, log_info
 
 
@@ -161,7 +161,7 @@ class WeChatAuthenticator(ChannelAuthenticator):
         self._qrcode_img_content = None
         self._authenticated = False
         self._client.set_bot_token("")
-        from imBots.store import delete_session
+        from modules.channels.store import delete_session
         delete_session("wechat")
         log_info("[WeChat Auth] Logged out")
         return True

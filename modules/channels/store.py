@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import threading
+import uuid
 from typing import Any, Dict, List, Optional
 
 _db_path_cache: Optional[str] = None
@@ -17,12 +18,16 @@ _lock = threading.Lock()
 
 _MAX_MESSAGES = 1000  # keep at most N rows; older ones pruned on insert
 
+# 进行中会话的固定标识；clear_context 归档时替换为一次性 UUID
+ACTIVE_SESSION_ID = "active"
+
 
 def _db_path() -> str:
     global _db_path_cache
     if _db_path_cache is None:
+        # store.py 位于 <root>/modules/channels/ 下，需三级 dirname 回到项目根
         _db_path_cache = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "db", "imbot.db",
         )
     return _db_path_cache
@@ -68,6 +73,19 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_messages_channel
             ON messages(channel, timestamp DESC);
+
+        CREATE TABLE IF NOT EXISTS agent_sessions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel       TEXT NOT NULL,
+            session_id    TEXT DEFAULT 'active',
+            user_request  TEXT DEFAULT '',
+            final_answer  TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (datetime('now')),
+            archived_at   TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agent_sessions_channel
+            ON agent_sessions(channel, session_id);
     """)
 
 
@@ -262,6 +280,68 @@ def get_messages(
                 (channel, limit),
             ).fetchall()
             return [_row_to_message(r) for r in rows]
+        finally:
+            conn.close()
+
+
+# ── Agent Sessions（每通道会话上下文）───────────────────────────────────────
+
+
+def save_agent_context(channel: str, user_request: str, final_answer: str) -> None:
+    """Append one request/answer exchange to the channel's active session."""
+    with _lock:
+        conn = _init()
+        try:
+            conn.execute(
+                """INSERT INTO agent_sessions
+                   (channel, session_id, user_request, final_answer)
+                   VALUES (?, ?, ?, ?)""",
+                (channel, ACTIVE_SESSION_ID, user_request, final_answer),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def get_active_agent_context(channel: str) -> List[Dict[str, str]]:
+    """Return all exchanges of the channel's ongoing session (oldest first)."""
+    with _lock:
+        conn = _init()
+        try:
+            rows = conn.execute(
+                "SELECT user_request, final_answer FROM agent_sessions "
+                "WHERE channel = ? AND session_id = ? ORDER BY id ASC",
+                (channel, ACTIVE_SESSION_ID),
+            ).fetchall()
+            return [
+                {
+                    "user_request": r["user_request"] or "",
+                    "final_answer": r["final_answer"] or "",
+                }
+                for r in rows
+            ]
+        finally:
+            conn.close()
+
+
+def archive_agent_session(channel: str) -> tuple[str, int]:
+    """Start a new session: stamp the active batch with a one-off UUID.
+
+    Messages/rows are never deleted — the old session stays fully stored
+    under its archived id.  Returns ``(archived_session_id, row_count)``.
+    """
+    archived_id = f"ses_{uuid.uuid4().hex[:12]}"
+    with _lock:
+        conn = _init()
+        try:
+            cursor = conn.execute(
+                "UPDATE agent_sessions "
+                "SET session_id = ?, archived_at = datetime('now') "
+                "WHERE channel = ? AND session_id = ?",
+                (archived_id, channel, ACTIVE_SESSION_ID),
+            )
+            conn.commit()
+            return archived_id, cursor.rowcount
         finally:
             conn.close()
 

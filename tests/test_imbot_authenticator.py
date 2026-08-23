@@ -1,4 +1,4 @@
-"""Unit tests for imBots.wechat.authenticator WeChatAuthenticator."""
+"""Unit tests for imChannels.wechat.authenticator WeChatAuthenticator."""
 
 import os
 import tempfile
@@ -12,14 +12,14 @@ _tmp_db = os.path.join(tempfile.mkdtemp(), "test_auth.db")
 
 @pytest.fixture(autouse=True, scope="session")
 def _patch_db():
-    import imBots.store as store_mod
+    import modules.channels.store as store_mod
     store_mod._db_path_cache = _tmp_db
     yield
 
 
 @pytest.fixture(autouse=True)
 def _clean_db():
-    import imBots.store as store_mod
+    import modules.channels.store as store_mod
     conn = store_mod._init()
     try:
         conn.execute("DELETE FROM bot_sessions")
@@ -37,7 +37,7 @@ def mock_client():
 
 @pytest.fixture
 def authenticator(mock_client):
-    from imBots.wechat.authenticator import WeChatAuthenticator
+    from imChannels.wechat.authenticator import WeChatAuthenticator
     return WeChatAuthenticator(mock_client)
 
 
@@ -126,7 +126,7 @@ class TestLogout:
 
 class TestRestoreFromStore:
     def test_restore_with_valid_session(self, authenticator, mock_client):
-        from imBots.store import save_session
+        from modules.channels.store import save_session
         save_session("wechat", bot_token="saved_tok", status="authenticated")
         result = authenticator.restore_from_store()
         assert result is True
@@ -139,7 +139,7 @@ class TestRestoreFromStore:
         assert authenticator.is_authenticated is False
 
     def test_restore_empty_token(self, authenticator, mock_client):
-        from imBots.store import save_session
+        from modules.channels.store import save_session
         save_session("wechat", bot_token="")
         result = authenticator.restore_from_store()
         assert result is False

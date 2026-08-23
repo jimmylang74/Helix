@@ -8,8 +8,10 @@ import json
 import threading
 from typing import Any, Dict, Optional
 
+from modules.utils.paths import PROJECT_ROOT
+
 # Default config path
-DEFAULT_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Helix.json")
+DEFAULT_CONFIG_PATH = os.path.join(PROJECT_ROOT, "Helix.json")
 
 
 class ConfigManager:

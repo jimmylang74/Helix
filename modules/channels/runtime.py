@@ -26,6 +26,7 @@ from HelixCore.interface import EventSink
 from HelixCore.tools.base import BaseTool, ToolRegistry
 from modules.config.config_manager import ConfigManager
 from modules.llm.llm_events import get_request_context
+from modules.utils.paths import project_path
 from modules.utils.logger import log_info
 
 if TYPE_CHECKING:  # 仅类型标注，避免运行时循环导入
@@ -168,13 +169,9 @@ def build_channel_tool_registry(
 # ── 每通道独立 LLM 日志文件 ────────────────────────────────────────────────
 
 
-def _project_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 def _resolve_project_relative(path: str) -> str:
     if not os.path.isabs(path):
-        path = os.path.join(_project_root(), path)
+        path = project_path(path)
     return path
 
 

@@ -9,6 +9,7 @@ from datetime import datetime
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call, log_agent_action
 from modules.utils.file_ops import FileOps
+from modules.utils.paths import project_path
 
 
 class SaveCodeTool(BaseTool):
@@ -39,9 +40,7 @@ class SaveCodeTool(BaseTool):
 
     def execute(self, code: str = "", filename: str = "", language: str = "py", **kwargs) -> str:
         log_tool_call(f"save_code(filename='{filename}', language='{language}')")
-        output_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output"
-        )
+        output_dir = project_path("output")
         os.makedirs(output_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_name = f"code_{timestamp}_{filename}"

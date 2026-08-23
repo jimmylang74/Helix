@@ -54,6 +54,7 @@ A hybrid-driven AI Agent service built on Python / Flask / python-pptx / ai_engi
 - **LLM-driven decisions**: The LLM handles task decomposition, tool-call decisions, node completion checks, and final summarization.
 - **Configurable intent system**: Built-in generic fallback intent; intents such as PPT generation and code generation are configured in `Helix.json` (including planning/node-execution/summarization prompts per phase) and can be dynamically added or changed via the Web console.
 - **Plugin-based tool system**: Three-layer architecture of built-in plugins + external plugins + MCP tools, with auto-discovery and hot-swap support.
+- **Multi-channel access**: Each channel (Web quick test / WeChat iLinkBot) owns a private agent runtime (orchestrator + tool registry + question broker); the LLM can only reach tools registered in its own channel. The channel tool trio (`ask_user` / `get_context` / `clear_context`) is adapted per channel.
 - **External plugin extension**: Drop a `.py` file into `plugins/user/` to register a custom tool without modifying the framework code.
 - **Multi-LLM support**: Unified access through the [ai_engine](ai_engine/) submodule, supporting 10+ providers (Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral, etc.), switchable dynamically from the Web console.
 - **MCP tools**: web_search (SearXNG), image_search (Pexels/Unsplash), and external SSE MCP servers.
@@ -206,12 +207,21 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   │   ├── intent_router.py  #     Intent router (config-based registration + forced)
 │   │   ├── status_events.py  #     SSE event bus (status push / disconnect replay)
 │   │   └── user_question.py  #     User question broker
+│   ├── channels/             #   Multi-channel framework (per-channel private agent runtime)
+│   │   ├── base.py           #     ChannelAdapter ABC (incl. ask_user/get_context/clear_context contracts)
+│   │   ├── manager.py        #     ChannelManager (registration/lifecycle/cross-channel answer & cancel)
+│   │   ├── runtime.py        #     build_channel_runtime: private orchestrator+tool registry+tool trio binding
+│   │   ├── routes.py         #     imbot/* RPC and /api/imbot-stream SSE
+│   │   ├── events.py         #     Channel message broadcast/subscribe (SSE)
+│   │   ├── store.py          #     Channel message and session-context persistence (SQLite)
+│   │   └── web/              #     Web quick-test channel (channel/event_sink/history_store)
 │   ├── host/                 #   Host adapter layer (injected implementations)
 │   │   ├── ai_engine_backend.py #   LLMBackend implementation (ai_engine integration)
-│   │   ├── event_sink.py     #     EventSink implementation (SSE)
+│   │   ├── config_builder.py #     Orchestration config builder
 │   │   ├── intent_store.py   #     IntentProvider implementation
 │   │   ├── llm_event_bus.py  #     LlmEventBus implementation (llm_events wrapper)
-│   │   └── tool_context.py   #     Tool context (ask_user/cancel)
+│   │   ├── log_sink.py       #     LogSink implementation (logging injected into HelixCore)
+│   │   └── plugin_loader.py  #     Plugin discovery and enable-state persistence
 │   ├── llm/                  #   LLM layer
 │   │   └── llm_events.py     #     LLM event bus
 │   ├── mcp/                  #   MCP protocol layer
@@ -230,11 +240,18 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   ├── ppt_tools.py          #   PPT tools (create_ppt)
 │   ├── code_tools.py         #   Code tools (save_code, run_code)
 │   ├── shell_tools.py        #   Shell tools (bash, ls, grep, read/write/delete_file)
+│   ├── mcp_tools.py          #   MCP tool adapter (MCPToolAdapter; registered separately, not auto-scanned)
 │   └── user/                 #   External plugins (user-defined, marked as "external plugin")
 │       ├── __init__.py
 │       ├── plugin.md         #     Plugin authoring guide
 │       ├── weather_tool.py   #     Example: weather query tool
 │       └── calculator_tool.py #    Example: safe calculator tool
+├── imChannels/               # IM channel adapters (ChannelAdapter implementations)
+│   └── wechat/               #   WeChat iLinkBot channel
+│       ├── channel.py        #     Polling / messaging / agent dispatch / channel tool trio
+│       ├── authenticator.py  #     QR-code login and session restore
+│       ├── ilink_client.py   #     iLink API HTTP client
+│       └── README.md         #     WeChat channel documentation
 ├── mcp/                      # MCP server implementations (stdio transport)
 │   ├── searxng_server.py     #   SearXNG search MCP server
 │   └── image_search_server.py #   Image search MCP server (Pexels/Unsplash)

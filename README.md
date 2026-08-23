@@ -51,6 +51,7 @@
 - **LLM驱动决策**: LLM负责任务分解、工具调用判断、节点完成判定、结果总结
 - **配置化意图体系**: 内置 generic 兜底意图，PPT 生成、代码生成等意图在 `Helix.json` 中配置（含规划/节点执行/总结各阶段提示词），可通过 Web 控制台动态增改
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
+- **多通道接入**: 每个通道（Web 快速测试 / 微信 iLinkBot）持有独立的私有 agent 运行时（编排器 + 工具注册表 + 提问 broker），LLM 只能触达所在通道的工具；通道三件套工具（`ask_user` / `get_context` / `clear_context`）按通道适配落点
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash) 及外部 SSE MCP Server
@@ -204,12 +205,21 @@ curl -X POST http://localhost:11555/api/rpc \
 │   │   ├── intent_router.py   #     意图路由 (配置化注册 + 强制指定)
 │   │   ├── status_events.py   #     SSE 事件总线 (状态推送/断线回放)
 │   │   └── user_question.py   #     用户提问 broker
+│   ├── channels/              #   多通道框架 (每通道私有 agent 运行时)
+│   │   ├── base.py            #     ChannelAdapter 抽象基类 (含 ask_user/get_context/clear_context 落点契约)
+│   │   ├── manager.py         #     ChannelManager (通道注册/生命周期/跨通道应答与取消)
+│   │   ├── runtime.py         #     build_channel_runtime: 私有编排器+工具注册表+三件套绑定
+│   │   ├── routes.py          #     imbot/* RPC 与 /api/imbot-stream SSE
+│   │   ├── events.py          #     通道消息广播/订阅 (SSE)
+│   │   ├── store.py           #     通道消息与会话上下文持久化 (SQLite)
+│   │   └── web/               #     Web 快速测试通道 (channel/event_sink/history_store)
 │   ├── host/                  #   host 适配层 (注入实现)
 │   │   ├── ai_engine_backend.py #   LLMBackend 实现 (ai_engine 接入)
-│   │   ├── event_sink.py      #     EventSink 实现 (SSE)
+│   │   ├── config_builder.py  #     编排配置构建
 │   │   ├── intent_store.py    #     IntentProvider 实现
 │   │   ├── llm_event_bus.py   #     LlmEventBus 实现 (llm_events 包装)
-│   │   └── tool_context.py    #     工具上下文 (ask_user/cancel)
+│   │   ├── log_sink.py        #     LogSink 实现 (日志注入 HelixCore)
+│   │   └── plugin_loader.py   #     插件发现与启停配置持久化
 │   ├── llm/                   #   LLM 层
 │   │   └── llm_events.py      #     LLM 事件总线
 │   ├── mcp/                   #   MCP 协议层
@@ -228,11 +238,18 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── ppt_tools.py           #   PPT 工具 (create_ppt)
 │   ├── code_tools.py          #   代码工具 (save_code, run_code)
 │   ├── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
+│   ├── mcp_tools.py           #   MCP 工具适配 (MCPToolAdapter, 单独注册不自动扫描)
 │   └── user/                  #   外部插件 (用户自定义, 来源标记为 "外部插件")
 │       ├── __init__.py
 │       ├── plugin.md          #     插件编写指南
 │       ├── weather_tool.py    #     示例: 天气查询工具
 │       └── calculator_tool.py #     示例: 安全计算器工具
+├── imChannels/                # IM 通道适配器 (ChannelAdapter 实现)
+│   └── wechat/                #   微信 iLinkBot 通道
+│       ├── channel.py         #     轮询/收发/agent 分发/通道工具落点
+│       ├── authenticator.py   #     QR 码登录与会话恢复
+│       ├── ilink_client.py    #     iLink API HTTP 客户端
+│       └── README.md          #     微信通道详细文档
 ├── mcp/                       # MCP Server 实现 (stdio 传输)
 │   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
 │   └── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)

@@ -1,7 +1,7 @@
 # Helix AI Agent - 系统设计文档
 
-> **版本**: 1.3  
-> **最后更新**: 2026-07-31  
+> **版本**: 1.4  
+> **最后更新**: 2026-08-23  
 > **项目代号**: Helix  
 > **技术栈**: Python 3.12+ / Flask / python-pptx / ai_engine / MCP Protocol
 
@@ -19,6 +19,7 @@
 8. [数据模型与状态管理](#8-数据模型与状态管理)
 9. [配置管理设计](#9-配置管理设计)
 10. [部署与运维](#10-部署与运维)
+11. [多通道架构设计](#11-多通道架构设计)
 
 ---
 
@@ -609,11 +610,12 @@ graph TB
 
     subgraph Core["核心框架"]
         BT["BaseTool (ABC)<br/>name, description<br/>intents, parameters, source<br/>execute(**kwargs)"]
-        TR["ToolRegistry (单例)<br/>register / unregister<br/>call_tool / get<br/>discover_plugins<br/>set_enabled"]
+        TR["ToolRegistry<br/>register / unregister<br/>call_tool / get<br/>set_intent_provider"]
     end
 
     subgraph Consumer["消费者"]
         ORCH["Orchestrator<br/>_execute_node()"]
+        CHORCH["每通道私有 Orchestrator<br/>(Web / WeChat, 见 §11)"]
         ADMIN["Admin RPC<br/>plugins.get / plugins.toggle"]
     end
 
@@ -713,6 +715,8 @@ class BaseTool(ABC):
 | **启停管理** | `set_enabled(name, bool)` / `get_enabled_tools()` | 运行时启用/禁用工具 |
 | **执行** | `call_tool(name, arguments)` | 按名称调用工具（Plugin 与 MCP 工具统一入口），支持异常处理 |
 | **持久化** | `load_enabled_state()` / `save_enabled_state()` | 启停状态持久化到 Helix.json |
+
+> **多实例说明**: `ToolRegistry` 自 v4.1 起不再强制单例，支持按作用域实例化。全局注册表（`HelixCore.tools.base.tool_registry`）承载 plugins + MCP 工具；每个通道在装配时从全局注册表**复制共享工具实例**构建自己的私有注册表，并额外注册绑定该通道的 ask_user / get_context / clear_context 三件套（详见 [§11 多通道架构设计](#11-多通道架构设计)）。
 
 ### 7.5 工具与 MCP 的融合策略
 
@@ -1143,6 +1147,165 @@ sequenceDiagram
 | **适用场景** | 运维排查、整体流程追踪 | LLM 交互分析、调试 | 实时调试、观察 LLM 思考过程 |
 
 > **注意**: 通路 ② 和 ③ 的数据来源相同（ai_engine NDJSON 事件），但通路 ② 由 ai_engine 内部写入文件，通路 ③ 由 LLMClient 在 stdout 拦截层实时推送到前端。两者互不干扰，配置 `llm.verbose=false` 会关闭通路 ② 但不影响通路 ③。
+
+---
+
+## 11. 多通道架构设计
+
+系统支持多接入通道（Web 快速测试 / 微信 iLinkBot / 未来 Telegram、Discord 等）。核心设计：**每个通道持有独立的一整套 agent 私有运行时**，LLM 在某通道的请求中只能看到并调用该通道注册的工具实例——提问投递与会话上下文读写均落在该通道自身。
+
+### 11.1 通道框架总览
+
+通道框架分两部分：
+
+| 部分 | 目录 | 职责 |
+|------|------|------|
+| **框架层** | `modules/channels/` | 通道抽象基类、生命周期管理器、每通道运行时装配、RPC/SSE 路由、消息持久化 |
+| **适配器层** | `imChannels/<type>/` | 具体平台的协议实现（认证、轮询、收发），当前有 `imChannels/wechat/` |
+
+```mermaid
+graph TB
+    subgraph Composition["组合根 Helix.py"]
+        ROOT["① 构造各通道适配器<br/>② ChannelManager.register<br/>③ build_channel_runtime(ch)<br/>④ restore_session + 注入 routes"]
+    end
+
+    subgraph Framework["modules/channels/ (框架层)"]
+        MGR["ChannelManager<br/>register/start_all/stop_all<br/>deliver_answer/cancel_request"]
+        BASE["ChannelAdapter (ABC)<br/>start/stop/send/get_status<br/>ask_user/get_context/clear_context"]
+        RT["runtime.py<br/>build_channel_runtime<br/>→ ChannelRuntime"]
+    end
+
+    subgraph Adapters["imChannels/ (适配器层)"]
+        WC["WeChatChannel<br/>长轮询 + iLink 协议"]
+        WBC["WebChannel<br/>RPC + SSE, 无轮询"]
+    end
+
+    subgraph PerCh["每通道私有 runtime"]
+        ORCH1["AgentOrchestrator"]
+        TR1["ToolRegistry (私有)<br/>共享工具副本 + 三件套"]
+        BRK["UserQuestionBroker"]
+    end
+
+    ROOT --> MGR
+    ROOT --> RT
+    MGR --> BASE
+    BASE -.实现.- WC
+    BASE -.实现.- WBC
+    RT --> ORCH1
+    RT --> TR1
+    RT --> BRK
+    TR1 -.绑定实例.- BASE
+
+    style Composition fill:#fff3e0,stroke:#e65100,color:#000
+    style Framework fill:#e3f2fd,stroke:#1565c0,color:#000
+    style Adapters fill:#e8f5e9,stroke:#2e7d32,color:#000
+    style PerCh fill:#fce4ec,stroke:#c62828,color:#000
+```
+
+### 11.2 ChannelAdapter 抽象基类
+
+定义于 `modules/channels/base.py`，所有通道适配器的统一契约，成员分四类：
+
+| 类别 | 成员 | 说明 |
+|------|------|------|
+| 类属性 | `runtime: Any = None` | 通道私有运行时容器，由组合根调 `build_channel_runtime()` 后挂载 `ChannelRuntime` 实例 |
+| 抽象 property | `channel_type -> str`、`is_running -> bool` | 通道唯一标识（如 `"wechat"`）与活跃状态 |
+| 抽象方法（生命周期/消息） | `start()` / `stop()` / `restore_session() -> bool` / `send(content, msg_type, **kwargs)` / `get_messages(limit)` / `get_status()` | 启动、停止、会话恢复、消息收发与状态上报 |
+| 抽象方法（**通道工具落点**） | `ask_user(request_id, question) -> str` / `get_context() -> str` / `clear_context() -> str` | 通道侧实现：阻塞提问并返回用户回答文本、读取本通道会话历史、归档旧会话开启新会话 |
+
+同文件还定义了统一数据模型：`ChannelMessage`（消息）、`ChannelStatus`（状态）、`BotConfig`（配置）。
+
+### 11.3 每通道私有运行时装配
+
+`modules/channels/runtime.py` 的 `build_channel_runtime(channel)` 为每个通道装配完整的私有依赖集，并挂回 `channel.runtime`：
+
+```python
+@dataclass
+class ChannelRuntime:
+    channel_type: str
+    llm_backend: Any          # AIEngineBackend — 独立 LLM 引擎实例与日志文件
+    event_sink: Any           # web=SSE 推送；其余通道静默落日志
+    broker: Any               # UserQuestionBroker — ask_user 阻塞/应答按通道隔离
+    intent_provider: Any      # IntentStore — 独立意图提供者
+    tool_registry: ToolRegistry  # 私有注册表（见 11.4）
+    orchestrator: Any         # AgentOrchestrator — 只可见自己的工具注册表
+```
+
+### 11.4 通道三件套工具与私有 ToolRegistry
+
+三个 `BaseTool` 子类（定义于 `runtime.py`）把通道方法桥接为 LLM 可调用的工具，构造时绑定通道实例：
+
+| 子类 | name | parameters | execute 行为 |
+|------|------|-----------|-------------|
+| `ChannelAskUserTool` | `"ask_user"` | `{"question": string}` 必填 | 经 `get_request_context()` 取当前 request_id → 委托 `channel.ask_user(request_id, question)`；request_id 由请求上下文注入而非 LLM 传参 |
+| `ChannelGetContextTool` | `"get_context"` | 无参数 | 直接委托 `channel.get_context()` |
+| `ChannelClearContextTool` | `"clear_context"` | 无参数 | 直接委托 `channel.clear_context()` |
+
+`build_channel_tool_registry(channel, logger, intent_provider)` 构建通道私有注册表：
+
+1. 从全局注册表**复制共享工具实例**（plugins + MCP），启用状态随装配时快照；
+2. 过滤常量 `CHANNEL_TOOL_NAMES = ("ask_user", "get_context", "clear_context")`，防止全局残留的同名工具遮蔽私有实例；
+3. 注册上述三个绑定本通道的新实例——因此各通道的 LLM 只能触达自己通道的提问与会话上下文。
+
+MCP 工具热更新时经 `ChannelManager.refresh_mcp_tools()` 重新注册进每个通道的私有注册表。
+
+### 11.5 ask_user 交互时序
+
+以微信通道为例，展示一次跨层的用户提问-回答闭环：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant LLM as Orchestrator<br/>(通道私有)
+    participant CAT as ChannelAskUserTool
+    participant CH as WeChatChannel
+    participant BRK as UserQuestionBroker<br/>(通道私有)
+    participant U as 微信用户
+
+    Note over LLM: 节点循环中 LLM 发起 tool_call ask_user(question=...)
+    LLM->>CAT: execute(question)
+    CAT->>CAT: get_request_context() → request_id
+    CAT->>CH: ask_user(request_id, question)
+    CH->>CH: broker.is_waiting? 已等待则拒绝重复提问
+    CH->>U: send("[提问] ...") (iLink sendmessage)
+    CH->>BRK: broker.ask(request_id, question)<br/>(阻塞当前 worker 线程)
+    U-->>CH: 新消息 (poll loop → _handle_update)
+    CH->>CH: _dispatch_incoming:<br/>sender 有 pending_ask → 视为回答
+    CH->>BRK: broker.answer(pending_req, content)
+    BRK-->>CAT: 唤醒, 返回回答文本
+    CAT-->>LLM: 回答文本作为 tool result
+```
+
+配套机制：请求结束/取消时 worker 在 `finally` 中调用 `broker.cancel(request_id)` 唤醒可能仍阻塞的 ask_user；跨通道路由经 `ChannelManager.deliver_answer()` / `cancel_request()` 找到持有该 request_id 的通道 broker。
+
+### 11.6 组合根装配流程
+
+`Helix.py` 启动时按以下顺序完成多通道装配：
+
+```
+① 构造适配器:   WebChannel() + WeChatChannel(client, authenticator)
+② 注册:         channel_manager.register(web/wechat)     → ChannelManager
+③ 装配 runtime: build_channel_runtime(ch) × N            → 私有 orchestrator + registry
+④ 恢复会话:     wechat_channel.restore_session()          → DB bot_token + 自动启动轮询
+⑤ 注入路由:     configure_routes / configure_channel_routes(channel_manager)
+                → agent/* RPC 与用户应答经 ChannelManager 落到对应通道
+                → imbot/* 管理接口同样经 ChannelManager 分发
+```
+
+### 11.7 内置通道差异对比
+
+| 维度 | Web 通道 (`modules/channels/web/channel.py`) | 微信通道 (`imChannels/wechat/channel.py`) |
+|------|----------------------------------------------|-------------------------------------------|
+| `CHANNEL_TYPE` | `"web"` | `"wechat"` |
+| 请求入口 | RPC `agent/router` 直入私有编排器 | 长轮询 `_poll_loop` → `_dispatch_incoming` → worker 线程跑编排器 |
+| `start()` | 仅置 `_running = True`（无轮询线程） | 启动守护轮询线程 + 更新会话状态 |
+| `send()` | 无独立推送出口，结果经 SSE 按 request_id 下发 | iLink `sendmessage`（to_user_id/context_token 多级解析 + 持久化） |
+| `ask_user` | 经 `llm_events` 推送 SSE 事件给前端，阻塞等 RPC 应答 | 先 `send("[提问] …")` 给用户，再阻塞等 poll loop 收到回答 |
+| `get_context` / `clear_context` | 全局会话集（`history_store`） | 通道私有 agent 会话（`store.agent_sessions`，按 `CHANNEL_TYPE` 归档） |
+| EventSink | `SSEEventSink`（推送前端） | `LogEventSink`（静默落日志） |
+| LLM 日志 | 沿用全局 `llm.log_file` | `llm.log_file_<channel_type>` 或派生 `llm_engine_wechat.log` |
+
+新增通道步骤：在 `imChannels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`。
 
 ---
 

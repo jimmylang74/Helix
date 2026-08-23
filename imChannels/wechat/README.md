@@ -1,6 +1,6 @@
 # WeChat iLinkBot Channel
 
-微信 iLinkBot 协议集成，实现 Bot 登录、消息收发、SSE 实时推送。
+微信 iLinkBot 协议集成，实现 Bot 登录、消息收发、SSE 实时推送，并作为多通道框架（`modules/channels/`）中的 `wechat` 通道，承载本通道私有的 agent 运行时。
 
 ## 架构概览
 
@@ -23,20 +23,26 @@
                │              └────────────────────────────────┘
                ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  WeChatChannel (channel.py)                                  │
-│  高层适配器：生命周期 + 发送 + 轮询                           │
+│  WeChatChannel (channel.py) — ChannelAdapter 实现             │
+│  高层适配器：生命周期 + 发送 + 轮询 + 通道工具落点            │
 │  ┌──────────────────────────────────────────────────────┐    │
 │  │  _poll_loop()  →  _handle_update()  →  save_message  │    │
+│  │       └→ _dispatch_incoming()  (按发送方状态路由)     │    │
 │  │  send()        →  sendmessage()      →  broadcast    │    │
+│  │  ask_user / get_context / clear_context (三件套落点)  │    │
 │  └──────────────────────────────────────────────────────┘    │
-└──────────────┬───────────────────────────────────────────────┘
-               │
-               ▼
-┌──────────────────────────────────────────────────────────────┐
-│  WeChatAuthenticator (authenticator.py)                      │
-│  start_auth()  →  check_auth_status()  →  logout()          │
-│  restore_from_store() — 从 DB 恢复 bot_token                 │
-└──────────────┬───────────────────────────────────────────────┘
+└──────┬───────────────────────────────────┬───────────────────┘
+       │ runtime.broker / orchestrator      │
+       ▼                                    ▼
+┌──────────────────────────────┐  ┌────────────────────────────────┐
+│  WeChatAuthenticator         │  │  ChannelRuntime (通道私有)      │
+│  (authenticator.py)          │  │  build_channel_runtime() 装配   │
+│  start_auth()  →             │  │  AgentOrchestrator (私有编排器) │
+│  check_auth_status() →       │  │  ToolRegistry (私有: 共享工具副本│
+│  logout()                    │  │   + ask_user/get_context/       │
+│  restore_from_store()        │  │   clear_context 绑定实例)       │
+│  — 从 DB 恢复 bot_token      │  │  UserQuestionBroker (ask 阻塞)  │
+└──────────────┬───────────────┘  └────────────────────────────────┘
                │
                ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -59,7 +65,9 @@
 |------|------|
 | `ilink_client.py` | iLink API HTTP 客户端，封装 7 个端点 |
 | `authenticator.py` | QR 码登录流程，session 持久化 |
-| `channel.py` | 高层适配器：轮询循环、消息处理、发送、SSE 广播 |
+| `channel.py` | `ChannelAdapter` 实现：轮询循环、消息处理、发送、SSE 广播、agent 私有 runtime 分发、通道工具三件套落点（ask_user / get_context / clear_context） |
+
+> 多通道框架抽象基类与每通道运行时装配见 [doc/design.md §11](../../doc/design.md#11-多通道架构设计)。
 
 ---
 
@@ -204,6 +212,62 @@ _handle_update(update)
 | bot_token 失效 | `-14` | 停止轮询，标记 `token_expired`，清空 bot_token，需重新扫码 |
 | 其他错误 | 非 0 | 记录日志，继续轮询 |
 | 网络异常 | — | 指数退避重试（最大 30s） |
+
+---
+
+## Agent 请求处理（通道私有 runtime 分发）
+
+微信通道持有组合根装配的**私有 agent 运行时**（`ChannelRuntime`：私有编排器 + 私有 ToolRegistry + 私有 UserQuestionBroker），收到的消息不再只做记录，而是路由进本通道的编排器执行。
+
+### 按发送方状态路由
+
+```
+_handle_update(update) 提取文本后
+    └→ _dispatch_incoming(sender_id, sender_name, content)
+        │
+        ├─ sender_id 在 _pending_ask 中？
+        │   └→ 是: 该消息是 ask_user 的回答
+        │       → broker.answer(pending_req, content)，结束
+        │       → 迟到的回答（请求已结束）记日志丢弃
+        │
+        ├─ sender_id 在 _active_by_sender 中？
+        │   └→ 是: 当前有任务在处理 → 回复"请稍候再发送新消息"
+        │
+        └─ 否: 新起 worker 线程 _run_agent()
+```
+
+### Worker 线程流程
+
+```
+_run_agent(sender_id, sender_name, content)
+    │
+    ├─ request_id = "req_<hex12>"
+    ├─ 记录 _request_sender[request_id] = sender_id   (ask_user 定位提问目标)
+    ├─ 记录 _active_by_sender[sender_id] = request_id (标记任务进行中)
+    │
+    ├─ orchestrator.process_request(content, request_id)
+    │   (本通道私有的三阶段 DAG 编排器，工具目录含本通道三件套)
+    │
+    ├─ final_result / error → send() 回发微信
+    ├─ save_agent_context("wechat", content, reply) — 会话上下文入库
+    │
+    └─ finally: 清理映射 + broker.cancel(request_id)
+        (唤醒可能仍阻塞的 ask_user，与 RPC 路径收尾一致)
+```
+
+---
+
+## 通道工具落点（ask_user / get_context / clear_context）
+
+`ChannelAdapter` 基类要求每个通道实现三个**通道工具落点**方法。框架层（`modules/channels/runtime.py`）将它们包装为 `BaseTool` 子类实例，注册进**本通道私有的 ToolRegistry**——因此 LLM 在微信通道发起的工具调用只会落到微信的实现。
+
+| 工具 | WeChatChannel 实现 | 说明 |
+|------|-------------------|------|
+| `ask_user` | 校验 broker 就绪与是否已有等待中的提问 → `_request_sender` 定位提问目标 → `send("[提问] …")` 发给用户 → 记入 `_pending_ask` → `broker.ask(request_id, question)` **阻塞** worker 线程 | 回答经 poll loop 的 `_dispatch_incoming` 路由回 `broker.answer()`；请求结束时 `finally` 中 `broker.cancel()` 兜底唤醒 |
+| `get_context` | `get_active_agent_context("wechat")` 读取本通道进行中会话的全部记录，拼装为「用户请求 / 最终结果」列表 | 已归档会话不参与拼装 |
+| `clear_context` | `archive_agent_session("wechat")` 归档当前会话（全部记录保存入库）并开始新会话 | 无会话时返回无需清除 |
+
+> Web 通道的同名落点行为不同（SSE 推送提问、全局会话集），通道间完全隔离，对比见 [doc/design.md §11.7](../../doc/design.md#117-内置通道差异对比)。
 
 ---
 

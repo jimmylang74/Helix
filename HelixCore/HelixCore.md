@@ -149,7 +149,7 @@ from modules.host.ai_engine_backend import AIEngineBackend
 from modules.host.event_sink import SSEEventSink
 from modules.host.tool_context import ToolContext
 from modules.host.config_builder import build_agent_config_from_config_manager
-from modules.utils import history_store
+from modules.channels.web import history_store
 
 # 工具注册表：注入意图提供者与日志实现，再由 Host 装配（扫描插件 + 读取 Helix.json）
 tool_registry.set_intent_provider(intent_store)

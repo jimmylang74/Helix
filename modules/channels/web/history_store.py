@@ -17,6 +17,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from modules.utils.logger import log_error
+from modules.utils.paths import project_path
 
 # 历史记录保留上限 (超出后丢弃最旧的)
 MAX_HISTORY = 200
@@ -94,10 +95,7 @@ def _get_history_path() -> str:
     """历史文件路径: 项目根目录下的 db/history.json."""
     global _history_path
     if _history_path is None:
-        _history_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "db", "history.json",
-        )
+        _history_path = project_path("db", "history.json")
     return _history_path
 
 

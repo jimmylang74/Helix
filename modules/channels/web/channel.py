@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 
 from modules.channels.base import ChannelAdapter, ChannelMessage, ChannelStatus
 from modules.llm.llm_events import emit as _emit_llm_event
-from modules.utils import history_store
+from modules.channels.web import history_store
 from modules.utils.logger import log_debug, log_tool_call
 
 

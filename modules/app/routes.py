@@ -16,7 +16,7 @@ from modules.llm.llm_events import stream as llm_event_stream
 from modules.agent import status_events
 from modules.utils import log_watcher, history_store
 
-from modules.host.tool_context import ToolContext
+from HelixCore.tools.base import tool_registry as global_tool_registry
 from modules.host.plugin_loader import save_tool_config
 from modules.config.config_manager import ConfigManager
 from modules.host.intent_store import intent_store
@@ -26,25 +26,39 @@ from modules.mcp import mcp_events
 from modules.utils.logger import log_info, log_error, log_debug
 
 
-# 运行时注入：编排器与工具注册表由组合根（Helix.py）显式构造后经 configure() 注入
-_orchestrator: Any = None
-_tool_registry: Any = None
+# 运行时注入：ChannelManager 由组合根（Helix.py）装配后经 configure() 注入，
+# RPC agent/* 经其路由到 Web 通道私有运行时，用户应答/取消跨通道分发
+_channel_manager: Any = None
 
 
-def configure(orchestrator, tool_registry):
-    """组合根注入编排器与工具注册表实例（替代模块级全局单例 import）。"""
-    global _orchestrator, _tool_registry
-    _orchestrator = orchestrator
-    _tool_registry = tool_registry
+def configure(channel_manager):
+    """组合根注入 ChannelManager 实例。"""
+    global _channel_manager
+    _channel_manager = channel_manager
     mcp_registry.on_server_state_change = _on_mcp_state_change
     mcp_registry.start_reconnect_monitor()
+
+
+def _web_runtime():
+    """Web 快速测试通道的私有运行时。"""
+    ch = _channel_manager.get("web")
+    if ch is None or ch.runtime is None:
+        raise RuntimeError("Web channel runtime not configured")
+    return ch.runtime
+
+
+def _sync_mcp_tools() -> None:
+    """Re-register MCP tools into the shared pool and every live channel registry."""
+    from plugins.mcp_tools import register_mcp_tools
+    register_mcp_tools(global_tool_registry)
+    if _channel_manager is not None:
+        _channel_manager.refresh_mcp_tools()
 
 
 def _on_mcp_state_change(name: str, connected: bool, tools_count: int):
     """React to MCP state transitions detected by the reconnect monitor."""
     try:
-        from plugins.mcp_tools import register_mcp_tools
-        register_mcp_tools(_tool_registry)
+        _sync_mcp_tools()
     except Exception as e:
         log_error(f"MCP state change handler failed: {e}")
     mcp_events.broadcast({
@@ -123,7 +137,7 @@ def _agent_router(params):
         answer = params.get("answer", "")
         if not isinstance(answer, str) or not answer.strip():
             raise ValueError("Missing 'answer' field in params")
-        if not ToolContext(request_id).answer(answer):
+        if not _channel_manager.deliver_answer(request_id, answer):
             raise ValueError(f"Request '{request_id}' is not waiting for a user answer")
         log_info(f"[{request_id}] user answered: {answer[:100]}")
         return {
@@ -137,7 +151,7 @@ def _agent_router(params):
     user_request = params["request"]
     forced_intent = params.get("intent", "auto")
     if forced_intent != "auto":
-        registered = intent_store.get_registered_intents()
+        registered = _web_runtime().intent_provider.get_registered_intents()
         if forced_intent not in registered:
             raise ValueError(
                 f"Invalid intent: {forced_intent}. Must be one of: auto, "
@@ -151,10 +165,10 @@ def _agent_router(params):
         created_at = datetime.now().isoformat(timespec="seconds")
         result = None
         try:
-            result = _orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
+            result = _web_runtime().orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
         finally:
             # Host 侧收尾：请求结束（成功/失败/取消/异常）即唤醒可能仍阻塞的 ask_user
-            ToolContext(request_id).cancel()
+            _web_runtime().broker.cancel(request_id)
             # 记录使用记录（成功/失败/取消全覆盖），供"使用记录"页面展示
             if result is not None:
                 history_store.record({
@@ -183,7 +197,7 @@ def _agent_status(params):
     request_id = params.get("request_id", "")
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
-    state = _orchestrator.get_state(request_id)
+    state = _web_runtime().orchestrator.get_state(request_id)
     if not state:
         raise ValueError(f"Request '{request_id}' not found")
     return state
@@ -194,13 +208,10 @@ def _agent_cancel(params):
     if not request_id:
         raise ValueError("Missing 'request_id' in params")
 
-    cancelled = _orchestrator.cancel_request(request_id)
+    cancelled = _channel_manager.cancel_request(request_id)
 
     if not cancelled:
         raise ValueError(f"Request '{request_id}' not found or already completed")
-
-    # 先由编排器置 cancelled 标志，再唤醒等待中的 ask_user（Host 侧负责）
-    ToolContext(request_id).cancel()
 
     return {"success": True, "message": "Request cancelled"}
 
@@ -223,7 +234,9 @@ def _config_update(params):
             config.set(key, value)
     if section == "llm" or any(k.startswith("llm") for k in params.get("settings", {}).keys()):
         try:
-            _orchestrator.refresh_llm()
+            for ch in _channel_manager.channels():
+                if ch.runtime is not None:
+                    ch.runtime.orchestrator.refresh_llm()
         except Exception as e:
             log_error(f"LLM refresh failed: {e}")
     return {"config": config.get_all()}
@@ -338,8 +351,7 @@ def _mcp_servers_save(params):
     config.update_section("mcp_servers", mcp_servers)
     try:
         mcp_registry.reload()
-        from plugins.mcp_tools import register_mcp_tools
-        register_mcp_tools(_tool_registry)
+        _sync_mcp_tools()
     except Exception as e:
         log_error(f"MCP registry reload failed: {e}")
     return {"success": True}
@@ -356,8 +368,7 @@ def _mcp_servers_delete(params):
         config.update_section("mcp_servers", mcp_servers)
     try:
         mcp_registry.reload()
-        from plugins.mcp_tools import register_mcp_tools
-        register_mcp_tools(_tool_registry)
+        _sync_mcp_tools()
     except Exception as e:
         log_error(f"MCP registry reload failed: {e}")
     return {"success": True}
@@ -387,16 +398,15 @@ def _mcp_tools(params):
 
 def _mcp_reload(params):
     mcp_registry.reload()
-    from plugins.mcp_tools import register_mcp_tools
-    register_mcp_tools(_tool_registry)
+    _sync_mcp_tools()
     return {"success": True}
 
 
 # ---- Plugins ----
 
 def _plugins_get(params):
-    tools  = _tool_registry.get_all_as_list()
-    intents = _tool_registry.get_intents()
+    tools  = global_tool_registry.get_all_as_list()
+    intents = global_tool_registry.get_intents()
     return {"tools": tools, "intents": sorted(intents), "total": len(tools)}
 
 
@@ -404,16 +414,16 @@ def _plugins_toggle(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = _tool_registry.get(tool_name)
+    tool = global_tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     enabled = params.get("enabled")
     if enabled is None:
         enabled = not tool.enabled
-    success = _tool_registry.set_enabled(tool_name, enabled)
+    success = global_tool_registry.set_enabled(tool_name, enabled)
     if not success:
         raise ValueError(f"Tool '{tool_name}' not found")
-    save_tool_config(_tool_registry)
+    save_tool_config(global_tool_registry)
     return {"name": tool_name, "enabled": enabled}
 
 
@@ -421,11 +431,11 @@ def _plugins_intents(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = _tool_registry.get(tool_name)
+    tool = global_tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     tool.intents = list(params.get("intents", []))
-    save_tool_config(_tool_registry)
+    save_tool_config(global_tool_registry)
     return {"name": tool_name, "intents": tool.intents}
 
 
@@ -433,7 +443,7 @@ def _plugins_detail(params):
     tool_name = params.get("tool_name", "")
     if not tool_name:
         raise ValueError("Missing 'tool_name' in params")
-    tool = _tool_registry.get(tool_name)
+    tool = global_tool_registry.get(tool_name)
     if not tool:
         raise ValueError(f"Tool '{tool_name}' not found")
     return {"tool": tool.to_dict()}
@@ -477,7 +487,7 @@ METHODS = {
 }
 
 try:
-    from imBots.routes import IMBOT_METHODS
+    from modules.channels.routes import IMBOT_METHODS
     METHODS.update(IMBOT_METHODS)
     log_info(f"[Routes] iBot methods registered: {list(IMBOT_METHODS.keys())}")
 except ImportError as e:

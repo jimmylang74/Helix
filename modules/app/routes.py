@@ -26,6 +26,8 @@ from modules.mcp.mcp_registry import registry as mcp_registry
 from modules.mcp.mcp_client import create_mcp_client
 from modules.mcp import mcp_events
 from modules.utils.logger import log_info, log_error, log_debug
+from modules.channels.cron import store as cron_store
+from modules.channels.cron.scheduler import get_scheduler
 
 
 # 运行时注入：ChannelManager 由组合根（Helix.py）装配后经 configure() 注入，
@@ -445,6 +447,93 @@ def _plugins_detail(params):
     return {"tool": tool.to_dict()}
 
 
+# ---- Cron（定时任务）----
+
+def _cron_list(params):
+    scheduler = get_scheduler()
+    next_runs = {}
+    for task in cron_store.load_tasks():
+        nxt = scheduler.get_next_run(task["id"])
+        if nxt:
+            next_runs[task["id"]] = nxt
+    return {
+        "success": True,
+        "tasks": cron_store.load_tasks(),
+        "next_runs": next_runs,
+        "scheduler": scheduler.get_status(),
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _cron_create(params):
+    fields = params or {}
+    for required in ("title", "time", "repeat", "task_type", "description"):
+        if not str(fields.get(required, "")).strip():
+            raise ValueError(f"Missing '{required}' in params")
+    task = cron_store.create_task(fields)
+    _reload_scheduler_if_started()
+    return {"success": True, "task": task}
+
+
+def _cron_update(params):
+    data = dict(params or {})
+    task_id = data.get("id", "")
+    if not task_id:
+        raise ValueError("Missing 'id' in params")
+    try:
+        task = cron_store.update_task(task_id, data)
+    except cron_store.CronValidationError as e:
+        raise ValueError(str(e))
+    except KeyError:
+        raise ValueError(f"Cron task '{task_id}' not found")
+    _reload_scheduler_if_started()
+    return {"success": True, "task": task}
+
+
+def _cron_delete(params):
+    task_id = (params or {}).get("id", "")
+    if not task_id:
+        raise ValueError("Missing 'id' in params")
+    deleted = cron_store.delete_task(task_id)
+    if not deleted:
+        raise ValueError(f"Cron task '{task_id}' not found")
+    _reload_scheduler_if_started()
+    return {"success": True, "id": task_id}
+
+
+def _cron_results(params):
+    data = params or {}
+    results = cron_store.get_results(
+        limit=data.get("limit", 100),
+        cron_id=data.get("cron_id"),
+    )
+    return {"success": True, "results": results, "total": len(results)}
+
+
+def _cron_status(params):
+    return {
+        "success": True,
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **get_scheduler().get_status(),
+    }
+
+
+def _cron_start(params):
+    get_scheduler().start()
+    return {"success": True, **get_scheduler().get_status()}
+
+
+def _cron_stop(params):
+    get_scheduler().stop()
+    return {"success": True, **get_scheduler().get_status()}
+
+
+def _reload_scheduler_if_started():
+    scheduler = get_scheduler()
+    if scheduler.is_started:
+        scheduler.reload()
+
+
 # ============================================================
 # Dispatch table: JSON-RPC method → handler function
 # ============================================================
@@ -480,6 +569,15 @@ METHODS = {
     "plugins.toggle":      _plugins_toggle,
     "plugins.intents":     _plugins_intents,
     "plugins.detail":      _plugins_detail,
+    # Cron（定时任务）
+    "cron.list":           _cron_list,
+    "cron.create":         _cron_create,
+    "cron.update":         _cron_update,
+    "cron.delete":         _cron_delete,
+    "cron.results":        _cron_results,
+    "cron.status":         _cron_status,
+    "cron.start":          _cron_start,
+    "cron.stop":           _cron_stop,
 }
 
 try:

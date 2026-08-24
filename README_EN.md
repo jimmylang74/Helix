@@ -55,6 +55,7 @@ A hybrid-driven AI Agent service built on Python / Flask / python-pptx / ai_engi
 - **Configurable intent system**: Built-in generic fallback intent; intents such as PPT generation and code generation are configured in `Helix.json` (including planning/node-execution/summarization prompts per phase) and can be dynamically added or changed via the Web console.
 - **Plugin-based tool system**: Three-layer architecture of built-in plugins + external plugins + MCP tools, with auto-discovery and hot-swap support.
 - **Multi-channel access**: Each channel (Web quick test / WeChat iLinkBot) owns a private agent runtime (orchestrator + tool registry + question broker); the LLM can only reach tools registered in its own channel. The channel tool trio (`ask_user` / `get_context` / `clear_context`) is adapted per channel.
+- **Scheduled tasks (cron)**: A Helix-managed scheduler (independent of the OS crond) supporting daily/weekly/monthly triggers with two task types — system (shell command) and agent (handled by the agent). Task definitions live in `db/cron.json` (manual edits are hot-reloaded); run results are written to `db/cron.db` (SQLite). Manageable visually from the Web console, and the LLM can manage tasks itself via globally shared cron tools.
 - **External plugin extension**: Drop a `.py` file into `plugins/user/` to register a custom tool without modifying the framework code.
 - **Multi-LLM support**: Unified access through the [ai_engine](ai_engine/) submodule, supporting 10+ providers (Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral, etc.), switchable dynamically from the Web console.
 - **MCP tools**: web_search (SearXNG), image_search (Pexels/Unsplash), and external SSE MCP servers.
@@ -153,6 +154,33 @@ Full API documentation: [API.md](API.md)
 
 System design document: [doc/design.md](doc/design.md) (in Chinese; includes architecture diagrams, sequence diagrams, MCP & plugin design)
 
+## Scheduled Tasks
+
+Helix ships a self-managed task scheduler (separate from the operating system's crond). Scheduling starts automatically with the service and can be toggled from the Web console under Config → Scheduled Tasks.
+
+- **Task definitions**: `db/cron.json` (a plain JSON array you can edit by hand; the scheduler detects file changes every tick and hot-reloads)
+- **Run results**: `db/cron.db` (SQLite; each run appends stdout/stderr and duration, viewable from the console)
+- **Missed runs**: never replayed — schedules missed while stopped are skipped and only the next future occurrence is computed
+
+### Task Fields (db/cron.json)
+
+| Field | Description |
+|-------|-------------|
+| title | Task name (required) |
+| time | Trigger time HH:MM, 24-hour (required) |
+| repeat | daily / weekly / monthly (required) |
+| weekday | Required for weekly: 0=Monday … 6=Sunday |
+| day_of_month | Required for monthly: 1-31 (clamped to the month's last day) |
+| task_type | system = run a shell command / agent = handled by the agent (required) |
+| description | system = shell command; agent = natural-language task description (required) |
+| enabled | Whether the task is active (default true) |
+
+### RPC API & Agent Tools
+
+Call via `POST /api/rpc`: `cron.list` / `cron.create` / `cron.update` / `cron.delete` / `cron.results` / `cron.status` / `cron.start` / `cron.stop`.
+
+Seven globally shared tools are available to the agent on any channel: `list_cron` / `create_cron` / `modify_cron` / `delete_cron` / `start_cron` / `stop_cron` / `cron_status`. The cron channel itself does not register the ask_user tool trio; planning prompts automatically trim their question sections accordingly.
+
 ## Configuration File (`Helix.json`)
 
 | Key | Description | Default |
@@ -214,7 +242,11 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   │   ├── routes.py         #     imbot/* RPC and /api/imbot-stream SSE
 │   │   ├── events.py         #     Channel message broadcast/subscribe (SSE)
 │   │   ├── store.py          #     Channel message and session-context persistence (SQLite)
-│   │   └── web/              #     Web quick-test channel (channel/event_sink/history_store)
+│   │   ├── web/              #     Web quick-test channel (channel/event_sink/history_store)
+│   │   └── cron/             #     Scheduled-task module (Helix-managed scheduling)
+│   │       ├── store.py      #       Task definitions (db/cron.json) + run results (db/cron.db SQLite)
+│   │       ├── scheduler.py  #       CronScheduler thread (tick scanning / mtime hot-reload / no catch-up)
+│   │       └── channel.py    #       CronChannel adapter (private agent runtime, no tool trio registered)
 │   ├── host/                 #   Host adapter layer (injected implementations)
 │   │   ├── ai_engine_backend.py #   LLMBackend implementation (ai_engine integration)
 │   │   ├── config_builder.py #     Orchestration config builder
@@ -241,6 +273,7 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   ├── code_tools.py         #   Code tools (save_code, run_code)
 │   ├── shell_tools.py        #   Shell tools (bash, ls, grep, read/write/delete_file)
 │   ├── mcp_tools.py          #   MCP tool adapter (MCPToolAdapter; registered separately, not auto-scanned)
+│   ├── cron_tools.py         #   Cron tools (7 globally shared: list/create/modify/delete/start/stop/status)
 │   └── user/                 #   External plugins (user-defined, marked as "external plugin")
 │       ├── __init__.py
 │       ├── plugin.md         #     Plugin authoring guide
@@ -276,7 +309,7 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   └── locales/              #   i18n locale files
 │       ├── zh-CN.json        #     Chinese
 │       └── en.json           #     English
-├── db/                       # Database (reserved)
+├── db/                       # Databases & data files (scheduled-task defs/results, channel storage, etc.)
 ├── download/                 # Downloaded files (images, etc.)
 └── output/                   # Output files (PPT/code)
 ```

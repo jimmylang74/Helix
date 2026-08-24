@@ -52,6 +52,7 @@
 - **配置化意图体系**: 内置 generic 兜底意图，PPT 生成、代码生成等意图在 `Helix.json` 中配置（含规划/节点执行/总结各阶段提示词），可通过 Web 控制台动态增改
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
 - **多通道接入**: 每个通道（Web 快速测试 / 微信 iLinkBot）持有独立的私有 agent 运行时（编排器 + 工具注册表 + 提问 broker），LLM 只能触达所在通道的工具；通道三件套工具（`ask_user` / `get_context` / `clear_context`）按通道适配落点
+- **定时任务系统**: Helix 自维护调度器（独立于系统 crond），支持 daily/weekly/monthly 触发与 system（Shell 命令）/ agent（智能体执行）两类任务；任务定义存于 `db/cron.json`（手工编辑自动热重载），运行结果写入 `db/cron.db`（SQLite）；Web 控制台可视化管理，LLM 可经全局共享的 cron 工具自主增删改查任务
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
 - **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash) 及外部 SSE MCP Server
@@ -150,6 +151,33 @@ curl -X POST http://localhost:11555/api/rpc \
 
 系统设计文档见 [doc/design.md](doc/design.md)（含架构图、时序图、MCP 与插件化设计）
 
+## 定时任务
+
+Helix 内置自维护的定时任务调度器（区别于操作系统 crond），服务启动后自动开始调度，也可在 Web 控制台「配置管理 → 定时任务」中启停。
+
+- **任务定义**: `db/cron.json`（JSON 数组，可直接手工编辑；调度器每 tick 自动感知文件变化并热重载）
+- **运行结果**: `db/cron.db`（SQLite，逐次记录 stdout/stderr 与耗时，控制台可查看输出）
+- **补漏策略**: 不回补——停摆期间错过的时点直接跳过，只计算下一次触发
+
+### 任务字段（db/cron.json）
+
+| 字段 | 说明 |
+|------|------|
+| title | 任务名称（必填） |
+| time | 触发时间 HH:MM，24 小时制（必填） |
+| repeat | daily / weekly / monthly（必填） |
+| weekday | weekly 时必填：0=周一 … 6=周日 |
+| day_of_month | monthly 时必填：1-31（超出当月天数时取当月最后一天） |
+| task_type | system=执行 Shell 命令 / agent=交给智能体执行（必填） |
+| description | system=Shell 命令内容；agent=自然语言任务描述（必填） |
+| enabled | 是否启用（默认 true） |
+
+### RPC 接口与智能体工具
+
+通过 `POST /api/rpc` 调用：`cron.list` / `cron.create` / `cron.update` / `cron.delete` / `cron.results` / `cron.status` / `cron.start` / `cron.stop`。
+
+智能体侧提供 7 个全局共享工具（任何通道可用）：`list_cron` / `create_cron` / `modify_cron` / `delete_cron` / `start_cron` / `stop_cron` / `cron_status`。Cron 通道本身不注册 ask_user 等三件套工具，规划提示词中的提问环节会自动裁剪。
+
 ## 配置文件 (`Helix.json`)
 
 | 配置项 | 说明 | 默认值 |
@@ -212,7 +240,11 @@ curl -X POST http://localhost:11555/api/rpc \
 │   │   ├── routes.py          #     imbot/* RPC 与 /api/imbot-stream SSE
 │   │   ├── events.py          #     通道消息广播/订阅 (SSE)
 │   │   ├── store.py           #     通道消息与会话上下文持久化 (SQLite)
-│   │   └── web/               #     Web 快速测试通道 (channel/event_sink/history_store)
+│   │   ├── web/               #     Web 快速测试通道 (channel/event_sink/history_store)
+│   │   └── cron/              #     定时任务模块 (Helix 自维护调度)
+│   │       ├── store.py       #       任务定义 (db/cron.json) + 运行结果 (db/cron.db SQLite)
+│   │       ├── scheduler.py   #       CronScheduler 调度线程 (tick 扫描/mtime 热重载/不回补)
+│   │       └── channel.py     #       CronChannel 适配器 (私有 agent 运行时, 不注册三件套工具)
 │   ├── host/                  #   host 适配层 (注入实现)
 │   │   ├── ai_engine_backend.py #   LLMBackend 实现 (ai_engine 接入)
 │   │   ├── config_builder.py  #     编排配置构建
@@ -239,6 +271,7 @@ curl -X POST http://localhost:11555/api/rpc \
 │   ├── code_tools.py          #   代码工具 (save_code, run_code)
 │   ├── shell_tools.py         #   Shell 工具 (bash, ls, grep, read/write/delete_file)
 │   ├── mcp_tools.py           #   MCP 工具适配 (MCPToolAdapter, 单独注册不自动扫描)
+│   ├── cron_tools.py          #   定时任务工具 (7 个全局共享: list/create/modify/delete/start/stop/status)
 │   └── user/                  #   外部插件 (用户自定义, 来源标记为 "外部插件")
 │       ├── __init__.py
 │       ├── plugin.md          #     插件编写指南
@@ -274,7 +307,7 @@ curl -X POST http://localhost:11555/api/rpc \
 │   └── locales/               #   国际化语言文件
 │       ├── zh-CN.json         #     中文
 │       └── en.json            #     英文
-├── db/                        # 数据库 (预留)
+├── db/                        # 数据库与数据文件 (定时任务定义 cron.json / 运行结果 cron.db 等)
 ├── download/                  # 下载文件 (图片等)
 └── output/                    # 输出文件 (PPT/代码)
 ```

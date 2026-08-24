@@ -25,7 +25,8 @@ from HelixCore.interface import (
     LlmEventBus, LogSink, NullLogSink,
 )
 from HelixCore.prompts.task_graph_prompts import (
-    USER_PROMPT_TASK_PLANNING,
+    render_planning_user_prompt,
+    has_ask_user_tool,
     USER_PROMPT_FINALIZER,
     get_node_system_prompt,
     get_finalizer_system_prompt,
@@ -33,7 +34,6 @@ from HelixCore.prompts.task_graph_prompts import (
     build_system_prompt_task_planning,
     build_intent_enum,
     GENERIC_INTENT_ID,
-    ASK_USER_RULES,
     COMMON_JSON_CONTRACT,
 )
 from HelixCore.utils.tokenizer import TokenEstimator, create_estimator_for_config
@@ -237,12 +237,18 @@ class AgentOrchestrator:
             )
             self._log.agent_to_llm("Sending request to LLM for task planning...")
 
-        # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划（上限 llm.planning_max_ask_rounds 轮）
-        max_ask_rounds = self._config.planning_max_ask_rounds
+        # 规划阶段提问：LLM 无法规划时经顶层 tools 调用 ask_user，回答追加进上下文重新规划
+        # （上限 llm.planning_max_ask_rounds 轮）；通道无 ask_user 工具时轮数归零 ——
+        # 提示词已裁剪提问段，LLM 即便回传顶层 tools 也直接忽略
+        max_ask_rounds = (
+            self._config.planning_max_ask_rounds
+            if has_ask_user_tool(tool_definitions)
+            else 0
+        )
         planning_sampling = self._config.get_graph_sampling("planning")
         planning_context = state["user_request"]
         for ask_round in range(max_ask_rounds + 1):
-            user_prompt = USER_PROMPT_TASK_PLANNING.format(
+            user_prompt = render_planning_user_prompt(tool_definitions).format(
                 user_request=planning_context,
                 json_contract=COMMON_JSON_CONTRACT,
                 intent_enum=build_intent_enum(intents_cfg),

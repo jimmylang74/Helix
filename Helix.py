@@ -145,13 +145,25 @@ def main():
     channel_manager.register(web_channel)
     channel_manager.register(wechat_channel)
 
+    # ②' 定时任务通道：Helix 启动即拉起调度器线程（区别于系统 crond，
+    #    由 Helix 后端自维护）。不注册 ask_user 三件套 —— 定时任务为
+    #    一次性自动执行，无提问、无上下文关联
+    from modules.channels.cron.channel import CronChannel
+
+    cron_channel = CronChannel()
+    channel_manager.register(cron_channel)
+
     # ③ 每通道装配私有运行时（独立 LLM 后端/日志、事件出口、broker、
     #    工具表与编排器）；须在共享工具池就绪后执行，私有 registry
     #    才能复制到完整工具集
     for ch in (web_channel, wechat_channel):
         build_channel_runtime(ch)
+    build_channel_runtime(cron_channel, include_channel_tools=False)
 
     wechat_channel.restore_session()
+
+    # 启动定时任务调度（start 幂等：已 started 直接返回）
+    cron_channel.start()
 
     # ④ 注入 routes：RPC agent/* 与用户应答/取消经 ChannelManager 落到对应通道，
     #    imbot/* 管理接口同样经 ChannelManager 分发

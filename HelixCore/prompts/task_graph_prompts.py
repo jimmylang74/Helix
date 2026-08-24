@@ -18,11 +18,16 @@ Task Graph Prompts — 三阶段提示词（规划 / 节点执行 / 总结）。
 - 每个意图可在 intents.* 中配置 planning_prompt / node_prompt / finalizer_prompt
   字段覆盖默认提示词（ppt/coding 的提示词已全部迁入 Helix.json）
 
-系统提示词通过 {ask_user_rules} 占位符注入公共提问决策规则、通过
-{planning_guidelines} 占位符注入核心工作编号列表（auto 模式含意图分类说明，
-forced 模式意图已确定则不含）、通过 {intent_catalog_section} 占位符注入
-可用意图列表段（auto 模式注入，forced 模式为空）、通过 {domain_section}
-占位符注入领域指引段（forced 模式取目标意图的 planning_prompt 或内置
+提问相关段落按工具表是否含 ask_user 条件注入（has_ask_user_tool 推导；
+cron 定时任务等不注册 ask_user 的通道自动裁剪全部提问内容）：
+- 规划 system prompt 的 {planning_ask_section} 整段（机制说明 + 公共规则）
+- 规划用户提示词的 {planning_ask_example} / {planning_tools_field_note} 段
+- 节点模板与 Helix.json 自定义 node_prompt 的"## 提问决策规则"段
+
+其余占位符：{planning_guidelines} 注入核心工作编号列表（auto 模式含意图
+分类说明，forced 模式意图已确定则不含）、{intent_catalog_section} 注入
+可用意图列表段（auto 模式注入，forced 模式为空）、{domain_section}
+注入领域指引段（forced 模式取目标意图的 planning_prompt 或内置
 DOMAIN_SECTIONS，auto 模式拼接各可用意图配置的 planning_prompt 指引段）。
 规划与节点执行提示词均通过 {available_tools} 占位符注入可用工具列表段
 （由 format_tools_section 生成；节点执行段标题见 NODE_TOOLS_HEADING）。
@@ -60,6 +65,75 @@ COMMON_JSON_CONTRACT = """\
 {"response": "第一行
 第二行"}
 """
+
+# ═══════════════════════════════════════════════════════════════════
+# ask_user 条件注入（cron 定时任务等无提问通道自动裁剪提问相关段落）
+# ═══════════════════════════════════════════════════════════════════
+
+ASK_USER_TOOL_NAME = "ask_user"
+
+
+def has_ask_user_tool(tools: Optional[List[ToolDefinition]]) -> bool:
+    """判断工具表中是否存在 ask_user；None 视为未知工具集，保持注入（旧行为）。"""
+    if tools is None:
+        return True
+    return any(t.name == ASK_USER_TOOL_NAME for t in tools)
+
+
+# 规划 system prompt 的提问整段：机制说明与公共规则合并为同一份文本，
+# 节点模板复用 ASK_USER_RULES 本体，两处不再各自维护规则文案
+PLANNING_ASK_SECTION = """## 规划阶段提问
+- 若任务信息不足、缺少关键参数、**无法完成规划**，在 JSON 顶层返回 `"tools"` 字段调用 ask_user 提问，格式为 `{"tools": [{"name": "ask_user", "arguments": {"question": "..."}}]}`
+- 系统会先向用户提问，拿到回答后携带回答**重新规划**；禁止在信息不足时猜测关键参数硬做规划
+
+""" + ASK_USER_RULES
+
+
+# 规划用户提示词的替代示例段（双花括号形式：插入后仍需经 .format() 展开）
+PLANNING_ASK_EXAMPLE = """
+信息不足、**无法完成规划**时，不返回 `task_graph_nodes`，改用顶层 `tools` 调用 ask_user 提问：
+
+```json
+{{
+  "intent_type": "generic",
+  "task_graph_nodes": [],
+  "tools": [{{"name": "ask_user", "arguments": {{"question": "需要向用户确认的问题"}}}}],
+  "task_complete": false,
+  "response": "",
+  "reason": "信息不足，无法完成规划，需要向用户提问",
+  "need_finalizer": false
+}}
+```
+"""
+
+# 规划用户提示词字段说明中的 tools 条目（前导换行便于整行插拔）
+PLANNING_TOOLS_FIELD_NOTE = (
+    "\n- `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 "
+    "ask_user 提问（见上方替代示例）；系统会先提问并携带回答重新规划。"
+    "其余情况省略该字段或留空 `[]`"
+)
+
+
+def render_planning_user_prompt(tools: Optional[List[ToolDefinition]] = None) -> str:
+    """按 ask_user 可用性预填充规划用户提示词中的提问相关段。
+
+    返回仍含 {user_request} / {intent_enum} / {json_contract} 占位符的模板，
+    供调用方继续 .format(...)；无 ask_user 工具时移除顶层 tools 提问的
+    替代示例与字段说明条目（主 JSON 示例中的空 tools 字段保留，LLM 回传
+    空值时编排器忽略）。占位符替换必须先于 .format() 执行。
+    """
+    include_ask = has_ask_user_tool(tools)
+    return (
+        USER_PROMPT_TASK_PLANNING
+        .replace(
+            "{planning_ask_example}",
+            PLANNING_ASK_EXAMPLE if include_ask else "",
+        )
+        .replace(
+            "{planning_tools_field_note}",
+            PLANNING_TOOLS_FIELD_NOTE if include_ask else "",
+        )
+    )
 
 # ═══════════════════════════════════════════════════════════════════
 # 内置意图常量
@@ -120,10 +194,7 @@ SYSTEM_PROMPT_TASK_PLANNING = """# AI Agent Orchestrator — Task Planning Engin
 - 对于**简单节点**（工具参数可以预先确定的），在 `initial_tool_calls` 中提供完整的工具调用，**可以一次提供多个调用**，系统会在节点执行时批量直接执行，再把结果交给 LLM 分析，避免多余的往返
 - 对于**复杂节点**（参数依赖中间结果，如搜索词依赖前序节点的输出），必须将 `initial_tool_calls` 留空 `[]`，执行阶段再决定
 
-## 规划阶段提问
-- 若任务信息不足、缺少关键参数、**无法完成规划**，在 JSON 顶层返回 `"tools"` 字段调用 ask_user 提问，格式为 `{"tools": [{"name": "ask_user", "arguments": {"question": "..."}}]}`
-- 系统会先向用户提问，拿到回答后携带回答**重新规划**；禁止在信息不足时猜测关键参数硬做规划
-{ask_user_rules}
+{planning_ask_section}
 
 {intent_catalog_section}
 
@@ -167,21 +238,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
   "need_finalizer": true
 }}
 ```
-
-信息不足、**无法完成规划**时，不返回 `task_graph_nodes`，改用顶层 `tools` 调用 ask_user 提问：
-
-```json
-{{
-  "intent_type": "generic",
-  "task_graph_nodes": [],
-  "tools": [{{"name": "ask_user", "arguments": {{"question": "需要向用户确认的问题"}}}}],
-  "task_complete": false,
-  "response": "",
-  "reason": "信息不足，无法完成规划，需要向用户提问",
-  "need_finalizer": false
-}}
-```
-
+{planning_ask_example}
 ## 字段说明
 - `intent_type`: 意图分类
 - `task_graph_nodes`: 任务节点列表
@@ -191,8 +248,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
   - `depends`: 依赖的节点 ID 列表
   - `can_parallel`: 是否可以与其他无依赖节点并行
 - `task_complete`: 如果用户的问题可以直接回答（不需要任何工具），设为 true 并填写 `response`；需要工具的任务必须返回 `task_graph_nodes` 节点图，不得跳过规划直接回答
-- `response`: 当 task_complete 为 true 时，直接回复用户
-- `tools`: （可选）仅当任务信息不足**无法完成规划**时，在顶层用该字段调用 ask_user 提问（见上方替代示例）；系统会先提问并携带回答重新规划。其余情况省略该字段或留空 `[]`
+- `response`: 当 task_complete 为 true 时，直接回复用户{planning_tools_field_note}
 - `reason`: 你的分解思路
 - `need_finalizer`: 是否需要在所有节点完成后进行总结
 
@@ -431,6 +487,21 @@ def format_tools_section(
     return "\n".join(parts)
 
 
+def _resolve_node_ask_rules(prompt: str, include_ask: bool) -> str:
+    """注入或移除节点提示词中的提问决策段（含标题行整段处理）。
+
+    注入：{ask_user_rules} 占位符替换为 ASK_USER_RULES，兼容内置模板与
+    Helix.json 自定义 node_prompt；移除：连同 '## 提问决策规则' 标题整段
+    删除避免残留空标题，裸占位符兜底清除。
+    """
+    if include_ask:
+        return prompt.replace("{ask_user_rules}", ASK_USER_RULES)
+    cleaned = prompt.replace("\n\n## 提问决策规则\n{ask_user_rules}", "")
+    cleaned = cleaned.replace("\n## 提问决策规则\n{ask_user_rules}", "")
+    cleaned = cleaned.replace("## 提问决策规则\n{ask_user_rules}", "")
+    return cleaned.replace("{ask_user_rules}", "")
+
+
 def get_node_system_prompt(
     intent_type: str,
     intents_cfg: Optional[dict] = None,
@@ -451,7 +522,7 @@ def get_node_system_prompt(
         cfg = intents_cfg.get(intent_type) or {}
         configured = (cfg.get("node_prompt") or "").strip()
     raw = configured or SYSTEM_PROMPTS_NODE.get(intent_type, SYSTEM_PROMPT_NODE_DEFAULT)
-    prompt = raw.replace("{ask_user_rules}", ASK_USER_RULES)
+    prompt = _resolve_node_ask_rules(raw, has_ask_user_tool(tools))
     tools_section = (
         format_tools_section(tools, heading=NODE_TOOLS_HEADING)
         if tools is not None
@@ -607,11 +678,14 @@ def build_system_prompt_task_planning(
 ) -> str:
     """构建任务规划阶段 system prompt（仅做占位符替换，不做字符串拼接）。
 
-    模板 SYSTEM_PROMPT_TASK_PLANNING 的五个占位符依次替换：
-    - {planning_guidelines} / {ask_user_rules}：核心工作列表 / 提问决策规则
+    模板 SYSTEM_PROMPT_TASK_PLANNING 的占位符依次替换：
+    - {planning_ask_section}：规划提问整段（工具表含 ask_user 时注入，
+      否则整段裁剪 —— cron 等无提问通道使用）
+    - {planning_guidelines}：核心工作编号列表
     - {intent_catalog_section}：可用意图列表段（仅 auto 模式注入，forced 为空）
     - {domain_section}：领域指引段，由 _build_domain_section 按模式生成
     - {available_tools}：可用工具列表段（tools 为空或 None 时不注入）
+    尾部对残留 {ask_user_rules} 兜底替换/清除（覆盖自定义 planning_prompt 引用）。
 
     intents_cfg: Helix.json 中的 intents.* 配置（dict，允许为空）
     forced_intent: 强制指定意图时传入（如配置中注册的意图 ID）；为空表示自动识别。
@@ -621,8 +695,9 @@ def build_system_prompt_task_planning(
         - auto: 注入意图分类说明、可用意图列表，以及全部可用意图的
           配置 planning_prompt 指引段
     """
+    include_ask = has_ask_user_tool(tools)
     return SYSTEM_PROMPT_TASK_PLANNING.replace(
-        "{ask_user_rules}", ASK_USER_RULES
+        "{planning_ask_section}", PLANNING_ASK_SECTION if include_ask else ""
     ).replace(
         "{planning_guidelines}", build_planning_guidelines(intents_cfg, forced_intent)
     ).replace(
@@ -634,4 +709,6 @@ def build_system_prompt_task_planning(
         "{domain_section}", _build_domain_section(intents_cfg, forced_intent),
     ).replace(
         "{available_tools}", format_tools_section(tools) if tools else "",
+    ).replace(
+        "{ask_user_rules}", ASK_USER_RULES if include_ask else ""
     )

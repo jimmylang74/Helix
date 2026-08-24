@@ -140,14 +140,21 @@ CHANNEL_TOOL_NAMES = ("ask_user", "get_context", "clear_context")
 
 
 def build_channel_tool_registry(
-    channel: "ChannelAdapter", logger: Any, intent_provider: Any
+    channel: "ChannelAdapter",
+    logger: Any,
+    intent_provider: Any,
+    include_channel_tools: bool = True,
 ) -> ToolRegistry:
     """构建通道私有工具注册表。
 
     - 内部通用工具（plugins + MCP）从全局 registry 以共享实例复制，
       启用状态随装配时快照；
-    - 三件套通道工具为本通道绑定的新实例，仅存在于本 registry，
-      因此各通道的 LLM 只能触达自己通道的 ask_user / 会话上下文。
+    - 三件套通道工具（ask_user/get_context/clear_context）为本通道绑定的
+      新实例，仅存在于本 registry，因此各通道的 LLM 只能触达自己通道的
+      提问与会话上下文落点；
+    - include_channel_tools=False 的通道（如 cron 定时任务通道）不注册
+      三件套 —— 任务一次性自动执行，无提问也无上下文关联，对应提示词
+      段落由 HelixCore 侧按 ask_user 是否存在自动裁剪。
     """
     from HelixCore.tools.base import tool_registry as global_tool_registry
 
@@ -157,12 +164,13 @@ def build_channel_tool_registry(
         if name in CHANNEL_TOOL_NAMES:
             continue
         reg.register(tool)
-    for bound in (
-        ChannelAskUserTool(channel),
-        ChannelGetContextTool(channel),
-        ChannelClearContextTool(channel),
-    ):
-        reg.register(bound)
+    if include_channel_tools:
+        for bound in (
+            ChannelAskUserTool(channel),
+            ChannelGetContextTool(channel),
+            ChannelClearContextTool(channel),
+        ):
+            reg.register(bound)
     return reg
 
 
@@ -220,11 +228,17 @@ def _build_event_sink(channel_type: str) -> EventSink:
     return LogEventSink()
 
 
-def build_channel_runtime(channel: "ChannelAdapter") -> ChannelRuntime:
+def build_channel_runtime(
+    channel: "ChannelAdapter",
+    include_channel_tools: bool = True,
+) -> ChannelRuntime:
     """为通道装配完整私有运行时并挂到 ``channel.runtime``。
 
     组合根在每个通道注册后调用一次；此后该通道的所有 agent 请求
     （RPC 经 Web 通道编排器、IM 经各自 worker 线程）都走本套依赖。
+
+    include_channel_tools=False 时不装配 ask_user/get_context/clear_context
+    三件套（cron 定时任务通道使用 —— 一次性任务无提问、无上下文）。
     """
     from modules.agent.user_question import UserQuestionBroker
     from modules.host.ai_engine_backend import AIEngineBackend
@@ -243,7 +257,10 @@ def build_channel_runtime(channel: "ChannelAdapter") -> ChannelRuntime:
     intent_provider = IntentStore()
     host_log_sink = HostLogSink()
 
-    tool_registry = build_channel_tool_registry(channel, host_log_sink, intent_provider)
+    tool_registry = build_channel_tool_registry(
+        channel, host_log_sink, intent_provider,
+        include_channel_tools=include_channel_tools,
+    )
     log_info(
         f"[{ctype}] Channel tool registry ready: "
         f"{len(tool_registry.get_all())} tool(s)"

@@ -12,6 +12,7 @@
     <button class="tab-btn" data-tab="intents" data-i18n="config.tab.intents">意图管理</button>
     <button class="tab-btn" data-tab="server" data-i18n="config.tab.server">服务设置</button>
     <button class="tab-btn" data-tab="ilinkbot" data-i18n="config.tab.ilinkbot">iLinkBot</button>
+    <button class="tab-btn" data-tab="cron" data-i18n="config.tab.cron">定时任务</button>
 </div>
 
 <!-- LLM Config -->
@@ -518,6 +519,138 @@
             <div style="display:flex;gap:8px;">
                 <input type="text" id="ilinkbotMsgInput" class="form-control" data-i18n-placeholder="config.ilinkbot.msgPlaceholder" placeholder="输入消息..." onkeydown="if(event.key==='Enter')ilinkbot.send()">
                 <button class="btn btn-primary" onclick="ilinkbot.send()" data-i18n="config.ilinkbot.send">发送</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Cron Tasks -->
+<div class="tab-content" id="tab-cron">
+    <!-- Scheduler Status -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.cron.title">定时任务调度</h3>
+            <span id="cronSchedulerBadge" class="badge badge-secondary" data-i18n="config.cron.stopped">已停止</span>
+        </div>
+        <div class="card-body">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button class="btn btn-success" id="cronStartBtn" onclick="cronStart()" style="display:none;"><span data-i18n="config.cron.startBtn">启动调度</span></button>
+                <button class="btn btn-danger" id="cronStopBtn" onclick="cronStop()" style="display:none;"><span data-i18n="config.cron.stopBtn">停止调度</span></button>
+                <button class="btn btn-outline" onclick="loadCronTasks()"><span data-i18n="config.cron.refresh">刷新</span></button>
+                <button class="btn btn-outline" onclick="showCronResults(null)"><span data-i18n="config.cron.viewResults">运行结果</span></button>
+                <span id="cronServerTimeInfo" class="text-muted"></span>
+                <span id="cronNextRunInfo" class="text-muted"></span>
+                <span id="cronErrorInfo" style="color:#d9534f;"></span>
+            </div>
+            <small class="text-muted" style="display:block;margin-top:12px;" data-i18n="config.cron.hint">Helix 自维护调度（区别于系统 crond）：每 10 秒扫描到期任务，手工编辑 db/cron.json 会自动感知热重载；system 类型执行 Shell 命令，agent 类型交给智能体执行；错过的时点不回补。</small>
+        </div>
+    </div>
+
+    <!-- Task List -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.cron.taskList">任务列表</h3>
+            <button class="btn btn-sm btn-primary" onclick="showAddCronTask()" data-i18n="config.cron.addTask">+ 新建任务</button>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.cron.colTitle">任务</th>
+                        <th data-i18n="config.cron.colSchedule">时间规则</th>
+                        <th data-i18n="config.cron.colType">类型</th>
+                        <th data-i18n="config.cron.colStatus">状态</th>
+                        <th data-i18n="config.cron.colNextRun">下次运行</th>
+                        <th data-i18n="config.cron.colActions">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="cronTasksTable">
+                    <tr><td colspan="6" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Add/Edit Cron Task Modal -->
+    <div id="cronTaskModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeCronTaskModal()">
+        <div style="background:white;border-radius:8px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+            <h3 id="cronModalTitle" style="margin-bottom:16px;" data-i18n="config.cron.addTitle">新建定时任务</h3>
+            <div class="form-group">
+                <label data-i18n="config.cron.fieldTitle">任务名称</label>
+                <input type="text" id="cronTitle" class="form-control" placeholder="每日备份">
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.cron.fieldTime">触发时间 (HH:MM)</label>
+                    <input type="text" id="cronTime" class="form-control" placeholder="09:30">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.cron.fieldRepeat">重复频率</label>
+                    <select id="cronRepeat" class="form-control" onchange="onCronRepeatChange()">
+                        <option value="daily" data-i18n="config.cron.repeatDaily">每天</option>
+                        <option value="weekly" data-i18n="config.cron.repeatWeekly">每周</option>
+                        <option value="monthly" data-i18n="config.cron.repeatMonthly">每月</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-group" id="cronWeekdayGroup" style="display:none;">
+                <label data-i18n="config.cron.fieldWeekday">星期</label>
+                <select id="cronWeekday" class="form-control">
+                    <option value="0" data-i18n="config.cron.wd0">周一</option>
+                    <option value="1" data-i18n="config.cron.wd1">周二</option>
+                    <option value="2" data-i18n="config.cron.wd2">周三</option>
+                    <option value="3" data-i18n="config.cron.wd3">周四</option>
+                    <option value="4" data-i18n="config.cron.wd4">周五</option>
+                    <option value="5" data-i18n="config.cron.wd5">周六</option>
+                    <option value="6" data-i18n="config.cron.wd6">周日</option>
+                </select>
+            </div>
+            <div class="form-group" id="cronDayOfMonthGroup" style="display:none;">
+                <label data-i18n="config.cron.fieldDayOfMonth">日期（1-31）</label>
+                <input type="number" id="cronDayOfMonth" class="form-control" min="1" max="31" value="1">
+            </div>
+            <div class="form-group">
+                <label data-i18n="config.cron.fieldType">任务类型</label>
+                <select id="cronType" class="form-control" onchange="onCronTypeChange()">
+                    <option value="system" data-i18n="config.cron.typeSystem">系统命令（Shell）</option>
+                    <option value="agent" data-i18n="config.cron.typeAgent">智能体任务</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label id="cronDescLabel" data-i18n="config.cron.descSystem">Shell 命令</label>
+                <textarea id="cronDescription" class="form-control" rows="3" placeholder="df -h"></textarea>
+            </div>
+            <div class="form-group">
+                <label><input type="checkbox" id="cronEnabled" checked> <span data-i18n="config.cron.fieldEnabled">启用此任务</span></label>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-outline" onclick="closeCronTaskModal()" data-i18n="config.mcp.cancel">取消</button>
+                <button class="btn btn-primary" onclick="saveCronTask()" data-i18n="common.save">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cron Results Modal -->
+    <div id="cronResultsModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeCronResultsModal()">
+        <div style="background:white;border-radius:8px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+            <h3 style="margin-bottom:16px;" data-i18n="config.cron.resultsTitle">运行结果</h3>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.cron.colTitle">任务</th>
+                        <th data-i18n="config.cron.colStartedAt">开始时间</th>
+                        <th data-i18n="config.cron.colDuration">耗时</th>
+                        <th data-i18n="config.cron.colResult">结果</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody id="cronResultsTable"></tbody>
+            </table>
+            <div id="cronResultDetail" style="display:none;margin-top:12px;">
+                <pre id="cronResultDetailPre" style="background:#f8f9fa;border-radius:6px;padding:12px;font-size:13px;font-family:monospace;white-space:pre-wrap;max-height:300px;overflow-y:auto;margin:0;"></pre>
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-outline" onclick="closeCronResultsModal()" data-i18n="config.plugins.close">关闭</button>
             </div>
         </div>
     </div>

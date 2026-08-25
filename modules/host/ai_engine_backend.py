@@ -2,7 +2,8 @@
 AI Engine Backend — LLMBackend implementation via the ai_engine submodule.
 
 All LLM calls go through ai_engine.run_engine() using --output-format events.
-Events are captured from stdout and parsed into structured responses.
+Each call injects a per-call sink into args.sink; the engine writes its NDJSON
+events there and the events are parsed into structured responses.
 Implements the HelixCore.interface.LLMBackend protocol (formerly LLMClient).
 """
 
@@ -12,7 +13,6 @@ import os
 import re
 import sys
 from argparse import Namespace
-from contextlib import redirect_stdout
 from typing import Any, Dict, List, Optional
 
 from HelixCore.interface import LLMBackend, LLMResponse
@@ -36,11 +36,11 @@ from ai_engine import run_engine as _run_engine, _init_verbose, _close_verbose
 # ═══════════════════════════════════════════════════════════════════════
 
 class _StdoutEventEmitter:
-    """Tee stdout writes to the in-memory event bus.
+    """Tee engine output writes to the in-memory event bus.
 
-    Wraps the underlying ``StringIO`` buffer.  Each ``write()`` call
-    forwards complete JSON lines to ``llm_events.emit()`` while still
-    accumulating data for the caller's buffer.
+    Passed as args.sink to run_engine(). Each ``write()`` call forwards
+    complete JSON lines to ``llm_events.emit()`` while still accumulating
+    data for the caller's buffer.
 
     When ``enabled=False``, LLM stream output is captured but NOT forwarded
     to the frontend (used for silent parallel node execution — Option B).
@@ -255,6 +255,7 @@ class AIEngineBackend(LLMBackend):
             get_provider=False,
             verbose=verbose,
             log=log_path,
+            sink=None,
         )
 
     def _call_engine(
@@ -324,7 +325,6 @@ class AIEngineBackend(LLMBackend):
         # Initialize verbose logging for this call
         _init_verbose(args)
 
-        # Capture stdout — run_engine writes NDJSON events to stdout
         buf = io.StringIO()
         events: List[Dict[str, Any]] = []
         content = ""
@@ -335,20 +335,20 @@ class AIEngineBackend(LLMBackend):
 
         try:
             emitter = _StdoutEventEmitter(buf, enabled=emit_stream)
-            with redirect_stdout(emitter):
-                try:
-                    _run_engine(args)
-                except SystemExit as exc:
-                    if exc.code and exc.code != 0:
-                        log_error(f"ai_engine exited with code {exc.code}")
-                        finish_reason = "error"
+            args.sink = emitter
+            try:
+                _run_engine(args)
+            except SystemExit as exc:
+                if exc.code and exc.code != 0:
+                    log_error(f"ai_engine exited with code {exc.code}")
+                    finish_reason = "error"
         except Exception as e:
             log_error(f"LLM call failed: {e}")
             raise
         finally:
             _close_verbose()
 
-        # Parse NDJSON events from captured stdout
+        # Parse NDJSON events emitted to the per-call sink
         output = emitter.getvalue()
         for line in output.strip().split("\n"):
             line = line.strip()

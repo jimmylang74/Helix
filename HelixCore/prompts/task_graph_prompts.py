@@ -383,7 +383,7 @@ USER_PROMPT_NODE_EXECUTION = """# Node Execution
 
 ### 字段说明
 - `reason`: 你的分析思考过程
-- `response`: 节点的完成总结（当 node_complete=true 时）
+- `response`: 节点的完成总结（当 node_complete=true 时，**必须为非空字符串**）
 - `node_complete`: 当前节点是否已完成
   - true: 节点完成，不再需要工具调用
   - false: 需要继续调用工具

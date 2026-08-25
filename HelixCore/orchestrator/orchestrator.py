@@ -581,9 +581,17 @@ class AgentOrchestrator:
             # 判断节点完成情况
             node_complete = response_data.get("node_complete", False)
             node_response = response_data.get("response", "")
+            node_reason = response_data.get("reason", "")
 
             if node_complete:
-                node.reason = response_data.get("reason", "")
+                node.reason = node_reason
+                # response 为空时，用 reason 兜底
+                if not node_response:
+                    node_response = node_reason
+                    self._log.warning(
+                        f"Node {node.id}: node_complete=true but response is empty, "
+                        "falling back to reason"
+                    )
                 graph.set_node_done(node.id, node_response)
                 self._log.llm_decision(
                     f"Node {node.id} completed: {node_response[:100]}"

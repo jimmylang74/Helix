@@ -57,7 +57,7 @@ class TaskNode:
             "depends": list(self.depends),
             "can_parallel": self.can_parallel,
             "state": self.state.value,
-            "response": self.response[:500] if self.response else "",
+            "response": self.response if self.response else "",
             "error": self.error or "",
         }
 
@@ -247,7 +247,7 @@ class TaskGraph:
                     f"- [{node.state.value}]{marker} {node.id}: {node.title} ({dep_str})"
                 )
                 if node.response:
-                    lines.append(f"  Result: {node.response[:200]}")
+                    lines.append(f"  Result: {node.response}")
                 if node.error:
                     lines.append(f"  Error: {node.error}")
             lines.append(

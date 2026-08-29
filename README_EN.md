@@ -150,9 +150,9 @@ curl -X POST http://localhost:11555/api/rpc \
   -d '{"jsonrpc":"2.0","id":"3","method":"agent/router","params":{"request":"Write a Fibonacci function","intent":"coding"}}'
 ```
 
-Full API documentation: [API.md](API.md)
+Full API documentation: [API.md](design/API.md)
 
-System design document: [doc/design.md](doc/design.md) (in Chinese; includes architecture diagrams, sequence diagrams, MCP & plugin design)
+System design document: [design/design.md](design/design.md) (in Chinese; includes architecture diagrams, sequence diagrams, MCP & plugin design)
 
 ## Scheduled Tasks
 
@@ -207,7 +207,6 @@ You can dynamically switch providers and fill in connection parameters from the 
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # Documentation (Chinese)
 ├── README_EN.md              # Documentation (English)
-├── API.md                    # API documentation
 ├── debugout.log              # Runtime log output
 ├── llm_engine.log            # LLM engine interaction log (ai_engine --verbose --log)
 ├── test_agent.py             # Test program
@@ -215,7 +214,8 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   ├── ai_engine.py          #   Engine main entry (run_engine / --get-provider / --output-format events)
 │   ├── API-AI-ENGINE.md      #   Engine API documentation
 │   └── example_import.py     #   Import-mode usage example
-├── doc/                      # Design documents
+├── design/                   # Design documents
+│   ├── API.md                #   API documentation
 │   └── design.md             #   System architecture design document (Mermaid)
 ├── HelixCore/                # Core engine package (decoupled from host, dependency injection)
 │   ├── interface.py          #   Injection port contracts (ABC: LLMBackend/EventSink/LlmEventBus/IntentProvider/LogSink)
@@ -239,6 +239,7 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   │   ├── base.py           #     ChannelAdapter ABC (incl. ask_user/get_context/clear_context contracts)
 │   │   ├── manager.py        #     ChannelManager (registration/lifecycle/cross-channel answer & cancel)
 │   │   ├── runtime.py        #     build_channel_runtime: private orchestrator+tool registry+tool trio binding
+│   │   ├── dispatcher.py     #     OutputDispatcher: cross-channel output registry (cron result → WeChat, etc.)
 │   │   ├── routes.py         #     imbot/* RPC and /api/imbot-stream SSE
 │   │   ├── events.py         #     Channel message broadcast/subscribe (SSE)
 │   │   ├── store.py          #     Channel message and session-context persistence (SQLite)

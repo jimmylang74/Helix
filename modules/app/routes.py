@@ -28,6 +28,7 @@ from modules.mcp import mcp_events
 from modules.utils.logger import log_info, log_error, log_debug
 from modules.channels.cron import store as cron_store
 from modules.channels.cron.scheduler import get_scheduler
+from modules.channels.dispatcher import get_dispatcher
 
 
 # 运行时注入：ChannelManager 由组合根（Helix.py）装配后经 configure() 注入，
@@ -462,6 +463,7 @@ def _cron_list(params):
         "next_runs": next_runs,
         "scheduler": scheduler.get_status(),
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "output_channels": get_dispatcher().available(),
     }
 
 

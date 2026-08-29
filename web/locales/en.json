@@ -446,5 +446,10 @@
   "config.cron.statusFailed": "Failed",
   "config.cron.noResults": "No run records yet",
   "config.cron.viewOutput": "View Output",
-  "config.cron.noOutput": "(no output)"
+  "config.cron.noOutput": "(no output)",
+  "config.cron.fieldOutputChannels": "Output channels",
+  "config.cron.outputChannelsPlaceholder": "No push (database only)",
+  "config.cron.allChannels": "All channels",
+  "config.cron.noOutputChannels": "No output channels available",
+  "config.cron.outputChannelsHint": "Push the run result to the selected channels after completion; leave empty to disable push (results are still saved to the database)"
 }

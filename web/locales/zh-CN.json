@@ -446,5 +446,10 @@
   "config.cron.statusFailed": "失败",
   "config.cron.noResults": "暂无运行记录",
   "config.cron.viewOutput": "查看输出",
-  "config.cron.noOutput": "（无输出）"
+  "config.cron.noOutput": "（无输出）",
+  "config.cron.fieldOutputChannels": "任务输出通道",
+  "config.cron.outputChannelsPlaceholder": "不推送（仅写入数据库）",
+  "config.cron.allChannels": "全部通道",
+  "config.cron.noOutputChannels": "无可用输出通道",
+  "config.cron.outputChannelsHint": "任务完成后把运行结果推送到所选通道；不选则不推送（结果仍会写入数据库）"
 }

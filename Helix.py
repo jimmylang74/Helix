@@ -145,6 +145,11 @@ def main():
     channel_manager.register(web_channel)
     channel_manager.register(wechat_channel)
 
+    # ②'' 输出通道注册表（通用跨通道推送）：wechat 通道即 iLinkBot 输出，
+    #     任意通道可在此 register 为 sink，供 cron 等消费者跨通道推送
+    from modules.channels.dispatcher import get_dispatcher
+    get_dispatcher().register("ilinkbot", wechat_channel, label="iLinkBot")
+
     # ②' 定时任务通道：Helix 启动即拉起调度器线程（区别于系统 crond，
     #    由 Helix 后端自维护）。不注册 ask_user 三件套 —— 定时任务为
     #    一次性自动执行，无提问、无上下文关联
@@ -162,7 +167,10 @@ def main():
 
     wechat_channel.restore_session()
 
-    # 启动定时任务调度（start 幂等：已 started 直接返回）
+    # 启动定时任务调度（start 幂等：已 started 直接返回；先幂等迁移
+    # cron.json 补齐 output_channels 字段，原字段值原样保留）
+    from modules.channels.cron import store as cron_store
+    cron_store.ensure_schema()
     cron_channel.start()
 
     # ④ 注入 routes：RPC agent/* 与用户应答/取消经 ChannelManager 落到对应通道，

@@ -306,7 +306,8 @@ function updateMultiselectLabel(containerId) {
     const checked = container.querySelectorAll('.intent-checkbox:checked');
     const total = container.querySelectorAll('.intent-checkbox');
     if (checked.length === total.length) {
-        btn.textContent = __('config.mcp.allIntents') + ' (' + total.length + ')';
+        const allLabel = btn.dataset.allLabel || 'config.mcp.allIntents';
+        btn.textContent = __(allLabel) + ' (' + total.length + ')';
     } else if (checked.length === 0) {
         btn.textContent = btn.dataset.i18nPlaceholder ? __(btn.dataset.i18nPlaceholder) : (btn.dataset.placeholder || __('config.mcp.intentPlaceholder'));
     } else {
@@ -951,6 +952,7 @@ let cronResultsCache = [];
 let editingCronId = null;
 let cronClockOffsetMs = null;
 let cronClockTimer = null;
+let cronOutputChannelsCache = [];
 
 async function loadCronTasks() {
     const result = await apiCall('cron.list');
@@ -963,6 +965,34 @@ async function loadCronTasks() {
     startCronClock(result.server_time);
     cronTasksCache = result.tasks || [];
     renderCronTasks(cronTasksCache, result.next_runs || {});
+    cronOutputChannelsCache = result.output_channels || [];
+    renderCronOutputChannelOptions();
+}
+
+function renderCronOutputChannelOptions() {
+    const container = document.getElementById('cronOutputChannelsCheckboxes');
+    if (!container || container.dataset.rendered) return;
+    if (!cronOutputChannelsCache.length) {
+        container.innerHTML = '<span class="text-muted">' + __('config.cron.noOutputChannels') + '</span>';
+        return;
+    }
+    container.innerHTML = cronOutputChannelsCache.map(c => `
+        <label>
+            <input type="checkbox" class="intent-checkbox" data-container="cronOutputChannelsCheckboxes" value="${c.id}" onchange="updateMultiselectLabel('cronOutputChannelsCheckboxes')">
+            ${c.label || c.id}
+        </label>
+    `).join('');
+    container.dataset.rendered = '1';
+    updateMultiselectLabel('cronOutputChannelsCheckboxes');
+}
+
+function setCronOutputChannelSelection(keys) {
+    const container = document.getElementById('cronOutputChannelsCheckboxes');
+    if (!container) return;
+    container.querySelectorAll('.intent-checkbox').forEach(cb => {
+        cb.checked = (keys || []).includes(cb.value);
+    });
+    updateMultiselectLabel('cronOutputChannelsCheckboxes');
 }
 
 function startCronClock(serverTime) {
@@ -1062,6 +1092,7 @@ function showAddCronTask() {
     document.getElementById('cronType').value = 'system';
     document.getElementById('cronDescription').value = '';
     document.getElementById('cronEnabled').checked = true;
+    setCronOutputChannelSelection([]);
     onCronRepeatChange();
     onCronTypeChange();
     document.getElementById('cronTaskModal').style.display = 'flex';
@@ -1080,6 +1111,7 @@ function editCronTask(id) {
     document.getElementById('cronType').value = t.task_type || 'system';
     document.getElementById('cronDescription').value = t.description || '';
     document.getElementById('cronEnabled').checked = t.enabled !== false;
+    setCronOutputChannelSelection(t.output_channels || []);
     onCronRepeatChange();
     onCronTypeChange();
     document.getElementById('cronTaskModal').style.display = 'flex';
@@ -1119,6 +1151,7 @@ async function saveCronTask() {
         task_type: document.getElementById('cronType').value,
         description,
         enabled: document.getElementById('cronEnabled').checked,
+        output_channels: getSelectedIntents('cronOutputChannelsCheckboxes'),
     };
 
     const result = editingCronId

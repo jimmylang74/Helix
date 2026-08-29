@@ -132,6 +132,11 @@ class CreateCronTool(BaseTool):
                 "description": "system=完整命令行；agent=任务描述（越具体越好）",
             },
             "enabled": {"type": "boolean", "description": "是否启用，默认 true"},
+            "output_channels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "任务完成后把运行结果推送到这些输出通道（如 ilinkbot）；不传或空数组则不推送",
+            },
         },
         "required": ["title", "time", "repeat", "task_type", "description"],
     }
@@ -146,6 +151,7 @@ class CreateCronTool(BaseTool):
         task_type: str = "",
         description: str = "",
         enabled: bool = True,
+        output_channels=None,
         **kwargs,
     ) -> str:
         log_tool_call(f"create_cron(title='{title[:50]}', time={time}, repeat={repeat})")
@@ -159,6 +165,7 @@ class CreateCronTool(BaseTool):
                 "task_type": task_type,
                 "description": description,
                 "enabled": enabled,
+                "output_channels": output_channels,
             })
         except store.CronValidationError as e:
             return f"错误: 创建失败 — {e}"
@@ -222,6 +229,11 @@ class ModifyCronTool(BaseTool):
             "task_type": {"type": "string", "enum": ["system", "agent"]},
             "description": {"type": "string", "description": "新命令/任务描述"},
             "enabled": {"type": "boolean", "description": "启停"},
+            "output_channels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "输出通道列表（如 [\"ilinkbot\"]）；传空数组清除推送配置",
+            },
         },
         "required": ["id"],
     }
@@ -231,7 +243,7 @@ class ModifyCronTool(BaseTool):
             k: v for k, v in kwargs.items()
             if k in (
                 "title", "time", "repeat", "weekday", "day_of_month",
-                "task_type", "description", "enabled",
+                "task_type", "description", "enabled", "output_channels",
             ) and v is not None
         }
         log_tool_call(f"modify_cron(id={id}, fields={sorted(patch)})")

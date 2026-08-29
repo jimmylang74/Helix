@@ -114,6 +114,31 @@ class TestValidateFields:
         with pytest.raises(CronValidationError):
             validate_fields(dict(_VALID_DAILY, repeat="monthly", day_of_month=32))
 
+    # ── output_channels 规范化 ────────────────────────────────────────
+
+    def test_output_channels_default_empty(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(dict(_VALID_DAILY))
+        assert f["output_channels"] == []
+
+    def test_output_channels_none_and_empty_variants(self):
+        from modules.channels.cron.store import validate_fields
+        for raw in (None, "", [], [""], ["  "]):
+            f = validate_fields(dict(_VALID_DAILY, output_channels=raw))
+            assert f["output_channels"] == []
+
+    def test_output_channels_list_normalized(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(
+            dict(_VALID_DAILY, output_channels=["  iLinkBot ", "TELEGRAM", ""])
+        )
+        assert f["output_channels"] == ["ilinkbot", "telegram"]
+
+    def test_output_channels_single_string(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(dict(_VALID_DAILY, output_channels="ilinkbot"))
+        assert f["output_channels"] == ["ilinkbot"]
+
 
 # ── Task CRUD (db/cron.json) ─────────────────────────────────────────────
 
@@ -195,6 +220,99 @@ class TestTaskCrud:
         with open(store_mod._tasks_path(), "w", encoding="utf-8") as f:
             json.dump({"oops": True}, f)
         assert store_mod.load_tasks() == []
+
+    def test_output_channels_roundtrip(self):
+        from modules.channels.cron.store import create_task, load_tasks
+        task = create_task(dict(_VALID_DAILY, output_channels=["ilinkbot"]))
+        loaded = load_tasks()
+        assert loaded[0]["output_channels"] == ["ilinkbot"]
+
+    def test_update_output_channels_clears_with_empty_list(self):
+        from modules.channels.cron.store import create_task, update_task
+        task = create_task(dict(_VALID_DAILY, output_channels=["ilinkbot"]))
+        cleared = update_task(task["id"], {"output_channels": []})
+        assert cleared["output_channels"] == []
+
+    def test_load_handles_missing_output_channels(self):
+        import modules.channels.cron.store as store_mod
+        legacy = {
+            "id": "cron_legacy", "title": "老任务", "time": "08:00",
+            "repeat": "daily", "task_type": "system", "description": "ok",
+        }
+        with open(store_mod._tasks_path(), "w", encoding="utf-8") as f:
+            json.dump([legacy], f, ensure_ascii=False)
+        tasks = store_mod.load_tasks()
+        assert tasks[0]["output_channels"] == []
+        assert tasks[0]["title"] == "老任务"
+
+
+# ── ensure_schema 迁移 (output_channels) ────────────────────────────────
+
+class TestEnsureSchema:
+    def _write_raw(self, raw):
+        import modules.channels.cron.store as store_mod
+        with open(store_mod._tasks_path(), "w", encoding="utf-8") as f:
+            json.dump(raw, f, ensure_ascii=False)
+
+    def _read_raw(self):
+        import modules.channels.cron.store as store_mod
+        with open(store_mod._tasks_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_migrates_legacy_task_preserving_fields(self):
+        from modules.channels.cron.store import ensure_schema
+        legacy = {
+            "id": "cron_l1", "title": "旧任务", "time": "07:30",
+            "repeat": "weekly", "weekday": 1, "task_type": "system",
+            "description": "df -h", "enabled": False,
+            "created_at": "2026-01-01 00:00:00", "updated_at": "2026-01-02 00:00:00",
+        }
+        self._write_raw([legacy])
+        ensure_schema()
+        migrated = self._read_raw()[0]
+        assert migrated["output_channels"] == []
+        for k, v in legacy.items():
+            assert migrated[k] == v
+
+    def test_partially_migrated_only_patches_missing(self):
+        from modules.channels.cron.store import ensure_schema
+        self._write_raw([
+            {"id": "cron_a", "title": "A", "time": "08:00", "repeat": "daily",
+             "task_type": "system", "description": "a"},
+            {"id": "cron_b", "title": "B", "time": "09:00", "repeat": "daily",
+             "task_type": "system", "description": "b", "output_channels": ["ilinkbot"]},
+        ])
+        ensure_schema()
+        raw = self._read_raw()
+        assert raw[0]["output_channels"] == []
+        assert raw[1]["output_channels"] == ["ilinkbot"]
+
+    def test_no_write_when_already_migrated(self):
+        import os
+        from modules.channels.cron.store import ensure_schema
+        self._write_raw([
+            {"id": "cron_a", "title": "A", "time": "08:00", "repeat": "daily",
+             "task_type": "system", "description": "a", "output_channels": []},
+        ])
+        mtime_before = os.path.getmtime(
+            __import__("modules.channels.cron.store", fromlist=["_tasks_path"])._tasks_path()
+        )
+        ensure_schema()
+        assert os.path.getmtime(
+            __import__("modules.channels.cron.store", fromlist=["_tasks_path"])._tasks_path()
+        ) == mtime_before
+
+    def test_empty_file_and_non_array_are_noops(self):
+        import os
+        from modules.channels.cron.store import ensure_schema
+        store_mod = __import__("modules.channels.cron.store", fromlist=["_tasks_path"])
+        path = store_mod._tasks_path()
+        for payload in ("[]", '{"oops": 1}'):
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(payload)
+            mtime_before = os.path.getmtime(path)
+            ensure_schema()
+            assert os.path.getmtime(path) == mtime_before
 
 
 # ── Run results (db/cron.db · SQLite) ────────────────────────────────────

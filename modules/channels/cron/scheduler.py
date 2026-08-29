@@ -22,9 +22,35 @@ from typing import Any, Dict, Optional
 
 from modules.channels.cron import store
 from modules.config.config_manager import ConfigManager
-from modules.utils.logger import log_error, log_info, log_tool_call
+from modules.utils.logger import log_error, log_info, log_tool_call, log_warning
 
 _TICK_SECONDS = 10
+
+
+def format_result_message(record: Dict[str, Any], max_output: int = 5000) -> str:
+    """把一条 cron 运行结果格式化为适合 IM 推送的纯文本消息。"""
+    status = "成功" if record["status"] == "success" else "失败"
+    lines = [
+        "【定时任务执行结果】",
+        f"任务: {record['title']}",
+        f"任务ID: {record['cron_id']}",
+        f"类型: {record['task_type']}",
+        f"状态: {status}",
+        f"开始: {record['started_at']}",
+        f"结束: {record['finished_at']}",
+        f"耗时: {record['duration_ms']} ms",
+    ]
+    output = (record.get("output") or "").strip()
+    if output:
+        if len(output) > max_output:
+            output = output[:max_output] + "\n…（输出过长，已截断）"
+        lines.append("─────────────────")
+        lines.append(output)
+    error = (record.get("error") or "").strip()
+    if error:
+        lines.append("─────────────────")
+        lines.append(f"[错误] {error}")
+    return "\n".join(lines)
 
 
 class CronScheduler:
@@ -210,6 +236,25 @@ class CronScheduler:
             f"[cron] {task['id']} '{task['title']}' → {status} "
             f"({duration_ms}ms, result={record['result_id']})"
         )
+
+        # 输出通道推送（尽力而为，失败仅记日志，不影响结果落库）
+        channels = task.get("output_channels") or []
+        if channels:
+            from modules.channels.dispatcher import get_dispatcher
+
+            message = format_result_message(record)
+            for ch in channels:
+                outcome = get_dispatcher().send(ch, message)
+                if outcome.get("ok"):
+                    log_info(
+                        f"[CronScheduler] Result pushed to output channel "
+                        f"'{ch}' ({record['result_id']})"
+                    )
+                else:
+                    log_warning(
+                        f"[CronScheduler] Push to output channel '{ch}' failed "
+                        f"for {record['result_id']}: {outcome.get('error')}"
+                    )
 
     def _run_system(self, task: Dict[str, Any]):
         """system 任务：子进程执行 shell 命令，超时可配（cron.system_timeout 秒）。"""

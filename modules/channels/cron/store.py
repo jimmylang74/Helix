@@ -130,6 +130,19 @@ def validate_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
 
     normalized["enabled"] = bool(fields.get("enabled", True))
 
+    raw_output = fields.get("output_channels")
+    if raw_output in (None, "", [], [""]):
+        normalized["output_channels"] = []
+    else:
+        if isinstance(raw_output, str):
+            raw_output = [raw_output]
+        channels = []
+        for c in raw_output:
+            s = str(c).strip().lower()
+            if s:
+                channels.append(s)
+        normalized["output_channels"] = channels
+
     return normalized
 
 
@@ -200,6 +213,35 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         if task["id"] == task_id:
             return task
     return None
+
+
+def ensure_schema() -> None:
+    """幂等迁移：为缺少 output_channels 字段的任务补空数组。
+
+    必须直接检查文件原始内容——load_tasks 经 validate_fields 规范化时会
+    无条件补充 output_channels 默认值，缺字段状态被掩盖；故此处绕过
+    规范化层读原始 JSON，仅当存在缺字段条目时才补写（其余字段与值原样
+    保留，原子写回）；已全部具备时不做任何写操作（mtime 不变）。
+    """
+    with _tasks_lock:
+        path = _tasks_path()
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except FileNotFoundError:
+            return
+        except (json.JSONDecodeError, OSError) as e:
+            log_error(f"cron store: ensure_schema 读取 cron.json 失败: {e}")
+            return
+        if not isinstance(raw, list):
+            return
+        if not any(isinstance(item, dict) and "output_channels" not in item for item in raw):
+            return
+        for item in raw:
+            if isinstance(item, dict) and "output_channels" not in item:
+                item["output_channels"] = []
+        save_tasks(raw)
+        log_info("cron store: migrated cron.json — added output_channels=[]")
 
 
 def create_task(fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -466,6 +508,7 @@ __all__ = [
     "create_task",
     "update_task",
     "delete_task",
+    "ensure_schema",
     "validate_fields",
     "tasks_mtime",
     "save_result",

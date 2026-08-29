@@ -621,6 +621,14 @@
                 <textarea id="cronDescription" class="form-control" rows="3" placeholder="df -h"></textarea>
             </div>
             <div class="form-group">
+                <label data-i18n="config.cron.fieldOutputChannels">任务输出通道</label>
+                <div class="multiselect-dropdown" id="cronOutputChannelsDropdown">
+                    <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.cron.outputChannelsPlaceholder" data-placeholder="不推送（仅写入数据库）" data-all-label="config.cron.allChannels">不推送（仅写入数据库）</button>
+                    <div class="multiselect-menu" id="cronOutputChannelsCheckboxes"></div>
+                </div>
+                <small class="text-muted" data-i18n="config.cron.outputChannelsHint">任务完成后把运行结果推送到所选通道；不选则不推送（结果仍会写入数据库）</small>
+            </div>
+            <div class="form-group">
                 <label><input type="checkbox" id="cronEnabled" checked> <span data-i18n="config.cron.fieldEnabled">启用此任务</span></label>
             </div>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">

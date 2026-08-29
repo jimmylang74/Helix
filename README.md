@@ -147,9 +147,9 @@ curl -X POST http://localhost:11555/api/rpc \
   -d '{"jsonrpc":"2.0","id":"3","method":"agent/router","params":{"request":"写一个Fibonacci函数","intent":"coding"}}'
 ```
 
-详细API文档见 [API.md](API.md)
+详细API文档见 [API.md](design/API.md)
 
-系统设计文档见 [doc/design.md](doc/design.md)（含架构图、时序图、MCP 与插件化设计）
+系统设计文档见 [design/design.md](design/design.md)（含架构图、时序图、MCP 与插件化设计）
 
 ## 定时任务
 
@@ -205,7 +205,6 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 ├── requirements.txt           # Python 依赖
 ├── README.md                  # 说明文档 (中文)
 ├── README_EN.md               # 说明文档 (英文)
-├── API.md                     # API 文档
 ├── debugout.log               # 运行日志输出
 ├── llm_engine.log             # LLM 引擎交互日志 (ai_engine --verbose --log)
 ├── test_agent.py              # 测试程序
@@ -213,7 +212,8 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │   ├── ai_engine.py           #   引擎主入口 (run_engine / --get-provider / --output-format events)
 │   ├── API-AI-ENGINE.md       #   引擎 API 文档
 │   └── example_import.py      #   import 模式使用示例
-├── doc/                       # 设计文档
+├── design/                    # 设计文档
+│   ├── API.md                 #   API 文档
 │   └── design.md              #   系统架构设计文档 (Mermaid)
 ├── HelixCore/                 # 核心引擎包 (与 host 解耦, 依赖注入)
 │   ├── interface.py           #   注入端口统一契约 (ABC: LLMBackend/EventSink/LlmEventBus/IntentProvider/LogSink)
@@ -237,6 +237,7 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │   │   ├── base.py            #     ChannelAdapter 抽象基类 (含 ask_user/get_context/clear_context 落点契约)
 │   │   ├── manager.py         #     ChannelManager (通道注册/生命周期/跨通道应答与取消)
 │   │   ├── runtime.py         #     build_channel_runtime: 私有编排器+工具注册表+三件套绑定
+│   │   ├── dispatcher.py      #     OutputDispatcher: 跨通道输出注册表 (cron 结果 → 微信等)
 │   │   ├── routes.py          #     imbot/* RPC 与 /api/imbot-stream SSE
 │   │   ├── events.py          #     通道消息广播/订阅 (SSE)
 │   │   ├── store.py           #     通道消息与会话上下文持久化 (SQLite)

@@ -67,7 +67,7 @@
 | `authenticator.py` | QR 码登录流程，session 持久化 |
 | `channel.py` | `ChannelAdapter` 实现：轮询循环、消息处理、发送、SSE 广播、agent 私有 runtime 分发、通道工具三件套落点（ask_user / get_context / clear_context） |
 
-> 多通道框架抽象基类与每通道运行时装配见 [doc/design.md §11](../../doc/design.md#11-多通道架构设计)。
+> 多通道框架抽象基类与每通道运行时装配见 [design/design.md §11](../../design/design.md#11-多通道架构设计)。
 
 ---
 
@@ -267,7 +267,7 @@ _run_agent(sender_id, sender_name, content)
 | `get_context` | `get_active_agent_context("wechat")` 读取本通道进行中会话的全部记录，拼装为「用户请求 / 最终结果」列表 | 已归档会话不参与拼装 |
 | `clear_context` | `archive_agent_session("wechat")` 归档当前会话（全部记录保存入库）并开始新会话 | 无会话时返回无需清除 |
 
-> Web 通道的同名落点行为不同（SSE 推送提问、全局会话集），通道间完全隔离，对比见 [doc/design.md §11.7](../../doc/design.md#117-内置通道差异对比)。
+> Web 通道的同名落点行为不同（SSE 推送提问、全局会话集），通道间完全隔离，对比见 [design/design.md §11.7](../../design/design.md#117-内置通道差异对比)。
 
 ---
 

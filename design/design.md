@@ -1,7 +1,7 @@
 # Helix AI Agent - 系统设计文档
 
-> **版本**: 1.4  
-> **最后更新**: 2026-08-23  
+> **版本**: 1.5  
+> **最后更新**: 2026-08-29  
 > **项目代号**: Helix  
 > **技术栈**: Python 3.12+ / Flask / python-pptx / ai_engine / MCP Protocol
 
@@ -1160,7 +1160,7 @@ sequenceDiagram
 
 | 部分 | 目录 | 职责 |
 |------|------|------|
-| **框架层** | `modules/channels/` | 通道抽象基类、生命周期管理器、每通道运行时装配、RPC/SSE 路由、消息持久化 |
+| **框架层** | `modules/channels/` | 通道抽象基类、生命周期管理器、每通道运行时装配、RPC/SSE 路由、消息持久化、输出通道注册表 |
 | **适配器层** | `imChannels/<type>/` | 具体平台的协议实现（认证、轮询、收发），当前有 `imChannels/wechat/` |
 
 ```mermaid
@@ -1306,6 +1306,57 @@ sequenceDiagram
 | LLM 日志 | 沿用全局 `llm.log_file` | `llm.log_file_<channel_type>` 或派生 `llm_engine_wechat.log` |
 
 新增通道步骤：在 `imChannels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`。
+
+### 11.8 输出通道注册表（OutputDispatcher）
+
+§11.1-11.7 描述的是「请求-响应」路径：消息进入通道 → 私有编排器处理 → 结果回发或经 SSE 下发。对于系统侧**主动产生**的单向推送（典型：定时任务结果转发），需要与通道私有运行时**正交**的通用输出路由层。设计约束：抽象在 `modules/channels/` 框架层，服务所有通道（cron / wechat / web / 未来新增），而非 cron 模块私有。
+
+定义于 `modules/channels/dispatcher.py`：
+
+| 成员 | 说明 |
+|------|------|
+| `register(channel_id, sink, label=None)` | 注册输出通道；`sink` 为实现 `send(content, **kwargs) -> dict` 的任意对象（如 `WeChatChannel` 实例）；重复注册直接覆盖 |
+| `unregister(channel_id)` / `is_registered(channel_id) -> bool` | 注销与查询 |
+| `available() -> list[dict]` | 返回 `[{"id": ..., "label": ...}]`，供 Web 前端动态渲染输出通道选项 |
+| `send(channel_id, content, **kwargs) -> dict` | 单通道推送；**绝不抛异常**——成功返回 `{"ok": True}`，失败返回 `{"ok": False, "error": ...}` 并记日志 |
+| `get_dispatcher() -> OutputDispatcher` | 进程级单例，跨模块共享同一注册表 |
+
+**通道输出映射模型**（与「请求-响应」路径互补）：
+
+| 通道 | 输出落点 |
+|------|---------|
+| cron 通道 | 默认落库 `db/cron.db`（管线内固化），另按任务 `output_channels` 字段追加推送（如 `["ilinkbot"]`） |
+| wechat 通道 | iLinkBot（通道本身即 IM 出口） |
+| web 通道 | SSE（`SSEEventSink` 按 request_id 下发） |
+
+定时任务结果推送时序：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SCH as CronScheduler (worker)
+    participant ST as cron/store (SQLite)
+    participant DISP as OutputDispatcher<br/>(modules/channels/dispatcher.py)
+    participant WC as WeChatChannel<br/>(ilinkbot sink)
+    participant U as 微信用户
+
+    SCH->>SCH: 执行任务 (system/agent)
+    SCH->>ST: save_result(record) → db/cron.db
+    Note over SCH: 任务 output_channels = ["ilinkbot"]
+    SCH->>DISP: get_dispatcher().send("ilinkbot", msg, ...)
+    DISP->>WC: sink.send(msg)
+    WC->>U: iLink sendmessage
+    Note over SCH,WC: sink.send() 内部异常被 dispatcher 捕获<br/>返回 {"ok": false} 仅记日志，不影响任务结果与落库
+```
+
+**cron 集成**：
+
+- `db/cron.json` 任务新增 `output_channels` 数组字段（`[]` 或无该字段 = 不推送）；`store.py` 字段白名单将其规范化（`str` → 单元素数组）。
+- `ensure_schema()` 幂等迁移补齐缺失字段：**绕开 `load_tasks()` 的 normalize 路径**（该路径会无条件补默认值，掩盖缺字段状态导致迁移永不触发），直接读原始 JSON 判断后精准补写。
+- `scheduler.py` 落库后遍历 `task["output_channels"]` 调 `dispatcher.send()`；推送失败仅记日志，不影响任务状态。
+- 推送正文由 `format_result_message()` 生成：标题/ID/类型/状态/起止时间/耗时 + 输出段；输出段按微信单条消息上限 **5000 字符**截断（按字符计数；元信息行不参与截断；截断标记 `…（输出过长，已截断）`）。
+- 组合根 `Helix.py` 装配：`get_dispatcher().register("ilinkbot", wechat_channel, label="iLinkBot")`——`web_sse` 等后续输出通道只需一行注册；调度器启动前先 `cron_store.ensure_schema()`。
+- `cron.list` RPC 下发 `output_channels` 选项（`get_dispatcher().available()`），前端据此动态渲染下拉，无需硬编码通道清单。
 
 ---
 

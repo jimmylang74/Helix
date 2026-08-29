@@ -2,7 +2,7 @@
 
 HelixCore 是 Helix 的**核心引擎包**，承载 Agent 编排、任务图、工具基座、提示词与 Token 估算等纯核心逻辑。它与 Host（`modules/host/`）解耦，通过四个注入端口（抽象基类 ABC）交互，不依赖 Flask / ai_engine / 配置管理器等任何宿主设施。
 
-> 本文件说明 HelixCore 的基本架构、设计原则、使用方法与接口。Host 侧整体架构与 API 见 [README.md](README.md) 与 [doc/design.md](doc/design.md)。
+> 本文件说明 HelixCore 的基本架构、设计原则、使用方法与接口。Host 侧整体架构与 API 见 [README.md](README.md) 与 [design/design.md](../design/design.md)。
 
 ## 1. 基本架构
 

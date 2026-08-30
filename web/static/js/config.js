@@ -1041,7 +1041,8 @@ function renderCronTasks(tasks, nextRuns) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.cron.noTasks') + '</td></tr>';
         return;
     }
-    tbody.innerHTML = tasks.map(t => {
+    const sorted = [...tasks].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    tbody.innerHTML = sorted.map(t => {
         const enabled = t.enabled !== false;
         const typeLabel = t.task_type === 'agent' ? __('config.cron.typeAgentShort') : __('config.cron.typeSystemShort');
         return `

@@ -17,7 +17,9 @@ Usage:
     python3 Helix.py --debug                # Debug mode
 """
 
+import atexit
 import os
+import signal
 import sys
 import argparse
 import threading
@@ -126,6 +128,25 @@ def main():
     from plugins.mcp_tools import register_mcp_tools
     register_mcp_tools(tool_registry)
     log_info(f"All tools registered: {len(tool_registry.get_all())} tool(s)")
+
+    # ═══ 进程退出时回收 MCP 子进程 ═══
+    # Helix 退出（正常返回 / 异常 / SIGINT / SIGTERM）时终止 spawn 的子进程
+    # （内置 HTTP 服务器如 weather_mcp）并断开全部 MCP 客户端（含 stdio 子进程），
+    # 避免子进程残留为孤儿继续占用端口。SIGKILL 场景由子进程侧 PR_SET_PDEATHSIG 兜底。
+    def _shutdown_mcp_registry() -> None:
+        try:
+            mcp_registry.shutdown()
+        except Exception as e:
+            log_error(f"MCP Registry shutdown on exit failed: {e}")
+
+    atexit.register(_shutdown_mcp_registry)
+
+    def _handle_exit_signal(signum: int, frame) -> None:
+        log_info(f"Received signal {signum}, shutting down MCP servers...")
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_exit_signal)
+    signal.signal(signal.SIGINT, _handle_exit_signal)
 
     # ② 构造并注册通道（Web 快速测试 + 微信）
     web_channel = WebChannel()

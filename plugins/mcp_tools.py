@@ -13,7 +13,7 @@ class MCPToolAdapter(BaseTool):
     """Adapter that wraps an MCP tool as a BaseTool for unified registry management."""
 
     source = "MCP (内置)"
-    _builtin_servers = {"searxng", "image_search"}
+    _builtin_servers = {"searxng", "image_search", "weather"}
 
     def __init__(self, tool_name: str, description: str, input_schema: dict[str, Any],
                  intents: list[str] | None = None, server_name: str = ""):

@@ -345,11 +345,26 @@ async function loadMCPServers() {
     document.getElementById('mcpImageSearchPexelsKey').value = (img.env && img.env.PEXELS_API_KEY) || '';
     document.getElementById('mcpImageSearchUnsplashKey').value = (img.env && img.env.UNSPLASH_API_KEY) || '';
 
+    // Built-in: Weather
+    const wth = mcpServers.weather || {};
+    document.getElementById('mcpWeatherEnabled').checked = wth.enabled !== false;
+    let wPort = '8004';
+    if (wth.url) {
+        const m = wth.url.match(/:(\d+)/);
+        if (m) wPort = m[1];
+    }
+    document.getElementById('mcpWeatherPort').value = wPort;
+    const wSpawn = wth.spawn || {};
+    const wCmd = document.getElementById('mcpWeatherCommand');
+    if (wCmd) wCmd.value = wSpawn.command || 'python3';
+    const wArgs = document.getElementById('mcpWeatherArgs');
+    if (wArgs) wArgs.value = (wSpawn.args || []).join('\n');
+
     renderCustomMCPServers(mcpServers);
 }
 
 function renderCustomMCPServers(mcpServers) {
-    const customNames = Object.keys(mcpServers).filter(n => n !== 'searxng' && n !== 'image_search');
+    const customNames = Object.keys(mcpServers).filter(n => n !== 'searxng' && n !== 'image_search' && n !== 'weather');
     const tbody = document.getElementById('mcpCustomServersTable');
     if (customNames.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.mcp.noCustom') + '</td></tr>';
@@ -451,13 +466,42 @@ async function saveBuiltinMCPImageSearch() {
     }
 }
 
+// ── Built-in MCP: Weather ──────────────────────────────────
+
+async function saveBuiltinMCPWeather() {
+    const port = String(parseInt(document.getElementById('mcpWeatherPort').value) || 8004);
+    const wCmd = document.getElementById('mcpWeatherCommand') ? document.getElementById('mcpWeatherCommand').value.trim() : '';
+    const wArgsEl = document.getElementById('mcpWeatherArgs');
+    const wArgs = wArgsEl ? wArgsEl.value.split('\n').map(s => s.trim()).filter(Boolean) : [];
+    const config = {
+        type: 'server',
+        enabled: document.getElementById('mcpWeatherEnabled').checked,
+        url: 'http://127.0.0.1:' + port + '/mcp',
+        intent_categories: ['ppt', 'generic'],
+        spawn: {
+            command: wCmd || 'python3',
+            args: (wArgs.length ? wArgs : ['mcp/weather_mcp.py']).concat(['--port', port]),
+            wait_timeout: 15,
+        },
+    };
+    const result = await apiCall('mcp.servers.save', { name: 'weather', ...config });
+    if (result.success) {
+        showToast(__('config.mcp.weatherSaveSuccess'), 'success');
+        loadMCPServers();
+        loadPlugins();
+    } else {
+        showToast(__('config.mcp.saveFailed') + (result.error || __('config.llm.unknownError')), 'error');
+    }
+}
+
 // ── Built-in MCP: Test Connection ──────────────────────────
 
 async function testBuiltinMCP(name) {
     const btn = event.target;
     btn.disabled = true;
     btn.textContent = __('config.mcp.testingLabel');
-    const resultEl = document.getElementById(name === 'searxng' ? 'mcpSearxngTestResult' : 'mcpImageSearchTestResult');
+    const resultElIds = { searxng: 'mcpSearxngTestResult', image_search: 'mcpImageSearchTestResult', weather: 'mcpWeatherTestResult' };
+    const resultEl = document.getElementById(resultElIds[name] || 'mcpSearxngTestResult');
 
     let config;
     if (name === 'searxng') {
@@ -466,6 +510,20 @@ async function testBuiltinMCP(name) {
             env: {
                 SEARXNG_BASE_URL: document.getElementById('mcpSearxngUrl').value || 'http://localhost:8888',
                 SEARXNG_MAX_RESULTS: String(parseInt(document.getElementById('mcpSearxngMaxResults').value) || 10),
+            },
+        };
+    } else if (name === 'weather') {
+        const port = String(parseInt(document.getElementById('mcpWeatherPort').value) || 8004);
+        const wCmd = document.getElementById('mcpWeatherCommand') ? document.getElementById('mcpWeatherCommand').value.trim() : '';
+        const wArgsEl = document.getElementById('mcpWeatherArgs');
+        const wArgs = wArgsEl ? wArgsEl.value.split('\n').map(s => s.trim()).filter(Boolean) : [];
+        config = {
+            type: 'server',
+            url: 'http://127.0.0.1:' + port + '/mcp',
+            spawn: {
+                command: wCmd || 'python3',
+                args: (wArgs.length ? wArgs : ['mcp/weather_mcp.py']).concat(['--port', port]),
+                wait_timeout: 15,
             },
         };
     } else {

@@ -110,6 +110,24 @@
       "type": "server",
       "enabled": true,
       "url": "http://127.0.0.1:8003/mcp"
+    },
+    "weather": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://127.0.0.1:8004/mcp",
+      "intent_categories": [
+        "ppt",
+        "generic"
+      ],
+      "spawn": {
+        "command": "/home/jimmy/venv/bin/python3",
+        "args": [
+          "mcp/weather_mcp.py",
+          "--port",
+          "8004"
+        ],
+        "wait_timeout": 15
+      }
     }
   },
   "imbot": {
@@ -239,7 +257,11 @@
     },
     "weixin_send_message": {
       "enabled": true,
-      "intents": []
+      "intents": [
+        "generic",
+        "ppt",
+        "coding"
+      ]
     },
     "login": {
       "enabled": true,
@@ -294,6 +316,56 @@
         "ppt",
         "coding"
       ]
+    },
+    "create_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "cron_status": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "delete_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "list_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "modify_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "start_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "stop_cron": {
+      "enabled": true,
+      "intents": [
+        "*"
+      ]
+    },
+    "get_exchange_rate": {
+      "enabled": true,
+      "intents": []
+    },
+    "search_flights": {
+      "enabled": true,
+      "intents": []
     }
   }
 }

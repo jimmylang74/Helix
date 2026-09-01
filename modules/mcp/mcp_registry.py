@@ -3,8 +3,13 @@ MCP Registry - Manages MCP client lifecycle, tool discovery, and intent-based ro
 Loads MCP server configurations from ConfigManager and provides tools for the orchestrator.
 """
 
+import os
+import socket
+import subprocess
 import threading
+import time
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from modules.config.config_manager import ConfigManager
 from modules.mcp.mcp_client import MCPClient, MCPTool, create_mcp_client
@@ -45,6 +50,7 @@ class MCPRegistry:
         self._reconnect_thread: threading.Thread | None = None
         self._reconnect_stop = threading.Event()
         self.on_server_state_change: Callable[[str, bool, int], None] | None = None
+        self._spawned: dict[str, subprocess.Popen[Any]] = {}
 
     # ── Initialization ─────────────────────────────────────────
 
@@ -70,6 +76,9 @@ class MCPRegistry:
 
     def _register_server(self, name: str, config: dict[str, Any]) -> MCPClient | None:
         """Register and connect to a single MCP server."""
+        # Built-in HTTP servers: spawn the process first so the URL is live
+        # before the client tries to connect.
+        self._spawn_server(name, config)
         client = create_mcp_client(name, config)
         connected = client.connect()
         if connected:
@@ -84,6 +93,67 @@ class MCPRegistry:
                 self._clients[name] = client
         return client
 
+    # ── Built-in HTTP server spawning ─────────────────────────
+
+    def _spawn_server(self, name: str, config: dict[str, Any]) -> None:
+        """Start an HTTP-based MCP server process when config has a 'spawn' block."""
+        spawn = config.get("spawn")
+        if not isinstance(spawn, dict) or not spawn.get("command"):
+            return
+        proc = self._spawned.get(name)
+        if proc is not None and proc.poll() is None:
+            return
+        env = dict(os.environ)
+        proxy = self.config.get("server.proxy", "")
+        if proxy and "HTTPS_PROXY" not in env:
+            env["HTTPS_PROXY"] = proxy
+            env["HTTP_PROXY"] = proxy
+        env["MCP_SERVER_NAME"] = name
+        env.update(spawn.get("env") or {})
+        try:
+            cmd: list[str] = [str(spawn["command"])] + [str(a) for a in (spawn.get("args") or [])]
+            # 独立会话/进程组：子进程不随 Helix 所在进程组的终端信号连带退出；
+            # 回收改为显式终止 + 子进程侧 PR_SET_PDEATHSIG（Helix 死亡时内核信号兜底）
+            proc = subprocess.Popen(cmd, env=env, start_new_session=True)
+        except Exception as e:
+            log_error(f"MCP Registry: failed to spawn server '{name}': {e}")
+            return
+        self._spawned[name] = proc
+        address = self._url_host_port(config.get("url", ""))
+        if address:
+            self._wait_for_port(name, *address, float(spawn.get("wait_timeout") or 15))
+
+    @staticmethod
+    def _url_host_port(url: str) -> tuple[str, int] | None:
+        try:
+            parsed = urlparse(url)
+            return str(parsed.hostname), int(parsed.port or 80)
+        except (ValueError, TypeError):
+            return None
+
+    def _wait_for_port(self, name: str, host: str, port: int, timeout: float) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                with socket.create_connection((host, port), timeout=1):
+                    log_info(f"MCP Registry: spawned server '{name}' ready on {host}:{port}")
+                    return True
+            except OSError:
+                time.sleep(0.4)
+        log_warning(f"MCP Registry: spawned server '{name}' not ready on {host}:{port} within {timeout}s")
+        return False
+
+    def _terminate_spawned(self) -> None:
+        for name, proc in self._spawned.items():
+            if proc.poll() is not None:
+                continue
+            try:
+                proc.terminate()
+                proc.wait(timeout=5)
+            except Exception as e:
+                log_error(f"MCP Registry: error stopping spawned server '{name}': {e}")
+        self._spawned.clear()
+
     def reload(self):
         """Reload all MCP servers from config (disconnect + reconnect)."""
         self._reloading = True
@@ -96,7 +166,8 @@ class MCPRegistry:
             self._reloading = False
 
     def shutdown(self):
-        """Disconnect all MCP clients."""
+        """Disconnect all MCP clients and stop spawned built-in servers."""
+        self._terminate_spawned()
         with self._clients_lock:
             for name, client in self._clients.items():
                 try:
@@ -154,10 +225,14 @@ class MCPRegistry:
                     log_warning(f"MCP Registry: '{name}' health check failed, marking disconnected")
                     client.disconnect()
                     self._notify_state_change(name, False)
-            elif client.connect():
-                tools = client.list_tools()
-                log_info(f"MCP Registry: '{name}' reconnected ({len(tools)} tools)")
-                self._notify_state_change(name, True)
+            else:
+                server_cfg = (self.config.get("mcp_servers", {}) or {}).get(name, {})
+                if server_cfg.get("spawn"):
+                    self._spawn_server(name, server_cfg)
+                if client.connect():
+                    tools = client.list_tools()
+                    log_info(f"MCP Registry: '{name}' reconnected ({len(tools)} tools)")
+                    self._notify_state_change(name, True)
 
     def _notify_state_change(self, name: str, connected: bool):
         if self.on_server_state_change is None:

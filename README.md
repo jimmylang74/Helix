@@ -55,7 +55,7 @@
 - **定时任务系统**: Helix 自维护调度器（独立于系统 crond），支持 daily/weekly/monthly 触发与 system（Shell 命令）/ agent（智能体执行）两类任务；任务定义存于 `db/cron.json`（手工编辑自动热重载），运行结果写入 `db/cron.db`（SQLite）；Web 控制台可视化管理，LLM 可经全局共享的 cron 工具自主增删改查任务
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
-- **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash) 及外部 SSE MCP Server
+- **MCP工具**: web_search(SearXNG)、image_search(Pexels/Unsplash)、weather(Open-Meteo) 及外部 SSE MCP Server
 - **Web管理控制台**: 可视化配置管理、动态 Provider 选择、LLM 交互日志查看、任务 DAG 状态实时可视化（SSE 流）
 
 ## 作者开发环境
@@ -87,17 +87,19 @@ git submodule update --init --recursive
 
 ### MCP 工具外部依赖
 
-内建的两个 MCP Server（[mcp/searxng_server.py](mcp/searxng_server.py)、[mcp/image_search_server.py](mcp/image_search_server.py)）额外依赖以下外部环境条件，配置项位于 `Helix.json` 的 `mcp_servers.<name>.env`：
+内建的三个 MCP Server（[mcp/searxng_server.py](mcp/searxng_server.py)、[mcp/image_search_server.py](mcp/image_search_server.py)、[mcp/weather_mcp.py](mcp/weather_mcp.py)）中，前两个额外依赖以下外部环境条件，配置项位于 `Helix.json` 的 `mcp_servers.<name>.env`：
 
 | MCP Server | 工具 | 外部依赖 | 配置项 |
 |------------|------|---------|--------|
 | `mcp/searxng_server.py` | `web_search` | 一个**可访问的 SearXNG 实例**，且**必须启用 JSON 输出格式**（其 `settings.yml` 的 `search.formats` 需包含 `json`，官方默认仅 `html`）；本服务需能出站访问该实例 | `SEARXNG_BASE_URL`（代码默认 `http://localhost:8888`）、`SEARXNG_MAX_RESULTS` |
 | `mcp/image_search_server.py` | `image_search` | Pexels 与/或 Unsplash 的 **API Key**；本服务需能出站访问 `api.pexels.com` / `api.unsplash.com` | `IMAGE_PROVIDER`（`pexels`/`unsplash`）、`PEXELS_API_KEY`、`UNSPLASH_API_KEY` |
+| `mcp/weather_mcp.py` | `weather` | 无密钥；需能出站访问 Open-Meteo（`api.open-meteo.com` / `archive-api.open-meteo.com` / `geocoding-api.open-meteo.com`）；监听端口默认 8004，可在 `Helix.json` 的 `mcp_servers.weather.spawn.args` 调整 | （无 env 配置项） |
 
 注意：
 
 - `web_search` 客户端固定请求 JSON 结果（POST `format=json` 并解析 `results` 字段，无 HTML 回退）。实例未启用 JSON 格式时 SearXNG 返回 HTTP 403，工具将报 "Search error: HTTP 403"。
 - 未配置 Pexels/Unsplash API Key 时 `image_search` **不会报错**，而是静默降级返回占位图（mock）结果。
+- 天气查询工具（`weather`）由 Helix 启动时自动拉起的独立 MCP Server 提供（Streamable HTTP / Stateless，纯 JSON 响应），根据查询日期与当天对比自动调用 Open-Meteo 预报或历史归档接口。
 
 ### 安装依赖
 
@@ -276,7 +278,6 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │   └── user/                  #   外部插件 (用户自定义, 来源标记为 "外部插件")
 │       ├── __init__.py
 │       ├── plugin.md          #     插件编写指南
-│       ├── weather_tool.py    #     示例: 天气查询工具
 │       └── calculator_tool.py #     示例: 安全计算器工具
 ├── imChannels/                # IM 通道适配器 (ChannelAdapter 实现)
 │   └── wechat/                #   微信 iLinkBot 通道
@@ -284,9 +285,10 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │       ├── authenticator.py   #     QR 码登录与会话恢复
 │       ├── ilink_client.py    #     iLink API HTTP 客户端
 │       └── README.md          #     微信通道详细文档
-├── mcp/                       # MCP Server 实现 (stdio 传输)
+├── mcp/                       # MCP Server 实现 (stdio / Streamable HTTP 传输)
 │   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
-│   └── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)
+│   ├── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)
+│   └── weather_mcp.py         #   天气查询 MCP Server (Open-Meteo, Streamable HTTP)
 ├── web/                       # 前端 (Admin 管理控制台)
 │   ├── templates/             #   HTML 模板
 │   │   ├── base.html          #     基础布局

@@ -58,7 +58,7 @@ A hybrid-driven AI Agent service built on Python / Flask / python-pptx / ai_engi
 - **Scheduled tasks (cron)**: A Helix-managed scheduler (independent of the OS crond) supporting daily/weekly/monthly triggers with two task types — system (shell command) and agent (handled by the agent). Task definitions live in `db/cron.json` (manual edits are hot-reloaded); run results are written to `db/cron.db` (SQLite). Manageable visually from the Web console, and the LLM can manage tasks itself via globally shared cron tools.
 - **External plugin extension**: Drop a `.py` file into `plugins/user/` to register a custom tool without modifying the framework code.
 - **Multi-LLM support**: Unified access through the [ai_engine](ai_engine/) submodule, supporting 10+ providers (Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral, etc.), switchable dynamically from the Web console.
-- **MCP tools**: web_search (SearXNG), image_search (Pexels/Unsplash), and external SSE MCP servers.
+- **MCP tools**: web_search (SearXNG), image_search (Pexels/Unsplash), weather (Open-Meteo), and external SSE MCP servers.
 - **Web admin console**: Visual configuration management, dynamic provider selection, LLM interaction log viewer, and real-time task DAG visualization (SSE stream).
 
 ## Author Development Environment
@@ -90,17 +90,19 @@ git submodule update --init --recursive
 
 ### External Dependencies for MCP Tools
 
-The two built-in MCP servers ([mcp/searxng_server.py](mcp/searxng_server.py), [mcp/image_search_server.py](mcp/image_search_server.py)) rely on the following external environment conditions, configured under `mcp_servers.<name>.env` in `Helix.json`:
+Of the three built-in MCP servers ([mcp/searxng_server.py](mcp/searxng_server.py), [mcp/image_search_server.py](mcp/image_search_server.py), [mcp/weather_mcp.py](mcp/weather_mcp.py)), the first two rely on the following external environment conditions, configured under `mcp_servers.<name>.env` in `Helix.json`:
 
 | MCP Server | Tool | External Dependency | Config Keys |
 |------------|------|--------------------|-------------|
 | `mcp/searxng_server.py` | `web_search` | An **accessible SearXNG instance** with **JSON output format enabled** (`search.formats` in its `settings.yml` must include `json`; the official default only has `html`); this service must be able to reach the instance outbound | `SEARXNG_BASE_URL` (default `http://localhost:8888`), `SEARXNG_MAX_RESULTS` |
 | `mcp/image_search_server.py` | `image_search` | An **API Key** for Pexels and/or Unsplash; this service must be able to reach `api.pexels.com` / `api.unsplash.com` outbound | `IMAGE_PROVIDER` (`pexels`/`unsplash`), `PEXELS_API_KEY`, `UNSPLASH_API_KEY` |
+| `mcp/weather_mcp.py` | `weather` | No API key needed; must reach Open-Meteo outbound (`api.open-meteo.com` / `archive-api.open-meteo.com` / `geocoding-api.open-meteo.com`); listens on port 8004 by default, adjustable via `mcp_servers.weather.spawn.args` in `Helix.json` | (no env config keys) |
 
 Notes:
 
 - The `web_search` client always requests JSON results (POSTs `format=json` and parses the `results` field; no HTML fallback). If the instance does not have JSON enabled, SearXNG returns HTTP 403 and the tool reports "Search error: HTTP 403".
 - If no Pexels/Unsplash API Key is configured, `image_search` does **not** fail; it silently falls back to placeholder (mock) images.
+- The weather tool (`weather`) is served by a standalone MCP server that Helix auto-spawns at startup (Streamable HTTP / Stateless, pure JSON responses). It automatically calls either the Open-Meteo forecast or history archive API depending on whether the query date is today or a past date.
 
 ### Install Dependencies
 
@@ -278,7 +280,6 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   └── user/                 #   External plugins (user-defined, marked as "external plugin")
 │       ├── __init__.py
 │       ├── plugin.md         #     Plugin authoring guide
-│       ├── weather_tool.py   #     Example: weather query tool
 │       └── calculator_tool.py #    Example: safe calculator tool
 ├── imChannels/               # IM channel adapters (ChannelAdapter implementations)
 │   └── wechat/               #   WeChat iLinkBot channel
@@ -286,9 +287,10 @@ You can dynamically switch providers and fill in connection parameters from the 
 │       ├── authenticator.py  #     QR-code login and session restore
 │       ├── ilink_client.py   #     iLink API HTTP client
 │       └── README.md         #     WeChat channel documentation
-├── mcp/                      # MCP server implementations (stdio transport)
+├── mcp/                      # MCP server implementations (stdio / Streamable HTTP transport)
 │   ├── searxng_server.py     #   SearXNG search MCP server
-│   └── image_search_server.py #   Image search MCP server (Pexels/Unsplash)
+│   ├── image_search_server.py #   Image search MCP server (Pexels/Unsplash)
+│   └── weather_mcp.py        #   Weather query MCP server (Open-Meteo, Streamable HTTP)
 ├── web/                      # Frontend (Admin console)
 │   ├── templates/            #   HTML templates
 │   │   ├── base.html         #     Base layout

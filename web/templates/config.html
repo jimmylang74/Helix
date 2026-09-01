@@ -199,6 +199,31 @@
                     <span id="mcpImageSearchTestResult" class="ml-2"></span>
                 </div>
             </div>
+
+            <!-- Weather (Open-Meteo) -->
+            <div style="border:1px solid var(--border);border-radius:6px;padding:16px;margin-top:16px;">
+                <h4 style="margin-bottom:12px;" data-i18n="config.mcp.weather">🌤️ 天气查询（Open-Meteo）</h4>
+                <div class="form-group">
+                    <label><input type="checkbox" id="mcpWeatherEnabled" onchange="onBuiltinMCPChange()"> <span data-i18n="config.mcp.enableWeather">启用天气查询 MCP 服务</span></label>
+                </div>
+                <div class="form-group">
+                    <label data-i18n="config.mcp.weatherPort">服务端口</label>
+                    <input type="number" id="mcpWeatherPort" class="form-control" value="8004" min="1024" max="65535">
+                </div>
+                <div class="form-group">
+                    <label data-i18n="config.mcp.weatherCommand">启动命令</label>
+                    <input type="text" id="mcpWeatherCommand" class="form-control" value="python3" placeholder="python3">
+                </div>
+                <div class="form-group">
+                    <label data-i18n="config.mcp.weatherArgs">启动参数（每行一个，不含 --port）</label>
+                    <textarea id="mcpWeatherArgs" class="form-control" rows="2" placeholder="mcp/weather_mcp.py"></textarea>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                    <button class="btn btn-primary" onclick="saveBuiltinMCPWeather()" data-i18n="config.mcp.save">保存</button>
+                    <button class="btn btn-outline" onclick="testBuiltinMCP('weather')" data-i18n="config.mcp.test">测试连接</button>
+                    <span id="mcpWeatherTestResult" class="ml-2"></span>
+                </div>
+            </div>
         </div>
     </div>
 

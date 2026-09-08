@@ -128,6 +128,11 @@
         ],
         "wait_timeout": 15
       }
+    },
+    "A-Share": {
+      "type": "server",
+      "enabled": true,
+      "url": "http://192.168.10.39:8005/mcp"
     }
   },
   "imbot": {

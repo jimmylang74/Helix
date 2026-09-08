@@ -179,6 +179,18 @@ def main():
     cron_channel = CronChannel()
     channel_manager.register(cron_channel)
 
+    # ②''' 外部事件输入总线装配：事件源（定时器线程/微信轮询线程）→ EventBus
+    #      → EventBroker 按 event_type 路由到 Channel 处理器。消息类型与
+    #      Channel 类型解耦 —— 未来新增消息源或切换处理方（如 Thinking
+    #      Channel）只改此处注册，生产端零改动
+    from modules.events import get_event_broker, get_event_bus
+
+    event_broker = get_event_broker()
+    event_broker.register("cron.timer", cron_channel)
+    event_broker.register("wechat.message", wechat_channel)
+    get_event_bus().subscribe(event_broker)
+    atexit.register(get_event_bus().stop)
+
     # ③ 每通道装配私有运行时（独立 LLM 后端/日志、事件出口、broker、
     #    工具表与编排器）；须在共享工具池就绪后执行，私有 registry
     #    才能复制到完整工具集

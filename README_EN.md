@@ -55,6 +55,7 @@ A hybrid-driven AI Agent service built on Python / Flask / python-pptx / ai_engi
 - **Configurable intent system**: Built-in generic fallback intent; intents such as PPT generation and code generation are configured in `Helix.json` (including planning/node-execution/summarization prompts per phase) and can be dynamically added or changed via the Web console.
 - **Plugin-based tool system**: Three-layer architecture of built-in plugins + external plugins + MCP tools, with auto-discovery and hot-swap support.
 - **Multi-channel access**: Each channel (Web quick test / WeChat iLinkBot) owns a private agent runtime (orchestrator + tool registry + question broker); the LLM can only reach tools registered in its own channel. The channel tool trio (`ask_user` / `get_context` / `clear_context`) is adapted per channel.
+- **External event input bus**: External event sources — the timer, IM polling, and future Webhook/MCP/email — publish uniformly to the `modules/events/` input event bus (EventBus; non-blocking publish + one consumer thread per subscriber), routed by EventBroker by event type (`cron.timer` / `wechat.message`) to the matching channel handler `handle_event`. Producers and handlers are fully decoupled: adding an event source or switching handlers requires only a registration change in the composition root — zero changes on the producer side.
 - **Scheduled tasks (cron)**: A Helix-managed scheduler (independent of the OS crond) supporting daily/weekly/monthly triggers with two task types — system (shell command) and agent (handled by the agent). Task definitions live in `db/cron.json` (manual edits are hot-reloaded); run results are written to `db/cron.db` (SQLite). Manageable visually from the Web console, and the LLM can manage tasks itself via globally shared cron tools.
 - **External plugin extension**: Drop a `.py` file into `plugins/user/` to register a custom tool without modifying the framework code.
 - **Multi-LLM support**: Unified access through the [ai_engine](ai_engine/) submodule, supporting 10+ providers (Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral, etc.), switchable dynamically from the Web console.
@@ -246,11 +247,16 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   │   ├── events.py         #     Channel message broadcast/subscribe (SSE)
 │   │   ├── store.py          #     Channel message and session-context persistence (SQLite)
 │   │   ├── web/              #     Web quick-test channel (channel/event_sink/history_store)
-│   │   └── cron/             #     Scheduled-task module (Helix-managed scheduling)
-│   │       ├── store.py      #       Task definitions (db/cron.json) + run results (db/cron.db SQLite)
-│   │       ├── scheduler.py  #       CronScheduler thread (tick scanning / mtime hot-reload / no catch-up)
-│   │       └── channel.py    #       CronChannel adapter (private agent runtime, no tool trio registered)
-│   ├── host/                 #   Host adapter layer (injected implementations)
+│   │   └── cron/              #     Scheduled-task module (Helix-managed scheduling)
+│   │       ├── store.py       #       Task definitions (db/cron.json) + run results (db/cron.db SQLite)
+│   │       ├── scheduler.py   #       CronScheduler thread (tick scanning / mtime hot-reload / no catch-up)
+│   │       └── channel.py     #       CronChannel adapter (private agent runtime, no tool trio registered)
+│   ├── events/                #   External event input bus (producer/routing/handler decoupling)
+│   │   ├── base.py            #     EventBase + TimerEvent/WechatEvent subclasses
+│   │   ├── bus.py             #     EventBus non-blocking pub/sub + get_event_bus singleton
+│   │   ├── broker.py          #     EventBroker event-type routing + get_event_broker singleton
+│   │   └── __init__.py        #     Public API exports
+│   ├── host/                  #   Host adapter layer (injected implementations)
 │   │   ├── ai_engine_backend.py #   LLMBackend implementation (ai_engine integration)
 │   │   ├── config_builder.py #     Orchestration config builder
 │   │   ├── intent_store.py   #     IntentProvider implementation

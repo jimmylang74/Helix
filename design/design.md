@@ -1358,6 +1358,62 @@ sequenceDiagram
 - 组合根 `Helix.py` 装配：`get_dispatcher().register("ilinkbot", wechat_channel, label="iLinkBot")`——`web_sse` 等后续输出通道只需一行注册；调度器启动前先 `cron_store.ensure_schema()`。
 - `cron.list` RPC 下发 `output_channels` 选项（`get_dispatcher().available()`），前端据此动态渲染下拉，无需硬编码通道清单。
 
+### 11.9 外部事件输入总线（EventBus + EventBroker）
+
+§11.1-11.7 覆盖「请求-响应」路径（外部请求进入通道 → 私有编排器 → 回发），§11.8 输出注册表覆盖「系统主动推送」的输出侧。本节覆盖第三类路径：**外部世界事件的输入**——事件源（定时器线程 / IM 轮询线程 / 未来 Webhook/MCP/邮件）与处理方（通道）完全解耦，中间经进程内输入事件总线衔接。三条路径正交不重叠：`llm_events`（LLM 输出事件/SSE）只服务前端流式展示、OutputDispatcher 只做跨通道输出、EventBus 只做外部输入。
+
+设计约定：
+
+| 约定 | 说明 |
+|------|------|
+| 生产者只感知 + publish | 事件源封装 `EventBase` 子类投递总线，不感知也不关心谁在处理 |
+| 路由决策集中在 broker | `EventBroker` 按 `event_type` 细粒度路由（`"cron.timer"` / `"wechat.message"`），与通道类型解耦 |
+| 通道自身即处理器 | `ChannelAdapter` 新增默认 `handle_event(event)`（no-op 契约），cron/微信通道各自实现行为 |
+| 扩展只改组合根 | 新增事件源或切换处理方只改 `Helix.py` 注册，生产端零改动 |
+
+| 文件 | 职责 |
+|------|------|
+| `modules/events/base.py` | `EventBase`（event_id / occurred_at / received_at / payload）；`TimerEvent`（`event_type="cron.timer"`）、`WechatEvent`（`event_type="wechat.message"`）携带各源专有字段 |
+| `modules/events/bus.py` | `EventBus` 进程内发布/订阅：`publish()` 非阻塞（入队即返回，绝不阻塞生产线程），每订阅者独立 FIFO 队列 + 消费者线程；stop / unsubscribe 幂等；`get_event_bus()` 进程级单例 |
+| `modules/events/broker.py` | `EventBroker` 路由：`register` 校验处理器 `handle_event` 契约；未注册类型 warning 丢弃（dropped 计数）、处理器异常 catch 后 log_error（failed 计数）不中断消费线程；`get_event_broker()` 单例；`__call__` 兼作总线消费入口 |
+
+事件路由时序：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SRC as 事件源 (生产者线程)
+    participant BUS as EventBus<br/>(modules/events/bus.py)
+    participant BRK as EventBroker<br/>(modules/events/broker.py)
+    participant CH as Channel.handle_event
+    participant WK as worker 线程
+
+    Note over SRC: 定时器 tick 命中 / 微信轮询收到消息
+    SRC->>BUS: publish(TimerEvent / WechatEvent)<br/>(非阻塞入队, 打 received_at)
+    BUS->>BRK: 消费者线程取事件 → __call__(event)
+    BRK->>BRK: 按 event.event_type 查路由表
+    BRK->>CH: handle_event(event)
+    CH->>WK: 起 cron-{id} / wechat worker 线程后立即返回
+    Note over BRK: 未注册 event_type → warning + dropped 计数<br/>handle_event 异常 → log_error + failed 计数, 消费线程不中断
+```
+
+线程模型：EventBus 本身不是线程；每个订阅者一条 `eventbus-consumer` 消费者线程（当前组合根仅订阅 EventBroker，故全局恰一条）。消费者线程只做「取事件 → 查路由 → 调 handle_event」，重活由 handler 自起的 worker 线程承担——长任务不阻塞后续事件处理。
+
+组合根装配（`Helix.py`，位于 §11.6 步骤 ② cron 注册之后）：
+
+```python
+from modules.events import get_event_broker, get_event_bus
+event_broker = get_event_broker()
+event_broker.register("cron.timer", cron_channel)
+event_broker.register("wechat.message", wechat_channel)
+get_event_bus().subscribe(event_broker)
+atexit.register(get_event_bus().stop)
+```
+
+**cron 集成**：`scheduler.py` 移除任务执行职责（`bind` / `_run_task` / `_run_system` / `_run_agent` 迁出），`_tick` 命中时仅 `publish(TimerEvent(task=task))`；执行逻辑迁移至 `CronChannel.handle_event`（自起 `cron-{id}` worker）——调度线程与任务执行彻底分离，长任务不再占用 tick 循环。
+
+**wechat 集成**：`_handle_update` 收尾改为 `publish(WechatEvent(sender_id, sender_name, content, context_token, raw))`；`WeChatChannel.handle_event` 提取 payload 后进入原 `_dispatch_incoming()` 逻辑（按发送方状态路由不变）。
+
 ---
 
 > **文档维护**: 本文档随代码迭代同步更新。架构图和时序图使用 Mermaid 语法，可在支持 Mermaid 的 Markdown 渲染器中直接查看。

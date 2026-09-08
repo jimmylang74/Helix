@@ -1,5 +1,5 @@
 """
-CronScheduler — Helix 自维护的定时任务调度器（区别于系统 crond）。
+CronScheduler — Helix 自维护的定时任务调度器（区别于系统 crond），**纯事件生产者**。
 
 - start(): 启动独立 daemon 线程，按 tick 周期扫描到期任务并派发执行；
            幂等（已 started 再调直接返回）。
@@ -8,56 +8,27 @@ CronScheduler — Helix 自维护的定时任务调度器（区别于系统 cron
            自动重新加载任务表并重算触发时间。
 - 补漏策略: 不回补。重启或停摆期间错过的时点直接跳过，只计算下一次
            未来触发。
-- 执行:    每次触发生成独立 worker 线程：
-             system 任务 → 子进程执行 shell 命令（cwd=项目根）
-             agent 任务  → 经本通道私有 orchestrator.process_request 执行
-           结果统一写入 db/cron.db（store.save_result）。
+- 执行:    到期任务封装为 TimerEvent 投递到 EventBus，由 EventBroker
+           路由到 CronChannel.handle_event 执行（system→子进程 / agent→编排器）。
+           调度线程不持有通道引用、不直接执行任务 —— 触发与执行解耦，
+           未来接入 Thinking Channel 时无需改动本调度器。
 """
 
-import subprocess
 import threading
-import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from modules.channels.cron import store
-from modules.config.config_manager import ConfigManager
-from modules.utils.logger import log_error, log_info, log_tool_call, log_warning
+from modules.events import TimerEvent, get_event_bus
+from modules.utils.logger import log_error, log_info
 
 _TICK_SECONDS = 10
-
-
-def format_result_message(record: Dict[str, Any], max_output: int = 5000) -> str:
-    """把一条 cron 运行结果格式化为适合 IM 推送的纯文本消息。"""
-    status = "成功" if record["status"] == "success" else "失败"
-    lines = [
-        "【定时任务执行结果】",
-        f"任务: {record['title']}",
-        f"任务ID: {record['cron_id']}",
-        f"类型: {record['task_type']}",
-        f"状态: {status}",
-        f"开始: {record['started_at']}",
-        f"结束: {record['finished_at']}",
-        f"耗时: {record['duration_ms']} ms",
-    ]
-    output = (record.get("output") or "").strip()
-    if output:
-        if len(output) > max_output:
-            output = output[:max_output] + "\n…（输出过长，已截断）"
-        lines.append("─────────────────")
-        lines.append(output)
-    error = (record.get("error") or "").strip()
-    if error:
-        lines.append("─────────────────")
-        lines.append(f"[错误] {error}")
-    return "\n".join(lines)
 
 
 class CronScheduler:
     """定时任务调度器单例（经 get_scheduler() 获取）。"""
 
     def __init__(self):
-        self._channel: Any = None          # CronChannel，bind() 后可取 runtime.orchestrator
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -66,10 +37,6 @@ class CronScheduler:
         self._last_error: Optional[str] = None
 
     # ── 生命周期 ───────────────────────────────────────────────────────
-
-    def bind(self, channel: Any) -> None:
-        """绑定所属通道（agent 任务经 channel.runtime.orchestrator 执行）。"""
-        self._channel = channel
 
     def start(self) -> bool:
         """启动调度线程；已在运行则不做任何事。返回是否真正启动。"""
@@ -165,11 +132,16 @@ class CronScheduler:
                     self._next_run.pop(task_id, None)
                     fired_ids.append(task_id)
 
-        # 3. 派发执行并重算各自的下次触发时间
+        # 3. 到期任务 → TimerEvent 投递 EventBus（由 EventBroker 路由到
+        #    CronChannel.handle_event 执行），并重算各自的下次触发时间
         for task_id in fired_ids:
             task = store.get_task(task_id)
             if task is not None and task.get("enabled", True):
-                self._fire(task)
+                log_info(
+                    f"[CronScheduler] Firing '{task['title']}' "
+                    f"({task['id']}, type={task['task_type']}) → EventBus"
+                )
+                get_event_bus().publish(TimerEvent(task=task))
                 with self._lock:
                     nxt = store.next_occurrence(task, datetime.now())
                     if nxt is not None:
@@ -192,107 +164,6 @@ class CronScheduler:
             f"[CronScheduler] Rescheduled {len(self._next_run)} task(s) "
             f"(mtime={self._last_mtime:.0f})"
         )
-
-    # ── 任务执行 ───────────────────────────────────────────────────────
-
-    def _fire(self, task: Dict[str, Any]) -> None:
-        log_info(
-            f"[CronScheduler] Firing '{task['title']}' ({task['id']}, "
-            f"type={task['task_type']})"
-        )
-        threading.Thread(
-            target=self._run_task,
-            args=(task,),
-            daemon=True,
-            name=f"cron-{task['id']}",
-        ).start()
-
-    def _run_task(self, task: Dict[str, Any]) -> None:
-        """worker：执行单个任务并把结果写入 db/cron.db。"""
-        started_at = datetime.now()
-        status, output, error = "success", "", ""
-        try:
-            if task["task_type"] == "system":
-                status, output, error = self._run_system(task)
-            else:
-                status, output, error = self._run_agent(task)
-        except Exception as e:  # 兜底：任何异常都落一条 failed 记录
-            status, error = "failed", f"{type(e).__name__}: {e}"
-            log_error(f"[CronScheduler] Task {task['id']} crashed: {e}")
-        finished_at = datetime.now()
-        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
-        record = store.save_result(
-            cron_id=task["id"],
-            title=task["title"],
-            task_type=task["task_type"],
-            status=status,
-            started_at=started_at.strftime("%Y-%m-%d %H:%M:%S"),
-            finished_at=finished_at.strftime("%Y-%m-%d %H:%M:%S"),
-            duration_ms=duration_ms,
-            output=output,
-            error=error,
-        )
-        log_tool_call(
-            f"[cron] {task['id']} '{task['title']}' → {status} "
-            f"({duration_ms}ms, result={record['result_id']})"
-        )
-
-        # 输出通道推送（尽力而为，失败仅记日志，不影响结果落库）
-        channels = task.get("output_channels") or []
-        if channels:
-            from modules.channels.dispatcher import get_dispatcher
-
-            message = format_result_message(record)
-            for ch in channels:
-                outcome = get_dispatcher().send(ch, message)
-                if outcome.get("ok"):
-                    log_info(
-                        f"[CronScheduler] Result pushed to output channel "
-                        f"'{ch}' ({record['result_id']})"
-                    )
-                else:
-                    log_warning(
-                        f"[CronScheduler] Push to output channel '{ch}' failed "
-                        f"for {record['result_id']}: {outcome.get('error')}"
-                    )
-
-    def _run_system(self, task: Dict[str, Any]):
-        """system 任务：子进程执行 shell 命令，超时可配（cron.system_timeout 秒）。"""
-        timeout = ConfigManager().get("cron.system_timeout", 300)
-        from modules.utils.paths import PROJECT_ROOT
-
-        try:
-            proc = subprocess.run(
-                task["description"],
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                cwd=PROJECT_ROOT,
-            )
-            output = (proc.stdout or "").strip()
-            stderr = (proc.stderr or "").strip()
-            if proc.returncode == 0:
-                return "success", output or "(无输出)", ""
-            detail = f"exit code {proc.returncode}"
-            if stderr:
-                detail += f": {stderr[:2000]}"
-            return "failed", output, detail
-        except subprocess.TimeoutExpired:
-            return "failed", "", f"命令超时（>{timeout}s）"
-
-    def _run_agent(self, task: Dict[str, Any]):
-        """agent 任务：把任务描述交给本通道私有 orchestrator 执行。"""
-        runtime = getattr(self._channel, "runtime", None) if self._channel else None
-        if runtime is None:
-            return "failed", "", "Cron 通道运行时尚未装配，无法执行 agent 任务"
-        request_id = f"req_{uuid.uuid4().hex[:12]}"
-        result = runtime.orchestrator.process_request(task["description"], request_id)
-        final = (result.get("final_result") or "").strip()
-        err = result.get("error")
-        if err:
-            return "failed", final, str(err)
-        return "success", final or "(无输出)", ""
 
 
 # ── 进程级单例 ─────────────────────────────────────────────────────────────

@@ -26,8 +26,9 @@
 │  WeChatChannel (channel.py) — ChannelAdapter 实现             │
 │  高层适配器：生命周期 + 发送 + 轮询 + 通道工具落点            │
 │  ┌──────────────────────────────────────────────────────┐    │
-│  │  _poll_loop()  →  _handle_update()  →  save_message  │    │
-│  │       └→ _dispatch_incoming()  (按发送方状态路由)     │    │
+│  │  _poll_loop → _handle_update → save_message          │    │
+│  │       ├→ publish(WechatEvent) → EventBus             │    │
+│  │       └→ broker → handle_event → _dispatch_incoming  │    │
 │  │  send()        →  sendmessage()      →  broadcast    │    │
 │  │  ask_user / get_context / clear_context (三件套落点)  │    │
 │  └──────────────────────────────────────────────────────┘    │
@@ -202,7 +203,10 @@ _handle_update(update)
     ├─ save_message() — 持久化到 SQLite messages 表
     │   保存：sender_id, sender_name, content, context_token, raw_data
     │
-    └─ events.broadcast("wechat", {...}) — SSE 推送给前端
+    ├─ events.broadcast("wechat", {...}) — SSE 推送给前端
+    │
+    └─ get_event_bus().publish(WechatEvent(...)) — 投递外部事件输入总线
+         (事件源职责到此为止：不感知谁处理，处理入口见 handle_event)
 ```
 
 ### 错误处理
@@ -217,23 +221,24 @@ _handle_update(update)
 
 ## Agent 请求处理（通道私有 runtime 分发）
 
-微信通道持有组合根装配的**私有 agent 运行时**（`ChannelRuntime`：私有编排器 + 私有 ToolRegistry + 私有 UserQuestionBroker），收到的消息不再只做记录，而是路由进本通道的编排器执行。
+微信通道持有组合根装配的**私有 agent 运行时**（`ChannelRuntime`：私有编排器 + 私有 ToolRegistry + 私有 UserQuestionBroker），收到的消息不再只做记录，而是路由进本通道的编排器执行。事件处理入口为 `handle_event(event)`：轮询线程的感知止步于 `publish(WechatEvent)`，总线消费者线程经 EventBroker 按 `event_type` 路由回本通道处理器（详见 [design/design.md §11.9](../../design/design.md#119-外部事件输入总线eventbus--eventbroker)），内容分发仍按发送方状态路由。
 
 ### 按发送方状态路由
 
 ```
-_handle_update(update) 提取文本后
-    └→ _dispatch_incoming(sender_id, sender_name, content)
-        │
-        ├─ sender_id 在 _pending_ask 中？
-        │   └→ 是: 该消息是 ask_user 的回答
-        │       → broker.answer(pending_req, content)，结束
-        │       → 迟到的回答（请求已结束）记日志丢弃
-        │
-        ├─ sender_id 在 _active_by_sender 中？
-        │   └→ 是: 当前有任务在处理 → 回复"请稍候再发送新消息"
-        │
-        └─ 否: 新起 worker 线程 _run_agent()
+WeChatChannel.handle_event(event) — EventBus → EventBroker 路由到本通道
+    └→ 提取 event.get("sender_id") / ("sender_name") / ("content")
+        └→ _dispatch_incoming(sender_id, sender_name, content)
+            │
+            ├─ sender_id 在 _pending_ask 中？
+            │   └→ 是: 该消息是 ask_user 的回答
+            │       → broker.answer(pending_req, content)，结束
+            │       → 迟到的回答（请求已结束）记日志丢弃
+            │
+            ├─ sender_id 在 _active_by_sender 中？
+            │   └→ 是: 当前有任务在处理 → 回复"请稍候再发送新消息"
+            │
+            └─ 否: 新起 worker 线程 _run_agent()
 ```
 
 ### Worker 线程流程

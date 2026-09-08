@@ -9,6 +9,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, Optional
 
+from modules.events.base import EventBase
+
 
 # ── Data Models ────────────────────────────────────────────────────────────
 
@@ -233,3 +235,14 @@ class ChannelAdapter(ABC):
     def clear_context(self) -> str:
         """清除本通道会话历史并开启新会话（clear_context 工具的落点）。"""
         ...
+
+    # ── 外部事件处理器入口（EventBroker 路由落点）─────────────────────
+
+    def handle_event(self, event: EventBase) -> None:
+        """处理经 EventBroker 路由而来的外部世界事件（如微信消息事件）。
+
+        默认不处理任何事件；需要接收外部事件输入的通道覆写此方法。
+        生产者（轮询线程/定时器线程）只负责感知并 publish 事件，本方法
+        是"谁来处理"的解耦落点 —— 路由决策在 EventBroker 一处。
+        """
+        return None

@@ -4,10 +4,10 @@ WeChat iLinkBot channel adapter.
 Runs a background polling thread that calls getupdates() in a loop,
 broadcasts incoming messages via SSE, and provides a send() method.
 
-Each incoming text message is routed to this channel's private runtime:
-pending ask_user answers go to the broker, messages from a sender with an
-active request get a busy hint, otherwise a worker thread runs the private
-orchestrator and sends the final result back to the sender.
+感知解耦：轮询线程只负责"感知 + 记录 + 广播"，随后把每条消息封装为
+WechatEvent 投递到 EventBus，由 EventBroker 按事件类型路由回本通道的
+handle_event() 处理（待回答提问→broker.answer / 任务进行中→忙碌提示 /
+新请求→worker 跑私有编排器并回发结果）。生产者不再直接决定处理流程。
 """
 
 import json
@@ -28,6 +28,7 @@ from modules.channels.store import (
     save_message,
     update_session_status,
 )
+from modules.events import EventBase, WechatEvent, get_event_bus
 from imChannels.wechat.authenticator import WeChatAuthenticator
 from imChannels.wechat.ilink_client import ILinkBotsClient
 from modules.utils.logger import log_error, log_info, log_tool_call
@@ -352,7 +353,28 @@ class WeChatChannel(ChannelAdapter):
             f"{content[:80]}"
         )
 
-        # Route to the channel's private agent runtime
+        # 感知解耦：封装为 WechatEvent 投递到外部事件总线，
+        # 由 EventBroker 路由到本通道 handle_event()（或未来的 Thinking Channel）
+        get_event_bus().publish(
+            WechatEvent(
+                sender_id=sender_id,
+                sender_name=sender_name,
+                content=content,
+                context_token=context_token,
+                raw=update,
+            )
+        )
+
+    # ── 外部事件处理器（EventBroker 路由落点）─────────────────────────
+
+    def handle_event(self, event: EventBase) -> None:
+        """EventBroker 分发入口：微信消息事件 → 按发送方状态路由处理。"""
+        if self.runtime is None:
+            log_error("[WeChat] Runtime not assembled — dropping agent processing")
+            return
+        sender_id = event.get("sender_id", "") or ""
+        sender_name = event.get("sender_name", "") or ""
+        content = event.get("content", "") or ""
         self._dispatch_incoming(sender_id, sender_name, content)
 
     # ── Agent dispatch（私有 runtime 路由）─────────────────────────────

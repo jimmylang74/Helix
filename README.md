@@ -52,6 +52,7 @@
 - **配置化意图体系**: 内置 generic 兜底意图，PPT 生成、代码生成等意图在 `Helix.json` 中配置（含规划/节点执行/总结各阶段提示词），可通过 Web 控制台动态增改
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
 - **多通道接入**: 每个通道（Web 快速测试 / 微信 iLinkBot）持有独立的私有 agent 运行时（编排器 + 工具注册表 + 提问 broker），LLM 只能触达所在通道的工具；通道三件套工具（`ask_user` / `get_context` / `clear_context`）按通道适配落点
+- **外部事件输入总线**: 定时器 / IM 轮询 / 未来 Webhook/MCP/邮件等外部事件源统一投递到 `modules/events/` 输入事件总线（EventBus，非阻塞发布 + 每订阅者独立消费线程），由 EventBroker 按事件类型（`cron.timer` / `wechat.message`）路由到对应通道处理器 `handle_event`——事件源与处理方完全解耦，新增事件源或切换处理方只需在组合根注册，生产端零改动
 - **定时任务系统**: Helix 自维护调度器（独立于系统 crond），支持 daily/weekly/monthly 触发与 system（Shell 命令）/ agent（智能体执行）两类任务；任务定义存于 `db/cron.json`（手工编辑自动热重载），运行结果写入 `db/cron.db`（SQLite）；Web 控制台可视化管理，LLM 可经全局共享的 cron 工具自主增删改查任务
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
 - **多LLM支持**: 通过 [ai_engine](ai_engine/) 子模块统一接入，支持 Ollama / OpenAI / Anthropic / Gemini / DeepSeek / Groq / Together / Mistral 等 10+ 提供商，Web 控制台动态切换
@@ -248,6 +249,11 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │   │       ├── store.py       #       任务定义 (db/cron.json) + 运行结果 (db/cron.db SQLite)
 │   │       ├── scheduler.py   #       CronScheduler 调度线程 (tick 扫描/mtime 热重载/不回补)
 │   │       └── channel.py     #       CronChannel 适配器 (私有 agent 运行时, 不注册三件套工具)
+│   ├── events/                #   外部事件输入总线 (事件源/路由/处理解耦)
+│   │   ├── base.py            #     EventBase + TimerEvent/WechatEvent 子类
+│   │   ├── bus.py             #     EventBus 非阻塞发布/订阅 + get_event_bus 单例
+│   │   ├── broker.py          #     EventBroker 按事件类型路由 + get_event_broker 单例
+│   │   └── __init__.py        #     公共 API 导出
 │   ├── host/                  #   host 适配层 (注入实现)
 │   │   ├── ai_engine_backend.py #   LLMBackend 实现 (ai_engine 接入)
 │   │   ├── config_builder.py  #     编排配置构建

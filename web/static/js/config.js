@@ -1023,6 +1023,7 @@ async function loadCronTasks() {
     startCronClock(result.server_time);
     cronTasksCache = result.tasks || [];
     renderCronTasks(cronTasksCache, result.next_runs || {});
+    renderCronOnceTasks(cronTasksCache, result.next_runs || {});
     cronOutputChannelsCache = result.output_channels || [];
     renderCronOutputChannelOptions();
 }
@@ -1095,11 +1096,12 @@ function cronScheduleText(task) {
 
 function renderCronTasks(tasks, nextRuns) {
     const tbody = document.getElementById('cronTasksTable');
-    if (!tasks.length) {
+    const regular = tasks.filter(t => t.repeat !== 'once');
+    if (!regular.length) {
         tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.cron.noTasks') + '</td></tr>';
         return;
     }
-    const sorted = [...tasks].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    const sorted = [...regular].sort((a, b) => (a.time || '').localeCompare(b.time || ''));
     tbody.innerHTML = sorted.map(t => {
         const enabled = t.enabled !== false;
         const typeLabel = t.task_type === 'agent' ? __('config.cron.typeAgentShort') : __('config.cron.typeSystemShort');
@@ -1113,6 +1115,41 @@ function renderCronTasks(tasks, nextRuns) {
             <td>
                 <button class="btn btn-sm btn-outline" onclick="editCronTask('${t.id}')">${__('config.cron.edit')}</button>
                 <button class="btn btn-sm btn-outline" onclick="toggleCronTask('${t.id}', ${!enabled})">${enabled ? __('config.cron.disableAction') : __('config.cron.enableAction')}</button>
+                <button class="btn btn-sm btn-outline" onclick="showCronResults('${t.id}')">${__('config.cron.viewResults')}</button>
+                <button class="btn btn-sm btn-danger" onclick="deleteCronTask('${t.id}')">${__('config.mcp.delete')}</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function renderCronOnceTasks(tasks, nextRuns) {
+    const tbody = document.getElementById('cronOnceTasksTable');
+    if (!tbody) return;
+    const onceTasks = tasks.filter(t => t.repeat === 'once');
+    if (!onceTasks.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">' + __('config.cron.noOnceTasks') + '</td></tr>';
+        return;
+    }
+    const sorted = [...onceTasks].sort((a, b) => {
+        const aDone = a.enabled === false ? 1 : 0;
+        const bDone = b.enabled === false ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        return String(a.run_at || '').localeCompare(String(b.run_at || ''));
+    });
+    tbody.innerHTML = sorted.map(t => {
+        const active = t.enabled !== false;
+        const typeLabel = t.task_type === 'agent' ? __('config.cron.typeAgentShort') : __('config.cron.typeSystemShort');
+        const statusKey = active ? 'oncePending' : 'onceCompleted';
+        const badgeCls = active ? 'badge-success' : 'badge-secondary';
+        return `
+        <tr>
+            <td><strong>${t.title}</strong><br><small class="text-muted">${t.description}</small></td>
+            <td>${t.run_at || '-'}</td>
+            <td><span class="badge badge-info">${typeLabel}</span></td>
+            <td><span class="badge ${badgeCls}">${__('config.cron.' + statusKey)}</span></td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="editCronTask('${t.id}')">${__('config.cron.edit')}</button>
+                <button class="btn btn-sm btn-outline" onclick="toggleCronTask('${t.id}', ${!active})">${active ? __('config.cron.disableAction') : __('config.cron.enableAction')}</button>
                 <button class="btn btn-sm btn-outline" onclick="showCronResults('${t.id}')">${__('config.cron.viewResults')}</button>
                 <button class="btn btn-sm btn-danger" onclick="deleteCronTask('${t.id}')">${__('config.mcp.delete')}</button>
             </td>
@@ -1146,6 +1183,7 @@ function showAddCronTask() {
     document.getElementById('cronTitle').value = '';
     document.getElementById('cronTime').value = '';
     document.getElementById('cronRepeat').value = 'daily';
+    document.getElementById('cronRunAt').value = '';
     document.getElementById('cronWeekday').value = '0';
     document.getElementById('cronDayOfMonth').value = 1;
     document.getElementById('cronType').value = 'system';
@@ -1165,6 +1203,7 @@ function editCronTask(id) {
     document.getElementById('cronTitle').value = t.title || '';
     document.getElementById('cronTime').value = t.time || '';
     document.getElementById('cronRepeat').value = t.repeat || 'daily';
+    document.getElementById('cronRunAt').value = t.run_at ? String(t.run_at).replace(' ', 'T').slice(0, 16) : '';
     document.getElementById('cronWeekday').value = String(t.weekday ?? 0);
     document.getElementById('cronDayOfMonth').value = t.day_of_month ?? 1;
     document.getElementById('cronType').value = t.task_type || 'system';
@@ -1183,6 +1222,9 @@ function closeCronTaskModal() {
 
 function onCronRepeatChange() {
     const repeat = document.getElementById('cronRepeat').value;
+    const isOnce = repeat === 'once';
+    document.getElementById('cronTimeGroup').style.display = isOnce ? 'none' : 'block';
+    document.getElementById('cronRunAtGroup').style.display = isOnce ? 'block' : 'none';
     document.getElementById('cronWeekdayGroup').style.display = repeat === 'weekly' ? 'block' : 'none';
     document.getElementById('cronDayOfMonthGroup').style.display = repeat === 'monthly' ? 'block' : 'none';
 }
@@ -1196,22 +1238,32 @@ function onCronTypeChange() {
 async function saveCronTask() {
     const title = document.getElementById('cronTitle').value.trim();
     const time = document.getElementById('cronTime').value.trim();
+    const repeat = document.getElementById('cronRepeat').value;
+    const runAt = document.getElementById('cronRunAt').value.replace('T', ' ').trim();
     const description = document.getElementById('cronDescription').value.trim();
     if (!title) { showToast(__('config.cron.titleRequired'), 'error'); return; }
-    if (!/^\d{1,2}:\d{2}$/.test(time)) { showToast(__('config.cron.invalidTime'), 'error'); return; }
+    if (repeat === 'once') {
+        if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(runAt)) { showToast(__('config.cron.invalidRunAt'), 'error'); return; }
+    } else {
+        if (!/^\d{1,2}:\d{2}$/.test(time)) { showToast(__('config.cron.invalidTime'), 'error'); return; }
+    }
     if (!description) { showToast(__('config.cron.descRequired'), 'error'); return; }
 
     const params = {
         title,
-        time,
-        repeat: document.getElementById('cronRepeat').value,
-        weekday: parseInt(document.getElementById('cronWeekday').value, 10),
-        day_of_month: parseInt(document.getElementById('cronDayOfMonth').value, 10),
+        repeat,
         task_type: document.getElementById('cronType').value,
         description,
         enabled: document.getElementById('cronEnabled').checked,
         output_channels: getSelectedIntents('cronOutputChannelsCheckboxes'),
     };
+    if (repeat === 'once') {
+        params.run_at = runAt;
+    } else {
+        params.time = time;
+        params.weekday = parseInt(document.getElementById('cronWeekday').value, 10);
+        params.day_of_month = parseInt(document.getElementById('cronDayOfMonth').value, 10);
+    }
 
     const result = editingCronId
         ? await apiCall('cron.update', { id: editingCronId, ...params })

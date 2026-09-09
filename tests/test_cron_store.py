@@ -44,6 +44,14 @@ _VALID_DAILY = {
     "description": "echo backup",
 }
 
+_VALID_ONCE = {
+    "title": "一次性报告",
+    "repeat": "once",
+    "run_at": "2026-09-15 14:00",
+    "task_type": "system",
+    "description": "echo done",
+}
+
 
 # ── Field validation ──────────────────────────────────────────────────────
 
@@ -113,6 +121,47 @@ class TestValidateFields:
         from modules.channels.cron.store import CronValidationError, validate_fields
         with pytest.raises(CronValidationError):
             validate_fields(dict(_VALID_DAILY, repeat="monthly", day_of_month=32))
+
+    # ── once 一次性任务 ───────────────────────────────────────────────
+
+    def test_once_normalizes_fields(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(dict(_VALID_ONCE))
+        assert f["repeat"] == "once"
+        assert f["run_at"] == "2026-09-15 14:00"
+        assert f["time"] is None
+        assert f["weekday"] is None
+        assert f["day_of_month"] is None
+
+    def test_once_accepts_run_at_with_seconds(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(dict(_VALID_ONCE, run_at="2026-09-15 14:00:30"))
+        assert f["run_at"] == "2026-09-15 14:00:30"
+
+    def test_once_requires_run_at(self):
+        from modules.channels.cron.store import CronValidationError, validate_fields
+        with pytest.raises(CronValidationError):
+            validate_fields(dict(_VALID_ONCE, run_at=""))
+        with pytest.raises(CronValidationError):
+            validate_fields({k: v for k, v in _VALID_ONCE.items() if k != "run_at"})
+
+    def test_once_bad_run_at_format_raises(self):
+        from modules.channels.cron.store import CronValidationError, validate_fields
+        for bad in ("2026-9-15 14:00", "2026-09-15 25:00", "2026-09-15", "9/15/2026 14:00", "abc"):
+            with pytest.raises(CronValidationError):
+                validate_fields(dict(_VALID_ONCE, run_at=bad))
+
+    def test_once_does_not_require_time(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields({k: v for k, v in _VALID_ONCE.items() if k != "time"})
+        assert f["repeat"] == "once"
+        assert f["run_at"] == "2026-09-15 14:00"
+
+    def test_once_ignores_weekday_and_day_of_month(self):
+        from modules.channels.cron.store import validate_fields
+        f = validate_fields(dict(_VALID_ONCE, weekday=3, day_of_month=9))
+        assert f["weekday"] is None
+        assert f["day_of_month"] is None
 
     # ── output_channels 规范化 ────────────────────────────────────────
 
@@ -244,6 +293,52 @@ class TestTaskCrud:
         tasks = store_mod.load_tasks()
         assert tasks[0]["output_channels"] == []
         assert tasks[0]["title"] == "老任务"
+
+    # ── once 一次性任务 CRUD ─────────────────────────────────────────
+
+    def test_create_once_roundtrip(self):
+        from modules.channels.cron.store import create_task, get_task
+        task = create_task(dict(_VALID_ONCE))
+        assert task["id"].startswith("cron_")
+        assert task["repeat"] == "once"
+        assert task["run_at"] == "2026-09-15 14:00"
+        fetched = get_task(task["id"])
+        assert fetched is not None
+        assert fetched["run_at"] == "2026-09-15 14:00"
+        assert fetched["enabled"] is True
+
+    def test_disable_task_disables_and_is_idempotent(self):
+        from modules.channels.cron.store import create_task, disable_task, get_task
+        task = create_task(dict(_VALID_ONCE))
+        assert disable_task(task["id"]) is True
+        fetched = get_task(task["id"])
+        assert fetched is not None
+        assert fetched["enabled"] is False
+        assert disable_task(task["id"]) is True
+
+    def test_disable_task_missing_id_returns_false(self):
+        from modules.channels.cron.store import disable_task
+        assert disable_task("ghost") is False
+
+    def test_update_once_to_daily_clears_run_at(self):
+        from modules.channels.cron.store import create_task, update_task
+        task = create_task(dict(_VALID_ONCE))
+        switched = update_task(task["id"], {"repeat": "daily", "time": "07:00"})
+        assert switched["repeat"] == "daily"
+        assert switched["time"] == "07:00"
+        assert switched["run_at"] is None
+
+    def test_update_daily_to_once_requires_run_at(self):
+        from modules.channels.cron.store import CronValidationError, create_task, update_task
+        task = create_task(dict(_VALID_DAILY))
+        with pytest.raises(CronValidationError):
+            update_task(task["id"], {"repeat": "once"})
+        switched = update_task(
+            task["id"], {"repeat": "once", "run_at": "2026-12-01 10:00"}
+        )
+        assert switched["repeat"] == "once"
+        assert switched["run_at"] == "2026-12-01 10:00"
+        assert switched["time"] is None
 
 
 # ── ensure_schema 迁移 (output_channels) ────────────────────────────────
@@ -412,3 +507,35 @@ class TestSchedule:
         assert describe_schedule(
             {"time": "09:30", "repeat": "monthly", "day_of_month": 15}
         ) == "每月15日 09:30"
+
+    # ── once 一次性任务调度 ───────────────────────────────────────────
+
+    def test_once_future_returns_run_at(self):
+        from modules.channels.cron.store import next_occurrence
+        task = {"repeat": "once", "run_at": "2026-09-15 14:00"}
+        nxt = next_occurrence(task, datetime(2026, 9, 10, 8, 0))
+        assert nxt == datetime(2026, 9, 15, 14, 0)
+
+    def test_once_past_returns_none(self):
+        from modules.channels.cron.store import next_occurrence
+        task = {"repeat": "once", "run_at": "2026-09-15 14:00"}
+        assert next_occurrence(task, datetime(2026, 9, 15, 15, 0)) is None
+        assert next_occurrence(task, datetime(2026, 9, 15, 14, 0)) is None
+
+    def test_once_run_at_with_seconds(self):
+        from modules.channels.cron.store import next_occurrence
+        task = {"repeat": "once", "run_at": "2026-09-15 14:00:30"}
+        nxt = next_occurrence(task, datetime(2026, 9, 15, 14, 0, 0))
+        assert nxt == datetime(2026, 9, 15, 14, 0, 30)
+
+    def test_once_missing_run_at_returns_none(self):
+        from modules.channels.cron.store import next_occurrence
+        task = {"repeat": "once", "run_at": ""}
+        assert next_occurrence(task, datetime(2026, 9, 10)) is None
+
+    def test_describe_schedule_once(self):
+        from modules.channels.cron.store import describe_schedule
+        assert describe_schedule(
+            {"repeat": "once", "run_at": "2026-09-15 14:00"}
+        ) == "一次性 2026-09-15 14:00"
+        assert describe_schedule({"repeat": "once", "run_at": ""}) == "一次性"

@@ -23,10 +23,14 @@ from typing import Any, Dict, List, Optional
 from modules.utils.paths import project_path
 from modules.utils.logger import log_error, log_info, log_warning
 
-VALID_REPEATS = ("daily", "weekly", "monthly")
+VALID_REPEATS = ("daily", "weekly", "monthly", "once")
 VALID_TASK_TYPES = ("system", "agent")
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+_DATETIME_RE = re.compile(
+    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]) "
+    r"(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$"
+)
 
 _tasks_lock = threading.RLock()
 _tasks_path_cache: Optional[str] = None
@@ -63,7 +67,8 @@ def _results_db_path() -> str:
 def validate_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
     """完整校验并规范化一个任务的全部字段，返回仅含合法键的规范化字典。
 
-    必填：title / time / repeat / task_type / description；
+    必填：title / repeat / task_type / description；
+    repeat 非 once 时必填 time（HH:MM），once 时必填 run_at（YYYY-MM-DD HH:MM)；
     条件必填：weekly 需 weekday（0-6），monthly 需 day_of_month（1-31）。
     """
     normalized: Dict[str, Any] = {}
@@ -73,11 +78,6 @@ def validate_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
         raise CronValidationError("title 不能为空")
     normalized["title"] = title
 
-    time_str = str(fields.get("time", "")).strip()
-    if not _TIME_RE.match(time_str):
-        raise CronValidationError("time 格式必须为 HH:MM（24 小时制），如 09:30")
-    normalized["time"] = time_str
-
     repeat = str(fields.get("repeat", "")).strip().lower()
     if repeat not in VALID_REPEATS:
         raise CronValidationError(
@@ -85,36 +85,54 @@ def validate_fields(fields: Dict[str, Any]) -> Dict[str, Any]:
         )
     normalized["repeat"] = repeat
 
-    raw_weekday = fields.get("weekday")
-    if raw_weekday not in (None, ""):
-        try:
-            wd = int(raw_weekday)
-        except (TypeError, ValueError):
-            raise CronValidationError("weekday 必须为 0-6 的整数（0=周一）")
-        if not 0 <= wd <= 6:
-            raise CronValidationError("weekday 必须为 0-6 的整数（0=周一）")
-        normalized["weekday"] = wd
-    else:
+    if repeat == "once":
+        run_at = str(fields.get("run_at", "")).strip()
+        if not run_at:
+            raise CronValidationError("repeat=once 时必须提供 run_at（格式 YYYY-MM-DD HH:MM）")
+        if not _DATETIME_RE.match(run_at):
+            raise CronValidationError(
+                "run_at 格式必须为 YYYY-MM-DD HH:MM 或 YYYY-MM-DD HH:MM:SS"
+            )
+        normalized["run_at"] = run_at
+        normalized["time"] = None
         normalized["weekday"] = None
-
-    raw_dom = fields.get("day_of_month")
-    if raw_dom not in (None, ""):
-        try:
-            dom = int(raw_dom)
-        except (TypeError, ValueError):
-            raise CronValidationError("day_of_month 必须为 1-31 的整数")
-        if not 1 <= dom <= 31:
-            raise CronValidationError("day_of_month 必须为 1-31 的整数")
-        normalized["day_of_month"] = dom
-    else:
         normalized["day_of_month"] = None
+    else:
+        time_str = str(fields.get("time", "")).strip()
+        if not _TIME_RE.match(time_str):
+            raise CronValidationError("time 格式必须为 HH:MM（24 小时制），如 09:30")
+        normalized["time"] = time_str
 
-    if repeat == "weekly" and normalized["weekday"] is None:
-        raise CronValidationError(
-            "repeat=weekly 时必须提供 weekday（0=周一…6=周日）"
-        )
-    if repeat == "monthly" and normalized["day_of_month"] is None:
-        raise CronValidationError("repeat=monthly 时必须提供 day_of_month（1-31）")
+        raw_weekday = fields.get("weekday")
+        if raw_weekday not in (None, ""):
+            try:
+                wd = int(raw_weekday)
+            except (TypeError, ValueError):
+                raise CronValidationError("weekday 必须为 0-6 的整数（0=周一）")
+            if not 0 <= wd <= 6:
+                raise CronValidationError("weekday 必须为 0-6 的整数（0=周一）")
+            normalized["weekday"] = wd
+        else:
+            normalized["weekday"] = None
+
+        raw_dom = fields.get("day_of_month")
+        if raw_dom not in (None, ""):
+            try:
+                dom = int(raw_dom)
+            except (TypeError, ValueError):
+                raise CronValidationError("day_of_month 必须为 1-31 的整数")
+            if not 1 <= dom <= 31:
+                raise CronValidationError("day_of_month 必须为 1-31 的整数")
+            normalized["day_of_month"] = dom
+        else:
+            normalized["day_of_month"] = None
+
+        if repeat == "weekly" and normalized["weekday"] is None:
+            raise CronValidationError(
+                "repeat=weekly 时必须提供 weekday（0=周一…6=周日）"
+            )
+        if repeat == "monthly" and normalized["day_of_month"] is None:
+            raise CronValidationError("repeat=monthly 时必须提供 day_of_month（1-31）")
 
     task_type = str(fields.get("task_type", "")).strip().lower()
     if task_type not in VALID_TASK_TYPES:
@@ -275,6 +293,8 @@ def update_task(task_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
                 continue
             merged = {**task, **patch}
             validated = validate_fields(merged)
+            if validated["repeat"] != "once":
+                validated["run_at"] = None
             if validated["repeat"] != "weekly":
                 validated["weekday"] = None
             if validated["repeat"] != "monthly":
@@ -303,6 +323,21 @@ def delete_task(task_id: str) -> bool:
         save_tasks(remaining)
         log_info(f"cron store: deleted task {task_id}")
         return True
+
+
+def disable_task(task_id: str) -> bool:
+    """将任务 enabled 设为 False，返回是否找到并修改。"""
+    with _tasks_lock:
+        tasks = load_tasks()
+        for i, task in enumerate(tasks):
+            if task["id"] == task_id:
+                if not task.get("enabled", True):
+                    return True
+                tasks[i] = {**task, "enabled": False, "updated_at": _now()}
+                save_tasks(tasks)
+                log_info(f"cron store: disabled one-shot task {task_id}")
+                return True
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -439,12 +474,26 @@ def next_occurrence(task: Dict[str, Any], after: datetime) -> Optional[datetime]
     - daily:  每天 HH:MM
     - weekly: 每周指定 weekday(0=周一…6=周日) HH:MM
     - monthly: 每月指定日（超出当月天数时取当月最后一天）HH:MM
+    - once:   run_at 指定的日期时间（仅一次）
     """
-    hh, mm = (int(x) for x in task["time"].split(":"))
+    hh, mm = (int(x) for x in task["time"].split(":")) if task.get("time") else (0, 0)
     repeat = task["repeat"]
 
     def _at(base_date) -> datetime:
         return base_date.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if repeat == "once":
+        run_at_str = task.get("run_at", "")
+        if not run_at_str:
+            return None
+        try:
+            run_at = datetime.strptime(run_at_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            try:
+                run_at = datetime.strptime(run_at_str, "%Y-%m-%d %H:%M")
+            except ValueError:
+                return None
+        return run_at if run_at > after else None
 
     if repeat == "daily":
         candidate = _at(after)
@@ -482,8 +531,11 @@ def next_occurrence(task: Dict[str, Any], after: datetime) -> Optional[datetime]
 
 
 def describe_schedule(task: Dict[str, Any]) -> str:
-    """人类可读的重复描述，如 '每天 09:30' / '每周三 09:30' / '每月15日 09:30'。"""
+    """人类可读的重复描述，如 '每天 09:30' / '每周三 09:30' / '每月15日 09:30' / '一次性 2026-09-15 14:00'。"""
     weekdays = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+    if task["repeat"] == "once":
+        run_at = task.get("run_at", "")
+        return f"一次性 {run_at}" if run_at else "一次性"
     if task["repeat"] == "daily":
         return f"每天 {task['time']}"
     if task["repeat"] == "weekly":
@@ -508,6 +560,7 @@ __all__ = [
     "create_task",
     "update_task",
     "delete_task",
+    "disable_task",
     "ensure_schema",
     "validate_fields",
     "tasks_mtime",

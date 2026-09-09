@@ -469,9 +469,14 @@ def _cron_list(params):
 
 def _cron_create(params):
     fields = params or {}
-    for required in ("title", "time", "repeat", "task_type", "description"):
+    for required in ("title", "repeat", "task_type", "description"):
         if not str(fields.get(required, "")).strip():
             raise ValueError(f"Missing '{required}' in params")
+    repeat = str(fields.get("repeat", "")).strip().lower()
+    if repeat != "once" and not str(fields.get("time", "")).strip():
+        raise ValueError("Missing 'time' in params")
+    if repeat == "once" and not str(fields.get("run_at", "")).strip():
+        raise ValueError("Missing 'run_at' in params (required for one-shot tasks)")
     task = cron_store.create_task(fields)
     _reload_scheduler_if_started()
     return {"success": True, "task": task}

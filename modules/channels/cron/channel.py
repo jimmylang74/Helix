@@ -173,6 +173,10 @@ class CronChannel(ChannelAdapter):
             f"({duration_ms}ms, result={record['result_id']})"
         )
 
+        if task.get("repeat") == "once":
+            store.disable_task(task["id"])
+            log_info(f"[cron] One-shot task {task['id']} disabled after completion")
+
         # 输出通道推送（尽力而为，失败仅记日志，不影响结果落库）
         channels = task.get("output_channels") or []
         if channels:

@@ -142,10 +142,14 @@ class CronScheduler:
                     f"({task['id']}, type={task['task_type']}) → EventBus"
                 )
                 get_event_bus().publish(TimerEvent(task=task))
-                with self._lock:
-                    nxt = store.next_occurrence(task, datetime.now())
-                    if nxt is not None:
-                        self._next_run[task_id] = nxt
+                if task.get("repeat") == "once":
+                    store.disable_task(task_id)
+                    log_info(f"[CronScheduler] One-shot task {task_id} disabled after fire")
+                else:
+                    with self._lock:
+                        nxt = store.next_occurrence(task, datetime.now())
+                        if nxt is not None:
+                            self._next_run[task_id] = nxt
             else:
                 log_info(f"[CronScheduler] Task {task_id} removed/disabled — skip")
 
@@ -160,6 +164,9 @@ class CronScheduler:
             nxt = store.next_occurrence(task, now)
             if nxt is not None:
                 self._next_run[task["id"]] = nxt
+            elif task.get("repeat") == "once":
+                store.disable_task(task["id"])
+                log_info(f"[CronScheduler] One-shot task {task['id']} missed — disabled")
         log_info(
             f"[CronScheduler] Rescheduled {len(self._next_run)} task(s) "
             f"(mtime={self._last_mtime:.0f})"

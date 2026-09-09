@@ -596,6 +596,29 @@
         </div>
     </div>
 
+    <!-- One-shot Task List -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.cron.onceTitle">一次性任务</h3>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.cron.colTitle">任务</th>
+                        <th data-i18n="config.cron.colRunAt">执行时刻</th>
+                        <th data-i18n="config.cron.colType">类型</th>
+                        <th data-i18n="config.cron.colStatus">状态</th>
+                        <th data-i18n="config.cron.colActions">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="cronOnceTasksTable">
+                    <tr><td colspan="5" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Add/Edit Cron Task Modal -->
     <div id="cronTaskModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeCronTaskModal()">
         <div style="background:white;border-radius:8px;padding:24px;max-width:600px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
@@ -605,9 +628,13 @@
                 <input type="text" id="cronTitle" class="form-control" placeholder="每日备份">
             </div>
             <div class="form-row">
-                <div class="form-group" style="flex:1;">
+                <div class="form-group" id="cronTimeGroup" style="flex:1;">
                     <label data-i18n="config.cron.fieldTime">触发时间 (HH:MM)</label>
                     <input type="text" id="cronTime" class="form-control" placeholder="09:30">
+                </div>
+                <div class="form-group" id="cronRunAtGroup" style="flex:1;display:none;">
+                    <label data-i18n="config.cron.fieldRunAt">执行时刻（一次性）</label>
+                    <input type="datetime-local" id="cronRunAt" class="form-control">
                 </div>
                 <div class="form-group" style="flex:1;">
                     <label data-i18n="config.cron.fieldRepeat">重复频率</label>
@@ -615,6 +642,7 @@
                         <option value="daily" data-i18n="config.cron.repeatDaily">每天</option>
                         <option value="weekly" data-i18n="config.cron.repeatWeekly">每周</option>
                         <option value="monthly" data-i18n="config.cron.repeatMonthly">每月</option>
+                        <option value="once" data-i18n="config.cron.repeatOnce">一次性</option>
                     </select>
                 </div>
             </div>

@@ -101,18 +101,23 @@ class CreateCronTool(BaseTool):
         "创建 Helix 定时任务。type 为 system 时 description 是要定时执行的 "
         "shell 命令；type 为 agent 时 description 是交给智能体执行的任务描述。"
         "repeat=daily 每天 time 执行；weekly 需给 weekday（0=周一…6=周日）；"
-        "monthly 需给 day_of_month（1-31）。"
+        "monthly 需给 day_of_month（1-31）；once 一次性任务需给 run_at"
+        "（YYYY-MM-DD HH:MM，执行后自动停用）。"
     )
     intents = ["*"]
     parameters = {
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "任务标题（用于展示）"},
-            "time": {"type": "string", "description": "执行时间点，HH:MM 24小时制，如 09:30"},
+            "time": {"type": "string", "description": "执行时间点，HH:MM 24小时制，如 09:30；one-shot 任务不需要"},
             "repeat": {
                 "type": "string",
-                "enum": ["daily", "weekly", "monthly"],
+                "enum": ["daily", "weekly", "monthly", "once"],
                 "description": "重复方式",
+            },
+            "run_at": {
+                "type": "string",
+                "description": "repeat=once 时必填：执行时刻，YYYY-MM-DD HH:MM，如 2026-09-15 14:00",
             },
             "weekday": {
                 "type": "integer",
@@ -146,6 +151,7 @@ class CreateCronTool(BaseTool):
         title: str = "",
         time: str = "",
         repeat: str = "",
+        run_at: str = "",
         weekday=None,
         day_of_month=None,
         task_type: str = "",
@@ -160,6 +166,7 @@ class CreateCronTool(BaseTool):
                 "title": title,
                 "time": time,
                 "repeat": repeat,
+                "run_at": run_at,
                 "weekday": weekday,
                 "day_of_month": day_of_month,
                 "task_type": task_type,
@@ -221,9 +228,10 @@ class ModifyCronTool(BaseTool):
             "time": {"type": "string", "description": "新时间点 HH:MM"},
             "repeat": {
                 "type": "string",
-                "enum": ["daily", "weekly", "monthly"],
+                "enum": ["daily", "weekly", "monthly", "once"],
                 "description": "新重复方式",
             },
+            "run_at": {"type": "string", "description": "one-shot 用：YYYY-MM-DD HH:MM"},
             "weekday": {"type": "integer", "description": "weekly 用：0-6"},
             "day_of_month": {"type": "integer", "description": "monthly 用：1-31"},
             "task_type": {"type": "string", "enum": ["system", "agent"]},
@@ -242,7 +250,7 @@ class ModifyCronTool(BaseTool):
         patch = {
             k: v for k, v in kwargs.items()
             if k in (
-                "title", "time", "repeat", "weekday", "day_of_month",
+                "title", "time", "repeat", "run_at", "weekday", "day_of_month",
                 "task_type", "description", "enabled", "output_channels",
             ) and v is not None
         }

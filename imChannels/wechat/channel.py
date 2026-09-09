@@ -524,6 +524,9 @@ class WeChatChannel(ChannelAdapter):
         # Detect + download actionable media (files & voice) to the download dir
         media_url, media_type = self._download_incoming_media(update)
 
+        if media_url:
+            content = f"{content}\n文件已下载: {media_url}"
+
         # Track last from_user_id for send()
         if sender_id:
             self._last_from_user_id = sender_id

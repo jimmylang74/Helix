@@ -10,6 +10,8 @@ Option B — 同一时刻只有一个 Running 节点 emit 流式事件到前端�
 """
 
 import json
+import os
+import re
 import threading
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -37,6 +39,17 @@ from HelixCore.prompts.task_graph_prompts import (
     COMMON_JSON_CONTRACT,
 )
 from HelixCore.utils.tokenizer import TokenEstimator, create_estimator_for_config
+
+
+# 会生成落盘文件的工具白名单（方案 A1：按工具名直接收集返回值中的路径）。
+# 新增此类工具时须在此登记，否则其产物不会进入 state["generated_files"]。
+FILE_GENERATING_TOOLS = {"save_code", "create_ppt", "image_download", "write_file"}
+
+# FileOps.write_file 的返回格式：f"File written: {file_path} ({len(content)} bytes)"
+_WRITE_FILE_OK_PREFIX = "File written: "
+_WRITE_FILE_PATH_RE = re.compile(
+    rf"^{re.escape(_WRITE_FILE_OK_PREFIX)}(.+?) \(\d+ bytes\)$"
+)
 
 
 class AgentOrchestrator:
@@ -865,6 +878,41 @@ class AgentOrchestrator:
         )
         return {"response": content}
 
+    def _collect_generated_files(
+        self, state: AgentState, name: str, result: Any
+    ) -> None:
+        """Collect files written by whitelisted tools into state["generated_files"].
+
+        方案 A1：白名单工具直接取返回值 —— save_code / create_ppt 返回绝对
+        路径，image_download 返回路径列表；write_file 返回固定格式文本
+        ("File written: <path> (N bytes)")，按格式提取。统一做真实文件
+        校验与去重，避免误报。
+        """
+        if name not in FILE_GENERATING_TOOLS:
+            return
+
+        if name == "write_file":
+            if not isinstance(result, str):
+                return
+            m = _WRITE_FILE_PATH_RE.match(result.strip())
+            if not m:
+                return
+            candidates = [m.group(1)]
+        elif isinstance(result, str):
+            candidates = [result]
+        elif isinstance(result, list):
+            candidates = [p for p in result if isinstance(p, str)]
+        else:
+            return
+
+        existing = set(state.get("generated_files", []))
+        for path in candidates:
+            if not path:
+                continue
+            if os.path.isfile(path) and path not in existing:
+                existing.add(path)
+                state.setdefault("generated_files", []).append(path)
+
     def _execute_tool_call(
         self,
         state: AgentState,
@@ -905,6 +953,7 @@ class AgentOrchestrator:
                 )
             else:
                 result_text = self._tools.call_tool(name, arguments)
+                self._collect_generated_files(state, name, result_text)
                 preview = (
                     result_text[:500] + "..."
                     if len(result_text) > 500

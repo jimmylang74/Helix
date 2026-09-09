@@ -18,3 +18,16 @@ PROJECT_ROOT = os.path.dirname(
 def project_path(*parts: str) -> str:
     """Join path parts onto PROJECT_ROOT."""
     return os.path.join(PROJECT_ROOT, *parts)
+
+
+def get_download_dir() -> str:
+    """Return the WeChat iLinkBot download directory as an absolute path.
+
+    Reads the ``channels.wechat.download_dir`` config value (relative to the
+    project root) and resolves it against PROJECT_ROOT so downloads always land
+    inside the project regardless of the current working directory.
+    """
+    from modules.config.config_manager import ConfigManager
+
+    rel = ConfigManager().get_wechat_download_dir()
+    return project_path(rel)

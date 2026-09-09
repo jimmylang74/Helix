@@ -11,10 +11,11 @@ handle_event() 处理（待回答提问→broker.answer / 任务进行中→忙�
 """
 
 import json
+import os
 import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from modules.channels.base import ChannelAdapter, ChannelMessage, ChannelStatus
 from modules.channels import events
@@ -30,8 +31,17 @@ from modules.channels.store import (
 )
 from modules.events import EventBase, WechatEvent, get_event_bus
 from imChannels.wechat.authenticator import WeChatAuthenticator
-from imChannels.wechat.ilink_client import ILinkBotsClient
+from imChannels.wechat.ilink_client import (
+    ILinkBotsClient,
+    MEDIA_TYPE_FILE,
+    MEDIA_TYPE_IMAGE,
+    MEDIA_TYPE_VIDEO,
+    MEDIA_TYPE_VOICE,
+    parse_media_item,
+)
+from imChannels.wechat.crypto import aes_encrypt, generate_aes_key
 from modules.utils.logger import log_error, log_info, log_tool_call
+from modules.utils.paths import get_download_dir
 
 
 def _extract_text(message: Dict[str, Any]) -> str:
@@ -50,6 +60,50 @@ def _extract_text(message: Dict[str, Any]) -> str:
         if item_type == 5:
             return "[视频]"
     return "[空消息]"
+
+
+def _media_type_str(media_type: int) -> str:
+    """Map an iLink media type code to a readable channel msg_type."""
+    if media_type == MEDIA_TYPE_VOICE:
+        return "voice"
+    if media_type == MEDIA_TYPE_FILE:
+        return "file"
+    if media_type == MEDIA_TYPE_IMAGE:
+        return "image"
+    if media_type == MEDIA_TYPE_VIDEO:
+        return "video"
+    return "text"
+
+
+def _media_msg_type(media_type: Optional[str]) -> Optional[str]:
+    """Return the ``msg_type`` label derived from an incoming download."""
+    return media_type or None
+
+
+def _safe_media_name(key: str, media_type: int) -> str:
+    """Build a local filename for an incoming media item.
+
+    Uses the original filename when safe; otherwise falls back to a
+    timestamped name with the item's media-type extension.
+    """
+    base = os.path.basename(str(key or "").strip())
+    if base and base not in (".", ".."):
+        return "".join(c for c in base if c not in '\\/:*?"<>|')
+    ext = _media_extension(media_type)
+    return f"media_{int(time.time())}{ext}"
+
+
+def _media_extension(media_type: int) -> str:
+    if media_type == MEDIA_TYPE_VOICE:
+        return ".amr"
+    if media_type == MEDIA_TYPE_FILE:
+        return ".bin"
+    return ".dat"
+
+
+def _estimate_voice_seconds(byte_count: int) -> int:
+    """Rough voice duration in seconds (~2 KB/s at common WeChat AMR rates)."""
+    return max(1, round(byte_count / 2048))
 
 
 class WeChatChannel(ChannelAdapter):
@@ -186,7 +240,168 @@ class WeChatChannel(ChannelAdapter):
 
         return result
 
-    # ── Messages ───────────────────────────────────────────────────────
+    # ── Media send / download ──────────────────────────────────────────
+
+    def send_file(self, file_path: str, to_user_id: Optional[str] = None,
+                  context_token: Optional[str] = None,
+                  display_name: str = "") -> Dict[str, Any]:
+        """Upload and send a file (document) to ``to_user_id``.
+
+        ``file_path`` is typically an LLM-produced output under ``output/``.
+        The file bytes are read, encrypted, uploaded to the media CDN, then a
+        ``sendmessage`` with a type-4 ``file_item`` referencing the media_id
+        is sent. Returns the iLink API response or an error dict.
+        """
+        to_user_id = to_user_id or self._last_from_user_id or get_to_user_id("wechat")
+        context_token = context_token or get_context_token("wechat")
+
+        if not to_user_id:
+            return {"error": "No to_user_id available"}
+        if not context_token:
+            return {"error": "No context_token available"}
+        if not os.path.isfile(file_path):
+            return {"error": f"File not found: {file_path}"}
+
+        with open(file_path, "rb") as fp:
+            raw = fp.read()
+
+        media_id, err = self._upload_and_get_media_id(
+            file_path, MEDIA_TYPE_FILE, raw, to_user_id
+        )
+        if err:
+            return {"error": err}
+
+        name = display_name or os.path.basename(file_path)
+        item = {
+            "type": MEDIA_TYPE_FILE,
+            "file_item": {
+                "file_name": name,
+                "file_size": len(raw),
+                "media_id": media_id,
+                "file_url": "",
+            },
+        }
+        return self._send_media_message(item, to_user_id, context_token, msg_type="file")
+
+    def send_voice(self, file_path: str, to_user_id: Optional[str] = None,
+                   context_token: Optional[str] = None,
+                   display_name: str = "") -> Dict[str, Any]:
+        """Upload and send a voice message to ``to_user_id``.
+
+        ``file_path`` is typically an audio file produced under ``output/``.
+        Sends a type-3 ``voice_item`` carrying the uploaded media_id.
+        """
+        to_user_id = to_user_id or self._last_from_user_id or get_to_user_id("wechat")
+        context_token = context_token or get_context_token("wechat")
+
+        if not to_user_id:
+            return {"error": "No to_user_id available"}
+        if not context_token:
+            return {"error": "No context_token available"}
+        if not os.path.isfile(file_path):
+            return {"error": f"File not found: {file_path}"}
+
+        with open(file_path, "rb") as fp:
+            raw = fp.read()
+
+        media_id, err = self._upload_and_get_media_id(
+            file_path, MEDIA_TYPE_VOICE, raw, to_user_id
+        )
+        if err:
+            return {"error": err}
+
+        name = display_name or os.path.basename(file_path)
+        item = {
+            "type": MEDIA_TYPE_VOICE,
+            "voice_item": {
+                "voice_code": 4,
+                "play_length": _estimate_voice_seconds(len(raw)),
+                "media_id": media_id,
+                "voice_url": "",
+            },
+        }
+        return self._send_media_message(item, to_user_id, context_token, msg_type="voice")
+
+    def _upload_and_get_media_id(self, file_path: str, media_type: int,
+                                 raw: bytes, to_user_id: str) -> Tuple[Optional[str], str]:
+        """Encrypt + upload a file to CDN, returning ``(media_id, error)``."""
+        aes_key = generate_aes_key()
+        encrypted = aes_encrypt(raw, aes_key)
+        filekey = os.path.basename(file_path)
+
+        upload_resp = self._client.getuploadurl(
+            filekey=filekey,
+            media_type=media_type,
+            to_user_id=to_user_id,
+            file_size=len(raw),
+            aes_key=aes_key,
+            file_md5=self._client._md5(encrypted),
+            raw_file_md5=self._client._md5(raw),
+        )
+        upload_param = upload_resp.get("upload_param") or upload_resp.get("data") or {}
+        media_id = (
+            upload_resp.get("media_id")
+            or upload_param.get("media_id")
+            or upload_param.get("file_id")
+            or ""
+        )
+        if not media_id and not upload_param:
+            return None, f"getuploadurl returned no upload_param: {list(upload_resp.keys())}"
+
+        if upload_param:
+            self._client.upload_media(upload_param, aes_key, raw)
+        return media_id or upload_param.get("media_id", ""), ""
+
+    def _send_media_message(self, item: Dict[str, Any], to_user_id: str,
+                            context_token: str, msg_type: str) -> Dict[str, Any]:
+        """Send a media item via sendmessage and persist/broadcast it."""
+        result = self._client.send_media(
+            to_user_id=to_user_id,
+            context_token=context_token,
+            item_list=[item],
+        )
+        msg_id = f"out_{uuid.uuid4().hex[:12]}"
+        save_message(
+            channel="wechat",
+            direction="outgoing",
+            message_id=msg_id,
+            content=item.get("file_item", {}).get("file_name")
+            or item.get("voice_item", {}).get("media_id", ""),
+            msg_type=msg_type,
+            media_type=item.get("type"),
+            context_token=context_token,
+        )
+        events.broadcast("wechat", {
+            "type": "message",
+            "direction": "outgoing",
+            "message_id": msg_id,
+            "content": _extract_text({"item_list": [item]}),
+            "msg_type": msg_type,
+            "context_token": context_token,
+            "timestamp": _now(),
+        })
+        return result
+
+    def _download_incoming_media(self, update: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+        """Download actionable incoming media (file/voice) to the download dir.
+
+        Returns ``(media_url, media_type)`` where ``media_url`` is the local
+        absolute path on success (``None`` otherwise).
+        """
+        for item in update.get("item_list") or []:
+            media = parse_media_item(item)
+            if not media or media["type"] not in (MEDIA_TYPE_FILE, MEDIA_TYPE_VOICE):
+                continue
+            safe_name = _safe_media_name(media["key"], media["type"])
+            dest = os.path.join(get_download_dir(), safe_name)
+            try:
+                self._client.download_media(media, dest)
+                log_info(f"[WeChat] Saved incoming {media['type']} media to {dest}")
+                return dest, _media_type_str(media["type"])
+            except Exception as e:
+                log_error(f"[WeChat] Failed to download incoming media {media.get('key')}: {e}")
+                return None, None
+        return None, None
 
     def get_messages(self, limit: int = 50) -> List[ChannelMessage]:
         raw = store_get_messages("wechat", limit)
@@ -306,6 +521,9 @@ class WeChatChannel(ChannelAdapter):
         message_type = update.get("message_type", 1)
         timestamp_ms = update.get("create_time_ms")
 
+        # Detect + download actionable media (files & voice) to the download dir
+        media_url, media_type = self._download_incoming_media(update)
+
         # Track last from_user_id for send()
         if sender_id:
             self._last_from_user_id = sender_id
@@ -329,7 +547,9 @@ class WeChatChannel(ChannelAdapter):
             sender_id=sender_id,
             sender_name=sender_name,
             content=content,
-            msg_type="text",
+            msg_type=_media_msg_type(media_type) or "text",
+            media_url=media_url,
+            media_type=media_type,
             context_token=context_token,
             raw_data=update,
             timestamp=timestamp,
@@ -343,7 +563,9 @@ class WeChatChannel(ChannelAdapter):
             "sender_id": sender_id,
             "sender_name": sender_name,
             "content": content,
-            "msg_type": "text",
+            "msg_type": _media_msg_type(media_type) or "text",
+            "media_url": media_url,
+            "media_type": media_type,
             "context_token": context_token,
             "timestamp": timestamp,
         })

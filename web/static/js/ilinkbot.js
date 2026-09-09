@@ -6,6 +6,35 @@ const ilinkbot = {
         const result = await apiCall('imbot.wechat.status');
         if (result.success) this._updateUI(result.status);
         this._connectSSE();
+        this._loadConfig();
+    },
+
+    async _loadConfig() {
+        const result = await apiCall('imbot.wechat.get_config');
+        if (result.config) {
+            document.getElementById('ilinkbotDownloadDir').value = result.config.download_dir || 'download';
+            document.getElementById('ilinkbotDownloadDirAbs').textContent = result.config.download_dir_abs || '';
+            if (result.config.poll_timeout) {
+                document.getElementById('ilinkbotPollTimeout').value = result.config.poll_timeout;
+            }
+        }
+    },
+
+    async saveConfig() {
+        const downloadDir = document.getElementById('ilinkbotDownloadDir').value.trim();
+        const pollTimeout = parseInt(document.getElementById('ilinkbotPollTimeout').value) || 50;
+        const result = await apiCall('imbot.wechat.set_config', {
+            download_dir: downloadDir,
+            poll_timeout: pollTimeout,
+        });
+        if (result.success) {
+            showToast(__('config.ilinkbot.configSaved'), 'success');
+            if (result.config) {
+                document.getElementById('ilinkbotDownloadDirAbs').textContent = result.config.download_dir_abs || '';
+            }
+        } else {
+            showToast(result.error || __('config.ilinkbot.configSaveFailed'), 'error');
+        }
     },
 
     async requestQR() {
@@ -107,6 +136,38 @@ const ilinkbot = {
             this._appendMessage({ direction: 'outgoing', content, msg_type: 'text', timestamp: new Date().toISOString() });
         } else {
             showToast(result.error || __('config.ilinkbot.sendFailed'), 'error');
+        }
+    },
+
+    async sendFile(inputEl) {
+        const file = inputEl.files && inputEl.files[0];
+        if (!file) return;
+
+        const filePath = '/output/' + file.name;
+        const btn = inputEl.closest('label');
+        const origText = btn.querySelector('span').textContent;
+        btn.querySelector('span').textContent = __('config.ilinkbot.sendingFile');
+        btn.disabled = true;
+
+        try {
+            const result = await apiCall('imbot.wechat.send_file', { file_path: filePath });
+            if (result.success) {
+                this._appendMessage({
+                    direction: 'outgoing',
+                    content: '[' + __('config.ilinkbot.file') + '] ' + file.name,
+                    msg_type: 'file',
+                    timestamp: new Date().toISOString(),
+                });
+                showToast(__('config.ilinkbot.fileSent'), 'success');
+            } else {
+                showToast(result.error || __('config.ilinkbot.fileSendFailed'), 'error');
+            }
+        } catch (e) {
+            showToast(__('config.ilinkbot.fileSendFailed') + e.message, 'error');
+        } finally {
+            btn.querySelector('span').textContent = origText;
+            btn.disabled = false;
+            inputEl.value = '';
         }
     },
 

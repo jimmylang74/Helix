@@ -14,7 +14,9 @@ Protocol reference:
 """
 
 import base64
+import hashlib
 import json
+import os
 import secrets
 import uuid
 from typing import Any, Dict, Optional
@@ -22,10 +24,25 @@ from typing import Any, Dict, Optional
 import requests
 
 from modules.utils.logger import log_error, log_info, log_warning
+from imChannels.wechat.crypto import (
+    aes_decrypt,
+    aes_encrypt,
+    decode_aes_key,
+)
 
 # ── iLink API base URL ─────────────────────────────────────────────────────
 
 ILINK_BASE_URL = "https://ilinkai.weixin.qq.com/ilink/bot"
+
+# Media CDN base URL for upload/download of encrypted media payloads.
+ILINK_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
+
+# Media type codes used in item_list / getuploadurl.
+MEDIA_TYPE_TEXT = 1
+MEDIA_TYPE_IMAGE = 2
+MEDIA_TYPE_VOICE = 3
+MEDIA_TYPE_FILE = 4
+MEDIA_TYPE_VIDEO = 5
 
 CHANNEL_VERSION = "1.0.2"
 
@@ -36,6 +53,59 @@ def _random_wechat_uin() -> str:
     """Generate X-WECHAT-UIN: random uint32 → decimal string → base64."""
     value = secrets.randbelow(2 ** 32)
     return base64.b64encode(str(value).encode("utf-8")).decode("utf-8")
+
+
+def parse_media_item(item: Dict[str, Any], cdn_base: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Extract a downloadable media descriptor from an iLink ``item_list`` entry.
+
+    Returns a dict with ``key``, ``type`` (2=image,3=voice,4=file,5=video),
+    ``media_id``, ``aes_key``, ``url`` and the raw ``media`` blob — or ``None``
+    when the item carries no downloadable media. Media items expose their
+    encrypted payload via ``media`` (with ``url`` / ``encrypt_query_param`` /
+    ``aes_key``) or a top-level ``media_id`` plus ``aes_key``.
+    """
+    item_type = item.get("type")
+    if item_type not in (MEDIA_TYPE_IMAGE, MEDIA_TYPE_VOICE, MEDIA_TYPE_FILE, MEDIA_TYPE_VIDEO):
+        return None
+
+    media = item.get("media") or {}
+    url = media.get("url") or ""
+    aes_key = (
+        media.get("aes_key")
+        or media.get("encrypt_aes_key")
+        or item.get("aes_key")
+        or ""
+    )
+    media_id = (
+        media.get("media_id")
+        or media.get("file_id")
+        or item.get("media_id")
+        or ""
+    )
+
+    # Fall back to standard download URL if the media blob lacks one.
+    if not url and media_id:
+        base = cdn_base or ILINK_CDN_BASE_URL
+        url = f"{base}/download?media_id={media_id}"
+
+    if not url or not aes_key:
+        return None
+
+    key = (
+        media.get("filekey")
+        or media.get("file_name")
+        or media.get("file_id")
+        or item.get("file_item", {}).get("file_name")
+        or f"media_{item_type}_{media_id or 'unknown'}"
+    )
+    return {
+        "key": key,
+        "type": item_type,
+        "media_id": media_id,
+        "aes_key": aes_key,
+        "url": url,
+        "media": media,
+    }
 
 
 class ILinkBotsClient:
@@ -266,6 +336,154 @@ class ILinkBotsClient:
         payload.update(kwargs)
         return self._post_json("sendtyping", payload)
 
-    def getuploadurl(self, **kwargs) -> Dict[str, Any]:
-        """Get an upload URL for media (images, files)."""
-        return self._post_json("getuploadurl", kwargs or {})
+    def getuploadurl(
+        self,
+        filekey: str,
+        media_type: int,
+        to_user_id: str,
+        file_size: int,
+        aes_key: bytes,
+        file_md5: Optional[str] = None,
+        raw_file_md5: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Request an upload URL + media_id for sending a media file.
+
+        A successful response carries the CDN ``upload_param`` (a signed
+        upload ticket) and a ``media_id`` that can be referenced in a
+        subsequent ``sendmessage`` FILE/VOICE item.
+
+        Args:
+            filekey: Stable file key / filename identifying the media.
+            media_type: 2=image, 3=voice, 4=file, 5=video.
+            to_user_id: The receiving user.
+            file_size: Size of the (raw, pre-encryption) payload in bytes.
+            aes_key: 16-byte key used to encrypt the payload for the CDN.
+            file_md5: md5 of the *encrypted* payload that will be uploaded.
+            raw_file_md5: md5 of the *raw* payload.
+        """
+        payload: Dict[str, Any] = {
+            "filekey": filekey,
+            "media_type": media_type,
+            "to_user_id": to_user_id,
+            "rawsize": file_size,
+            "rawfilemd5": raw_file_md5 or "",
+            "filesize": file_size,
+            "aeskey": base64.b64encode(aes_key).decode("utf-8"),
+            "no_need_thumb": True,
+        }
+        if file_md5:
+            payload["filemd5"] = file_md5
+        payload.update(kwargs)
+        data = self._post_json("getuploadurl", payload)
+        log_info(f"[iLink] getuploadurl: filekey={filekey}, media_type={media_type}, keys={list(data.keys())}")
+        return data
+
+    # ── Media CDN transfer ─────────────────────────────────────────────
+
+    @staticmethod
+    def _md5(data: bytes) -> str:
+        return hashlib.md5(data).hexdigest()
+
+    def upload_media(
+        self,
+        upload_param: Dict[str, Any],
+        aes_key: bytes,
+        raw_data: bytes,
+    ) -> Dict[str, Any]:
+        """Encrypt ``raw_data`` and upload it to the media CDN.
+
+        ``upload_param`` is the signed ticket returned by ``getuploadurl``;
+        the CDN expects it (plus an ``aes_key`` field) posted together with
+        the AES-encrypted payload as raw octet-stream body.
+
+        Returns:
+            The CDN JSON response (``errcode``/``ret`` 0 on success).
+        """
+        url = upload_param.get("url") or f"{ILINK_CDN_BASE_URL}/upload"
+        body = dict(upload_param)
+        body["aeskey"] = base64.b64encode(aes_key).decode("utf-8")
+        encrypted = aes_encrypt(raw_data, aes_key)
+
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "aeskey": body["aeskey"],
+        }
+        try:
+            resp = self._session.post(
+                url,
+                params=body,
+                data=encrypted,
+                headers=headers,
+                timeout=120,
+                proxies=self._proxy_dict(),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            log_info(f"[iLink] Media uploaded: {len(encrypted)} bytes, keys={list(data.keys())}")
+            return data
+        except requests.RequestException as e:
+            log_error(f"[iLink] Media upload failed: {e}")
+            raise
+
+    def download_media(self, media_info: Dict[str, Any], file_path: str) -> str:
+        """Download and decrypt an incoming media item to ``file_path``.
+
+        ``media_info`` is the parsed media descriptor extracted from a
+        getupdates item (see ``parse_media_item``) containing at least
+        ``url`` (a <scheme>://<host>/.../download?...> CDN URL carrying the
+        media id / encrypt query params) and ``aes_key``.
+
+        Returns the absolute path written on success; raises on failure.
+        """
+        url = media_info["url"]
+        aes_key = decode_aes_key(media_info["aes_key"])
+        headers = {"aeskey": base64.b64encode(aes_key).decode("utf-8")}
+
+        try:
+            resp = self._session.get(
+                url,
+                headers=headers,
+                timeout=120,
+                proxies=self._proxy_dict(),
+            )
+            resp.raise_for_status()
+            encrypted = resp.content
+        except requests.RequestException as e:
+            log_error(f"[iLink] Media download request failed: {e}")
+            raise
+
+        raw = aes_decrypt(encrypted, aes_key)
+        directory = os.path.dirname(file_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(raw)
+        log_info(f"[iLink] Media downloaded to {file_path} ({len(raw)} bytes)")
+        return file_path
+
+    def send_media(
+        self,
+        to_user_id: str,
+        context_token: str,
+        item_list: Any,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Send a ``sendmessage`` carrying arbitrary ``item_list`` media items.
+
+        The items reference a previously obtained ``media_id`` (from
+        ``getuploadurl``); media_type must be set to match the item type.
+        """
+        client_id = f"hl-{uuid.uuid4().hex[:12]}"
+        msg: Dict[str, Any] = {
+            "to_user_id": to_user_id,
+            "client_id": client_id,
+            "message_type": 2,
+            "message_state": 2,
+            "context_token": context_token,
+            "item_list": item_list,
+        }
+        msg.update(kwargs)
+        data = self._post_json("sendmessage", {"msg": msg})
+        log_info(f"[iLink] Media message sent to={to_user_id[:16]}..., client_id={client_id}")
+        return data

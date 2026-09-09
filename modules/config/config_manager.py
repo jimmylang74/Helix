@@ -116,6 +116,11 @@ class ConfigManager:
             "default_location": {
                 "city": "Nanjing"
             },
+            "channels": {
+                "wechat": {
+                    "download_dir": "download"
+                }
+            },
             "llm": {
                 "provider": "ollama_native",
                 "model": "qwen2.5:7b",
@@ -346,6 +351,10 @@ class ConfigManager:
 
     def get_host(self) -> str:
         return self.get("server.host", "0.0.0.0")
+
+    def get_wechat_download_dir(self) -> str:
+        """Get the configured WeChat download directory (project-relative)."""
+        return self.get("channels.wechat.download_dir", "download")
 
     def is_debug(self) -> bool:
         return self.get("server.debug", True)

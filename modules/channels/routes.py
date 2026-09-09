@@ -129,6 +129,85 @@ def _imbot_wechat_logout(params: Dict[str, Any]) -> Dict[str, Any]:
     return {"success": True}
 
 
+def _imbot_wechat_get_config(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Get the WeChat channel config (download dir + poll settings)."""
+    from modules.config.config_manager import ConfigManager
+    from modules.utils.paths import get_download_dir
+
+    cm = ConfigManager()
+    poll_timeout = params.get("poll_timeout")
+    if poll_timeout:
+        ch = _get_wechat()
+        ch.poll_timeout = int(poll_timeout)
+    return {
+        "config": {
+            "download_dir": cm.get_wechat_download_dir(),
+            "download_dir_abs": get_download_dir(),
+            "poll_timeout": _get_wechat().poll_timeout,
+        }
+    }
+
+
+def _imbot_wechat_set_config(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Persist WeChat channel config (download dir, poll timeout)."""
+    from modules.config.config_manager import ConfigManager
+    from modules.utils.paths import get_download_dir
+
+    cm = ConfigManager()
+    download_dir = params.get("download_dir")
+    if download_dir is not None:
+        cm.set("channels.wechat.download_dir", str(download_dir).strip())
+
+    poll_timeout = params.get("poll_timeout")
+    if poll_timeout:
+        ch = _get_wechat()
+        ch.poll_timeout = int(poll_timeout)
+        cm.set("channels.wechat.poll_timeout", int(poll_timeout))
+
+    return {
+        "success": True,
+        "config": {
+            "download_dir": cm.get_wechat_download_dir(),
+            "download_dir_abs": get_download_dir(),
+            "poll_timeout": _get_wechat().poll_timeout,
+        },
+    }
+
+
+def _imbot_wechat_send_file(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Send a file (document) from a local path via WeChat."""
+    ch = _get_wechat()
+    file_path = params.get("file_path", "")
+    if not file_path:
+        raise ValueError("Missing 'file_path' in params")
+    result = ch.send_file(
+        file_path,
+        to_user_id=params.get("to_user_id"),
+        context_token=params.get("context_token"),
+        display_name=params.get("display_name") or "",
+    )
+    if "error" in result:
+        raise ValueError(result["error"])
+    return {"success": True, "result": result}
+
+
+def _imbot_wechat_send_voice(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Send a voice message from a local path via WeChat."""
+    ch = _get_wechat()
+    file_path = params.get("file_path", "")
+    if not file_path:
+        raise ValueError("Missing 'file_path' in params")
+    result = ch.send_voice(
+        file_path,
+        to_user_id=params.get("to_user_id"),
+        context_token=params.get("context_token"),
+        display_name=params.get("display_name") or "",
+    )
+    if "error" in result:
+        raise ValueError(result["error"])
+    return {"success": True, "result": result}
+
+
 # ── Dispatch Table ─────────────────────────────────────────────────────────
 
 IMBOT_METHODS = {
@@ -141,6 +220,10 @@ IMBOT_METHODS = {
     "imbot.wechat.send":        _imbot_wechat_send,
     "imbot.wechat.status":      _imbot_wechat_status,
     "imbot.wechat.logout":      _imbot_wechat_logout,
+    "imbot.wechat.get_config":  _imbot_wechat_get_config,
+    "imbot.wechat.set_config":  _imbot_wechat_set_config,
+    "imbot.wechat.send_file":   _imbot_wechat_send_file,
+    "imbot.wechat.send_voice":  _imbot_wechat_send_voice,
 }
 
 

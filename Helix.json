@@ -372,5 +372,10 @@
       "enabled": true,
       "intents": []
     }
+  },
+  "channels": {
+    "wechat": {
+      "download_dir": "download"
+    }
   }
 }

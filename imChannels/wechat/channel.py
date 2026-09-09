@@ -641,6 +641,13 @@ class WeChatChannel(ChannelAdapter):
             if reply:
                 self.send(reply, to_user_id=sender_id)
                 save_agent_context(self.CHANNEL_TYPE, content, reply)
+            for file_path in (result.get("generated_files") or []):
+                try:
+                    self.send_file(file_path, to_user_id=sender_id)
+                except Exception as e:
+                    log_error(
+                        f"[WeChat] Failed to send generated file {file_path}: {e}"
+                    )
         except Exception as e:
             log_error(f"[WeChat] Agent request {request_id} failed: {e}")
             try:

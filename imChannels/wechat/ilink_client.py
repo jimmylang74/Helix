@@ -68,8 +68,14 @@ def parse_media_item(item: Dict[str, Any], cdn_base: Optional[str] = None) -> Op
     if item_type not in (MEDIA_TYPE_IMAGE, MEDIA_TYPE_VOICE, MEDIA_TYPE_FILE, MEDIA_TYPE_VIDEO):
         return None
 
-    media = item.get("media") or {}
-    url = media.get("url") or ""
+    # media may live at item level OR nested inside file_item/voice_item
+    media = (
+        item.get("media")
+        or item.get("file_item", {}).get("media")
+        or item.get("voice_item", {}).get("media")
+        or {}
+    )
+    url = media.get("url") or media.get("full_url") or ""
     aes_key = (
         media.get("aes_key")
         or media.get("encrypt_aes_key")

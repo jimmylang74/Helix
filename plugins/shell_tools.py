@@ -125,7 +125,7 @@ class WriteFileTool(BaseTool):
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "Path to the file to write"
+                "description": "Path to the file to write. If only a filename is given without a directory (e.g. 'report.md'), the file will be saved to the configured output directory (server.output_dir, default: output/) automatically."
             },
             "content": {
                 "type": "string",

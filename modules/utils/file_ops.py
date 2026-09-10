@@ -60,6 +60,7 @@ class FileOps:
     def read_file(file_path: str) -> str:
         """Read file content."""
         try:
+            file_path = os.path.expanduser(file_path)
             with open(file_path, "r", encoding="utf-8") as f:
                 return f.read()
         except UnicodeDecodeError:
@@ -74,8 +75,17 @@ class FileOps:
 
     @staticmethod
     def write_file(file_path: str, content: str) -> str:
-        """Write content to file. Creates parent directories if needed."""
+        """Write content to file. Creates parent directories if needed.
+
+        Pure filenames without directory (e.g. 'report.md') are automatically
+        placed under the configured output directory (server.output_dir).
+        """
         try:
+            file_path = os.path.expanduser(file_path)
+            if not os.path.dirname(file_path):
+                from modules.config.config_manager import ConfigManager
+                output_dir = ConfigManager().get_output_dir()
+                file_path = os.path.join(output_dir, file_path)
             os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(content)

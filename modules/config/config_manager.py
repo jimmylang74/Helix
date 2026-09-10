@@ -110,6 +110,7 @@ class ConfigManager:
                 "debug": True,
                 "language": "zh-CN",
                 "node_parallel_count": 1,
+                "output_dir": "output",
                 "log_file": "debugout.log",
                 "proxy": "http://192.168.10.2:7890"
             },
@@ -358,3 +359,7 @@ class ConfigManager:
 
     def is_debug(self) -> bool:
         return self.get("server.debug", True)
+
+    def get_output_dir(self) -> str:
+        """Get the configured output directory (project-relative)."""
+        return self.get("server.output_dir", "output")

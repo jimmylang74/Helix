@@ -733,6 +733,28 @@ class AgentOrchestrator:
         state["final_result"] = final_answer or self._collect_node_results(state)
         self._log.llm_decision(f"Final summary generated ({len(state['final_result'])} chars)")
 
+        # 方案 A2：finalizer 声明的输出文件（契约字段 generated_files: string[]）。
+        # 声明仅为补充，不替代 A1 工具级收集；所有路径仍须真实存在才采纳。
+        declared = response.get("generated_files") or []
+        if not isinstance(declared, list):
+            self._log.error(
+                f"Finalizer contract violation: generated_files "
+                f"is {type(declared).__name__}, expected list"
+            )
+            declared = []
+        declared_paths = [p for p in declared if isinstance(p, str)]
+        if len(declared_paths) != len(declared):
+            self._log.error(
+                f"Finalizer contract violation: {len(declared) - len(declared_paths)} "
+                "non-string entries dropped from generated_files"
+            )
+        self._merge_generated_files(state, declared_paths)
+        if declared_paths:
+            self._log.llm_decision(
+                f"Finalizer declared {len(declared_paths)} file(s); "
+                f"total generated_files={len(state.get('generated_files', []))}"
+            )
+
     # ═══════════════════════════════════════════════════════════════
     # Helpers
     # ═══════════════════════════════════════════════════════════════
@@ -878,6 +900,30 @@ class AgentOrchestrator:
         )
         return {"response": content}
 
+    def _merge_generated_files(self, state: AgentState, paths: List[str]) -> None:
+        """Merge candidate file paths into state["generated_files"].
+
+        Shared gate for both collection schemes: every declared path must be
+        a real file on disk (os.path.isfile), and duplicates are dropped.
+
+        路径基准：相对路径直接按进程 cwd 解析（os.path.abspath）——write_file
+        等工具写入相对路径时同样落在 cwd 下，写入与解析共用同一基准，天然
+        自洽；部署时服务从项目根启动，cwd 即 Helix.py 所在目录。绝对路径
+        原样校验。
+        """
+        existing = set(state.get("generated_files", []))
+        for path in paths:
+            if not path:
+                continue
+            cleaned = path.strip().strip('"').strip("'")
+            if not cleaned:
+                continue
+            if not os.path.isabs(cleaned):
+                cleaned = os.path.abspath(cleaned)
+            if os.path.isfile(cleaned) and cleaned not in existing:
+                existing.add(cleaned)
+                state.setdefault("generated_files", []).append(cleaned)
+
     def _collect_generated_files(
         self, state: AgentState, name: str, result: Any
     ) -> None:
@@ -885,8 +931,8 @@ class AgentOrchestrator:
 
         方案 A1：白名单工具直接取返回值 —— save_code / create_ppt 返回绝对
         路径，image_download 返回路径列表；write_file 返回固定格式文本
-        ("File written: <path> (N bytes)")，按格式提取。统一做真实文件
-        校验与去重，避免误报。
+        ("File written: <path> (N bytes)")，按格式提取。统一经
+        _merge_generated_files 做真实文件校验与去重，避免误报。
         """
         if name not in FILE_GENERATING_TOOLS:
             return
@@ -905,13 +951,7 @@ class AgentOrchestrator:
         else:
             return
 
-        existing = set(state.get("generated_files", []))
-        for path in candidates:
-            if not path:
-                continue
-            if os.path.isfile(path) and path not in existing:
-                existing.add(path)
-                state.setdefault("generated_files", []).append(path)
+        self._merge_generated_files(state, candidates)
 
     def _execute_tool_call(
         self,

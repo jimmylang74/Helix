@@ -250,7 +250,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 - `task_complete`: 如果用户的问题可以直接回答（不需要任何工具），设为 true 并填写 `response`；需要工具的任务必须返回 `task_graph_nodes` 节点图，不得跳过规划直接回答
 - `response`: 当 task_complete 为 true 时，直接回复用户{planning_tools_field_note}
 - `reason`: 你的分解思路
-- `need_finalizer`: 是否需要在所有节点完成后进行总结
+- `need_finalizer`: 是否需要在所有节点完成后进行总结。**若任务会生成或写入任何文件（write_file / save_code / create_ppt / image_download 等产生的报告、代码、图片、PPT、脚本等），必须设为 true**——文件路径的收集与校验（generated_files）依赖 Finalize 阶段，设 false 会导致生成的文件无法被系统收集与下发。仅当任务不产生任何文件、只需直接拼接节点结果时，才可设为 false
 
 {json_contract}
 """
@@ -266,13 +266,15 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 PLANNING_GUIDELINES_FORCED = """\
 1. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
 2. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
-3. **并行判断**：没有依赖关系的节点可以并行执行"""
+3. **并行判断**：没有依赖关系的节点可以并行执行
+4. **finalizer 判定**：任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），`need_finalizer` **必须为 true**——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
 
 PLANNING_GUIDELINES_AUTO = """\
 1. **意图分类 (intent_type)**：判断用户需要是哪个意图类型（{intent_types}）
 2. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
 3. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
-4. **并行判断**：没有依赖关系的节点可以并行执行"""
+4. **并行判断**：没有依赖关系的节点可以并行执行
+5. **finalizer 判定**：任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），`need_finalizer` **必须为 true**——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 2 — Node Execution（按 intent 分类）
@@ -443,12 +445,35 @@ USER_PROMPT_FINALIZER = """# Final Summary
 2. 根据执行结果组织内容，使用标题分段
 3. 如果有生成的文件，说明文件位置和内容
 
+## 文件声明（generated_files）— 必须如实申报
+若本次任务产生或写入了任何文件（output/ 下的报告、代码、图片、PPT、脚本等），
+必须把每个文件填入 generated_files 数组；没有生成任何文件则填空数组 []。
+
+路径填写规则：
+- **原样照抄工具返回的路径**：write_file / save_code / create_ppt 等工具输出中的
+  文件路径是什么就填什么——返回相对路径就填相对路径，返回绝对路径就填绝对路径。
+- **禁止自行拼接目录前缀**：不得添加 /workspace/output/ 等目录前缀，不得把相对
+  路径改写成绝对路径；系统会按运行目录把相对路径自动解析为绝对路径。
+- 路径必须是本次任务真实写入的文件；禁止编造不存在的路径或中间产物路径。
+- 多文件时全部列出，不要遗漏。
+
 ## JSON Response Format
 ```json
 {{
   "reason": "总结思路",
-  "final_answer": "最终回复内容（支持 Markdown）"
+  "final_answer": "最终回复内容（支持 Markdown）",
+  "generated_files": ["output/黄金价格趋势报告.md", "output/analysis.py"]
 }}
+```
+
+正确示例（无文件时）：
+```json
+{{"reason": "仅回答问题，未生成文件", "final_answer": "第一行\\n第二行", "generated_files": []}}
+```
+
+错误示例（禁止——自行拼接目录前缀 / 编造路径 / 非数组）：
+```json
+{{"reason": "...", "final_answer": "...", "generated_files": ["/workspace/output/黄金价格趋势报告.md"]}}
 ```
 
 {json_contract}

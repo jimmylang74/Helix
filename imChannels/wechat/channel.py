@@ -37,9 +37,15 @@ from imChannels.wechat.ilink_client import (
     MEDIA_TYPE_IMAGE,
     MEDIA_TYPE_VIDEO,
     MEDIA_TYPE_VOICE,
+    UPLOAD_MEDIA_TYPE_FILE,
+    UPLOAD_MEDIA_TYPE_VOICE,
     parse_media_item,
 )
-from imChannels.wechat.crypto import aes_encrypt, generate_aes_key
+from imChannels.wechat.crypto import (
+    aes_encrypt,
+    encode_aes_key_wire,
+    generate_aes_key,
+)
 from modules.utils.logger import log_error, log_info, log_tool_call
 from modules.utils.paths import get_download_dir
 
@@ -265,8 +271,8 @@ class WeChatChannel(ChannelAdapter):
         with open(file_path, "rb") as fp:
             raw = fp.read()
 
-        media_id, err = self._upload_and_get_media_id(
-            file_path, MEDIA_TYPE_FILE, raw, to_user_id
+        media, err = self._upload_and_get_media(
+            file_path, UPLOAD_MEDIA_TYPE_FILE, raw, to_user_id
         )
         if err:
             return {"error": err}
@@ -275,10 +281,10 @@ class WeChatChannel(ChannelAdapter):
         item = {
             "type": MEDIA_TYPE_FILE,
             "file_item": {
+                "media": media,
                 "file_name": name,
-                "file_size": len(raw),
-                "media_id": media_id,
-                "file_url": "",
+                "md5": self._client._md5(raw),
+                "len": str(len(raw)),
             },
         }
         return self._send_media_message(item, to_user_id, context_token, msg_type="file")
@@ -304,53 +310,60 @@ class WeChatChannel(ChannelAdapter):
         with open(file_path, "rb") as fp:
             raw = fp.read()
 
-        media_id, err = self._upload_and_get_media_id(
-            file_path, MEDIA_TYPE_VOICE, raw, to_user_id
+        media, err = self._upload_and_get_media(
+            file_path, UPLOAD_MEDIA_TYPE_VOICE, raw, to_user_id
         )
         if err:
             return {"error": err}
 
-        name = display_name or os.path.basename(file_path)
         item = {
             "type": MEDIA_TYPE_VOICE,
             "voice_item": {
-                "voice_code": 4,
-                "play_length": _estimate_voice_seconds(len(raw)),
-                "media_id": media_id,
-                "voice_url": "",
+                "media": media,
+                "playtime": _estimate_voice_seconds(len(raw)) * 1000,
             },
         }
         return self._send_media_message(item, to_user_id, context_token, msg_type="voice")
 
-    def _upload_and_get_media_id(self, file_path: str, media_type: int,
-                                 raw: bytes, to_user_id: str) -> Tuple[Optional[str], str]:
-        """Encrypt + upload a file to CDN, returning ``(media_id, error)``."""
+    def _upload_and_get_media(self, file_path: str, media_type: int,
+                              raw: bytes, to_user_id: str) -> Tuple[Optional[Dict[str, Any]], str]:
+        """Encrypt + upload ``raw`` to the media CDN.
+
+        Returns ``({encrypt_query_param, aes_key, encrypt_type}, error)`` —
+        the CDN media reference to embed in a ``sendmessage`` item.
+        """
         aes_key = generate_aes_key()
         encrypted = aes_encrypt(raw, aes_key)
-        filekey = os.path.basename(file_path)
+        filekey = uuid.uuid4().hex
 
         upload_resp = self._client.getuploadurl(
             filekey=filekey,
             media_type=media_type,
             to_user_id=to_user_id,
-            file_size=len(raw),
-            aes_key=aes_key,
-            file_md5=self._client._md5(encrypted),
+            raw_size=len(raw),
             raw_file_md5=self._client._md5(raw),
+            encrypted_size=len(encrypted),
+            aes_key=aes_key,
         )
-        upload_param = upload_resp.get("upload_param") or upload_resp.get("data") or {}
-        media_id = (
-            upload_resp.get("media_id")
-            or upload_param.get("media_id")
-            or upload_param.get("file_id")
-            or ""
-        )
-        if not media_id and not upload_param:
-            return None, f"getuploadurl returned no upload_param: {list(upload_resp.keys())}"
+        upload_param = upload_resp.get("upload_param") or ""
+        if not upload_param:
+            return None, (
+                f"getuploadurl returned no upload_param "
+                f"(ret={upload_resp.get('ret')}, errmsg={upload_resp.get('errmsg')}, "
+                f"keys={list(upload_resp.keys())})"
+            )
 
-        if upload_param:
-            self._client.upload_media(upload_param, aes_key, raw)
-        return media_id or upload_param.get("media_id", ""), ""
+        encrypt_param = self._client.upload_media(
+            upload_param, aes_key, raw, filekey
+        )
+        if not encrypt_param:
+            return None, "CDN upload returned no x-encrypted-param"
+
+        return {
+            "encrypt_query_param": encrypt_param,
+            "aes_key": encode_aes_key_wire(aes_key),
+            "encrypt_type": 1,
+        }, ""
 
     def _send_media_message(self, item: Dict[str, Any], to_user_id: str,
                             context_token: str, msg_type: str) -> Dict[str, Any]:
@@ -643,10 +656,19 @@ class WeChatChannel(ChannelAdapter):
                 save_agent_context(self.CHANNEL_TYPE, content, reply)
             for file_path in (result.get("generated_files") or []):
                 try:
-                    self.send_file(file_path, to_user_id=sender_id)
+                    resp = self.send_file(file_path, to_user_id=sender_id)
                 except Exception as e:
                     log_error(
                         f"[WeChat] Failed to send generated file {file_path}: {e}"
+                    )
+                    continue
+                if isinstance(resp, dict) and resp.get("error"):
+                    log_error(
+                        f"[WeChat] Failed to send generated file {file_path}: {resp['error']}"
+                    )
+                    self.send(
+                        f"文件已生成，但发送失败: {resp['error']}",
+                        to_user_id=sender_id,
                     )
         except Exception as e:
             log_error(f"[WeChat] Agent request {request_id} failed: {e}")

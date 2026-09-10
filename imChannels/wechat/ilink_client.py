@@ -37,12 +37,19 @@ ILINK_BASE_URL = "https://ilinkai.weixin.qq.com/ilink/bot"
 # Media CDN base URL for upload/download of encrypted media payloads.
 ILINK_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 
-# Media type codes used in item_list / getuploadurl.
+# Media type codes used in item_list / sendmessage MessageItem.type.
 MEDIA_TYPE_TEXT = 1
 MEDIA_TYPE_IMAGE = 2
 MEDIA_TYPE_VOICE = 3
 MEDIA_TYPE_FILE = 4
 MEDIA_TYPE_VIDEO = 5
+
+# getuploadurl media_type codes — DIFFERENT from MessageItem.type (protocol §8.5):
+# 1=IMAGE, 2=VIDEO, 3=FILE, 4=VOICE.
+UPLOAD_MEDIA_TYPE_IMAGE = 1
+UPLOAD_MEDIA_TYPE_VIDEO = 2
+UPLOAD_MEDIA_TYPE_FILE = 3
+UPLOAD_MEDIA_TYPE_VOICE = 4
 
 CHANNEL_VERSION = "1.0.2"
 
@@ -347,42 +354,42 @@ class ILinkBotsClient:
         filekey: str,
         media_type: int,
         to_user_id: str,
-        file_size: int,
+        raw_size: int,
+        encrypted_size: int,
         aes_key: bytes,
-        file_md5: Optional[str] = None,
         raw_file_md5: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Request an upload URL + media_id for sending a media file.
+        """Request an upload ticket for sending a media file.
 
-        A successful response carries the CDN ``upload_param`` (a signed
-        upload ticket) and a ``media_id`` that can be referenced in a
-        subsequent ``sendmessage`` FILE/VOICE item.
+        A successful response carries ``upload_param`` — an opaque string
+        ticket echoed back to the CDN upload call (protocol §8.2).
 
         Args:
-            filekey: Stable file key / filename identifying the media.
-            media_type: 2=image, 3=voice, 4=file, 5=video.
+            filekey: Client-generated file ID, typically random 16-byte hex.
+            media_type: getuploadurl code — 1=IMAGE, 2=VIDEO, 3=FILE, 4=VOICE.
             to_user_id: The receiving user.
-            file_size: Size of the (raw, pre-encryption) payload in bytes.
-            aes_key: 16-byte key used to encrypt the payload for the CDN.
-            file_md5: md5 of the *encrypted* payload that will be uploaded.
-            raw_file_md5: md5 of the *raw* payload.
+            raw_size: Size of the raw (pre-encryption) payload in bytes.
+            encrypted_size: Size of the AES-128-ECB + PKCS7 ciphertext.
+            aes_key: 16-byte key used to encrypt the payload.
+            raw_file_md5: md5 hex of the *raw* payload.
         """
         payload: Dict[str, Any] = {
             "filekey": filekey,
             "media_type": media_type,
             "to_user_id": to_user_id,
-            "rawsize": file_size,
+            "rawsize": raw_size,
             "rawfilemd5": raw_file_md5 or "",
-            "filesize": file_size,
-            "aeskey": base64.b64encode(aes_key).decode("utf-8"),
+            "filesize": encrypted_size,
+            "aeskey": aes_key.hex() if isinstance(aes_key, bytes) else str(aes_key),
             "no_need_thumb": True,
         }
-        if file_md5:
-            payload["filemd5"] = file_md5
         payload.update(kwargs)
         data = self._post_json("getuploadurl", payload)
-        log_info(f"[iLink] getuploadurl: filekey={filekey}, media_type={media_type}, keys={list(data.keys())}")
+        log_info(
+            f"[iLink] getuploadurl: filekey={filekey}, media_type={media_type}, "
+            f"ret={data.get('ret')}, errmsg={data.get('errmsg')}, keys={list(data.keys())}"
+        )
         return data
 
     # ── Media CDN transfer ─────────────────────────────────────────────
@@ -393,44 +400,53 @@ class ILinkBotsClient:
 
     def upload_media(
         self,
-        upload_param: Dict[str, Any],
+        upload_param: str,
         aes_key: bytes,
         raw_data: bytes,
-    ) -> Dict[str, Any]:
+        filekey: str,
+    ) -> str:
         """Encrypt ``raw_data`` and upload it to the media CDN.
 
-        ``upload_param`` is the signed ticket returned by ``getuploadurl``;
-        the CDN expects it (plus an ``aes_key`` field) posted together with
-        the AES-encrypted payload as raw octet-stream body.
+        ``upload_param`` is the opaque ticket returned by ``getuploadurl``;
+        it is echoed as the ``encrypted_query_param`` query parameter of the
+        CDN upload URL. The AES-128-ECB ciphertext is POSTed as an
+        octet-stream body; the resulting media reference is the
+        ``x-encrypted-param`` response header (protocol §8.2).
 
         Returns:
-            The CDN JSON response (``errcode``/``ret`` 0 on success).
+            The ``x-encrypted-param`` header value (empty string if missing).
         """
-        url = upload_param.get("url") or f"{ILINK_CDN_BASE_URL}/upload"
-        body = dict(upload_param)
-        body["aeskey"] = base64.b64encode(aes_key).decode("utf-8")
         encrypted = aes_encrypt(raw_data, aes_key)
+        url = f"{ILINK_CDN_BASE_URL}/upload"
+        params = {"encrypted_query_param": upload_param, "filekey": filekey}
+        headers = {"Content-Type": "application/octet-stream"}
 
-        headers = {
-            "Content-Type": "application/octet-stream",
-            "aeskey": body["aeskey"],
-        }
         try:
             resp = self._session.post(
                 url,
-                params=body,
+                params=params,
                 data=encrypted,
                 headers=headers,
                 timeout=120,
                 proxies=self._proxy_dict(),
             )
             resp.raise_for_status()
-            data = resp.json()
-            log_info(f"[iLink] Media uploaded: {len(encrypted)} bytes, keys={list(data.keys())}")
-            return data
         except requests.RequestException as e:
             log_error(f"[iLink] Media upload failed: {e}")
             raise
+
+        encrypt_param = resp.headers.get("x-encrypted-param", "")
+        if not encrypt_param:
+            log_error(
+                f"[iLink] Media upload OK but missing x-encrypted-param header "
+                f"(status={resp.status_code}, body_len={len(resp.content)})"
+            )
+        else:
+            log_info(
+                f"[iLink] Media uploaded: {len(encrypted)} bytes, "
+                f"x-encrypted-param={encrypt_param[:24]}..."
+            )
+        return encrypt_param
 
     def download_media(self, media_info: Dict[str, Any], file_path: str) -> str:
         """Download and decrypt an incoming media item to ``file_path``.

@@ -6,7 +6,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from imChannels.wechat.ilink_client import ILinkBotsClient, ILINK_BASE_URL
+from imChannels.wechat.ilink_client import (
+    ILinkBotsClient,
+    ILINK_BASE_URL,
+    UPLOAD_MEDIA_TYPE_FILE,
+)
 
 
 class TestTokenManagement:
@@ -219,8 +223,26 @@ class TestAPIEndpoints:
 
     @patch.object(ILinkBotsClient, "_post_json")
     def test_getuploadurl(self, mock_post):
-        mock_post.return_value = {"url": "http://upload"}
-        result = ILinkBotsClient().getuploadurl(file_type="image")
+        mock_post.return_value = {
+            "ret": 0,
+            "thumb_upload_param": "",
+            "upload_param": "AAFBdGlja2V0MTIzNDU2Nzg5MA==",
+        }
+        result = ILinkBotsClient().getuploadurl(
+            filekey="7623583ed1d84f8284d8b003905b8e04",
+            media_type=UPLOAD_MEDIA_TYPE_FILE,
+            to_user_id="user@im.wechat",
+            raw_size=100,
+            encrypted_size=112,
+            aes_key=b"\x00\x11\x22\x33\x44\x55\x66\x77\x88\x99\xaa\xbb\xcc\xdd\xee\xff",
+            raw_file_md5="9c4d5c0b21f7f5c77c2b12f05f1b8df8",
+        )
         call_payload = mock_post.call_args[0][1]
-        assert call_payload["file_type"] == "image"
-        assert result["url"] == "http://upload"
+        assert call_payload["media_type"] == 3  # getuploadurl 编码: FILE
+        assert call_payload["filekey"] == "7623583ed1d84f8284d8b003905b8e04"
+        assert call_payload["rawsize"] == 100
+        assert call_payload["filesize"] == 112
+        assert call_payload["rawfilemd5"] == "9c4d5c0b21f7f5c77c2b12f05f1b8df8"
+        assert call_payload["aeskey"] == "00112233445566778899aabbccddeeff"  # hex, 非 base64
+        assert call_payload["no_need_thumb"] is True
+        assert result["upload_param"] == "AAFBdGlja2V0MTIzNDU2Nzg5MA=="

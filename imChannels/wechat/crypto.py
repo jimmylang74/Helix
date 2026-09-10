@@ -101,6 +101,16 @@ def generate_aes_key() -> bytes:
     return secrets.token_bytes(_AES_BLOCK_SIZE)
 
 
+def encode_aes_key_wire(aes_key: bytes) -> str:
+    """Encode a 16-byte AES key for outbound media as base64(hex string).
+
+    Matches protocol spec §8.4 format B — the form used in ``sendmessage``
+    media blobs: the 32-char hex string is treated as ASCII bytes and base64
+    encoded (e.g. ``00112233...`` -> ``MDAxMTIyMzM0...``).
+    """
+    return base64.b64encode(aes_key.hex().encode("ascii")).decode("ascii")
+
+
 def aes_encrypt(plaintext: bytes, key: bytes) -> bytes:
     """Encrypt ``plaintext`` with AES-128-ECB + PKCS#7 using ``key`` (16 bytes)."""
     padder = padding.PKCS7(_AES_BLOCK_SIZE * 8).padder()

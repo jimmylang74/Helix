@@ -18,6 +18,7 @@ from imChannels.wechat.ilink_client import (
     MEDIA_TYPE_FILE,
     MEDIA_TYPE_IMAGE,
     MEDIA_TYPE_VOICE,
+    UPLOAD_MEDIA_TYPE_FILE,
     MEDIA_TYPE_VIDEO,
     parse_media_item,
 )
@@ -190,29 +191,39 @@ class TestILinkMediaMethods:
     @patch("imChannels.wechat.ilink_client.requests.Session")
     def test_getuploadurl_sends_correct_payload(self, mock_cls):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"media_id": "m1", "upload_param": {"url": "x"}}
+        mock_resp.json.return_value = {
+            "ret": 0,
+            "thumb_upload_param": "",
+            "upload_param": "AAFBdGlja2V0MTIzNDU2Nzg5MA==",
+        }
         mock_resp.raise_for_status = MagicMock()
         mock_session = MagicMock()
         mock_session.post.return_value = mock_resp
         mock_cls.return_value = mock_session
 
         client = ILinkBotsClient(bot_token="tok")
-        import base64
-
         key = bytes(range(16))
         result = client.getuploadurl(
-            filekey="test.pdf",
-            media_type=MEDIA_TYPE_FILE,
+            filekey="7623583ed1d84f8284d8b003905b8e04",
+            media_type=UPLOAD_MEDIA_TYPE_FILE,
             to_user_id="user1",
-            file_size=1024,
+            raw_size=1024,
+            encrypted_size=1040,
             aes_key=key,
+            raw_file_md5="9c4d5c0b21f7f5c77c2b12f05f1b8df8",
         )
 
         call_args = mock_session.post.call_args
         body = call_args[1].get("json") or call_args[0][1]
-        assert body["msg"]["item_list"][0]["type"] if "msg" in body else True
-        payload = body if "filekey" in body else body.get("msg", body)
-        assert result["media_id"] == "m1"
+        assert body["media_type"] == 3  # getuploadurl 编码: FILE
+        assert body["filekey"] == "7623583ed1d84f8284d8b003905b8e04"
+        assert body["to_user_id"] == "user1"
+        assert body["rawsize"] == 1024
+        assert body["filesize"] == 1040
+        assert body["rawfilemd5"] == "9c4d5c0b21f7f5c77c2b12f05f1b8df8"
+        assert body["aeskey"] == "000102030405060708090a0b0c0d0e0f"  # hex, 非 base64
+        assert body["no_need_thumb"] is True
+        assert result["upload_param"] == "AAFBdGlja2V0MTIzNDU2Nzg5MA=="
 
     def test_download_media_encrypts_and_writes(self):
         client = ILinkBotsClient()

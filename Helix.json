@@ -6,6 +6,7 @@
     "debug": true,
     "language": "zh-CN",
     "node_parallel_count": 1,
+    "output_dir": "output",
     "log_file": "debugout.log",
     "proxy": "http://192.168.10.2:7890"
   },

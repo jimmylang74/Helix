@@ -9,6 +9,7 @@ from datetime import datetime
 from HelixCore.tools.base import BaseTool
 from modules.utils.logger import log_tool_call, log_agent_action, log_error
 from modules.utils.paths import project_path
+from modules.config.config_manager import ConfigManager
 
 
 class CreatePPTTool(BaseTool):
@@ -61,7 +62,7 @@ class CreatePPTTool(BaseTool):
             from pptx.enum.text import PP_ALIGN
             from pptx.enum.shapes import MSO_SHAPE
 
-            output_dir = project_path("output")
+            output_dir = project_path(ConfigManager().get_output_dir())
             os.makedirs(output_dir, exist_ok=True)
 
             prs = Presentation()

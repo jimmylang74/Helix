@@ -225,6 +225,8 @@
   "config.server.logFileHint": "服务运行日志文件（debugout.log，需重启生效）",
   "config.server.proxy": "代理设置",
   "config.server.proxyHint": "外部工具（如天气查询）访问外网使用的 HTTP 代理地址",
+  "config.server.outputDir": "输出目录",
+  "config.server.outputDirHint": "生成文件的输出目录（相对项目根目录，默认 output）",
   "config.server.saveSuccess": "服务设置已保存（部分设置需重启生效）",
   "config.server.saveFailed": "保存失败",
   "history.title": "使用记录",

@@ -225,6 +225,8 @@
   "config.server.logFileHint": "Service runtime log file (debugout.log, requires restart)",
   "config.server.proxy": "HTTP Proxy",
   "config.server.proxyHint": "HTTP proxy used by external tools (e.g. weather) to access the internet",
+  "config.server.outputDir": "Output Directory",
+  "config.server.outputDirHint": "Directory for generated files (relative to project root, default: output)",
   "config.server.saveSuccess": "Server settings saved (some changes require restart)",
   "config.server.saveFailed": "Save failed",
   "history.title": "History",

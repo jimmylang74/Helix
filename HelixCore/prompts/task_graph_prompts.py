@@ -250,7 +250,7 @@ USER_PROMPT_TASK_PLANNING = """# Task Planning Request
 - `task_complete`: 如果用户的问题可以直接回答（不需要任何工具），设为 true 并填写 `response`；需要工具的任务必须返回 `task_graph_nodes` 节点图，不得跳过规划直接回答
 - `response`: 当 task_complete 为 true 时，直接回复用户{planning_tools_field_note}
 - `reason`: 你的分解思路
-- `need_finalizer`: 是否需要在所有节点完成后进行总结。**若任务会生成或写入任何文件（write_file / save_code / create_ppt / image_download 等产生的报告、代码、图片、PPT、脚本等），必须设为 true**——文件路径的收集与校验（generated_files）依赖 Finalize 阶段，设 false 会导致生成的文件无法被系统收集与下发。仅当任务不产生任何文件、只需直接拼接节点结果时，才可设为 false
+- `need_finalizer`: 是否需要在所有节点完成后进行总结。**默认设为 true**——只要需要把各节点的执行结果汇总成最终回答（即需要总结），就必须设为 true，例如需要组织研究报告、说明文件位置与内容的场景；**若任务会生成或写入任何文件（write_file / save_code / create_ppt / image_download 等产生的报告、代码、图片、PPT、脚本等），同样必须设为 true**——文件路径的收集与校验（generated_files）依赖 Finalize 阶段，设 false 会导致生成的文件无法被系统收集与下发。仅当任务不需要总结、也不产生任何文件、只需直接拼接节点结果时，才可设为 false
 
 {json_contract}
 """
@@ -267,14 +267,14 @@ PLANNING_GUIDELINES_FORCED = """\
 1. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
 2. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
 3. **并行判断**：没有依赖关系的节点可以并行执行
-4. **finalizer 判定**：任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），`need_finalizer` **必须为 true**——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
+4. **finalizer 判定**：默认 `need_finalizer` 为 true——需要把节点结果汇总成最终回答（即需要总结）时，**必须为 true**；任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），也必须为 true——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
 
 PLANNING_GUIDELINES_AUTO = """\
 1. **意图分类 (intent_type)**：判断用户需要是哪个意图类型（{intent_types}）
 2. **任务分解**：将任务拆解为可独立执行的 DAG 节点，每个节点有明确目标
 3. **依赖管理**：节点之间有依赖关系，必须等依赖节点完成才能执行
 4. **并行判断**：没有依赖关系的节点可以并行执行
-5. **finalizer 判定**：任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），`need_finalizer` **必须为 true**——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
+5. **finalizer 判定**：默认 `need_finalizer` 为 true——需要把节点结果汇总成最终回答（即需要总结）时，**必须为 true**；任务中若会生成或写入文件（write_file / save_code / create_ppt / image_download 等），也必须为 true——文件路径的收集与校验依赖 Finalize 阶段；设 false 会导致生成的文件无法被系统收集与下发"""
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 2 — Node Execution（按 intent 分类）

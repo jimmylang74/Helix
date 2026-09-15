@@ -1,19 +1,15 @@
 """
-WeChat iLinkBot channel adapter.
+WeChat iLinkBot channel adapter — 消费端（感知已抽离至 WechatEventSource）。
 
-Runs a background polling thread that calls getupdates() in a loop,
-broadcasts incoming messages via SSE, and provides a send() method.
-
-感知解耦：轮询线程只负责"感知 + 记录 + 广播"，随后把每条消息封装为
-WechatEvent 投递到 EventBus，由 EventBroker 按事件类型路由回本通道的
-handle_event() 处理（待回答提问→broker.answer / 任务进行中→忙碌提示 /
-新请求→worker 跑私有编排器并回发结果）。生产者不再直接决定处理流程。
+本模块不再拥有独立轮询线程：getupdates 长轮询、媒体感知、落库、SSE 广播与
+WechatEvent 发布整体迁入 imChannels/wechat/event_source.py（EventSource 子类）。
+本通道保留消费端职责：持有事件源（self._source）并委托 start/stop，send/send_file/
+send_voice 发送，handle_event 按发送方状态路由（待回答提问→broker.answer /
+任务进行中→忙碌提示 / 新请求→worker 跑私有编排器并回发结果）。
 """
 
-import json
 import os
 import threading
-import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -27,19 +23,15 @@ from modules.channels.store import (
     get_to_user_id,
     save_agent_context,
     save_message,
-    update_session_status,
 )
-from modules.events import EventBase, WechatEvent, get_event_bus
+from modules.events import EventBase
 from imChannels.wechat.authenticator import WeChatAuthenticator
 from imChannels.wechat.ilink_client import (
     ILinkBotsClient,
     MEDIA_TYPE_FILE,
-    MEDIA_TYPE_IMAGE,
-    MEDIA_TYPE_VIDEO,
     MEDIA_TYPE_VOICE,
     UPLOAD_MEDIA_TYPE_FILE,
     UPLOAD_MEDIA_TYPE_VOICE,
-    parse_media_item,
 )
 from imChannels.wechat.crypto import (
     aes_encrypt,
@@ -47,69 +39,18 @@ from imChannels.wechat.crypto import (
     generate_aes_key,
 )
 from modules.utils.logger import log_error, log_info, log_tool_call
-from modules.utils.paths import get_download_dir
-
-
-def _extract_text(message: Dict[str, Any]) -> str:
-    """Extract readable text from an iLink item_list message."""
-    for item in message.get("item_list") or []:
-        item_type = item.get("type")
-        if item_type == 1 and item.get("text_item", {}).get("text"):
-            return item["text_item"]["text"]
-        if item_type == 3 and item.get("voice_item", {}).get("text"):
-            return f"[语音] {item['voice_item']['text']}"
-        if item_type == 2:
-            return "[图片]"
-        if item_type == 4:
-            file_name = item.get("file_item", {}).get("file_name", "")
-            return f"[文件] {file_name}".strip()
-        if item_type == 5:
-            return "[视频]"
-    return "[空消息]"
-
-
-def _media_type_str(media_type: int) -> str:
-    """Map an iLink media type code to a readable channel msg_type."""
-    if media_type == MEDIA_TYPE_VOICE:
-        return "voice"
-    if media_type == MEDIA_TYPE_FILE:
-        return "file"
-    if media_type == MEDIA_TYPE_IMAGE:
-        return "image"
-    if media_type == MEDIA_TYPE_VIDEO:
-        return "video"
-    return "text"
-
-
-def _media_msg_type(media_type: Optional[str]) -> Optional[str]:
-    """Return the ``msg_type`` label derived from an incoming download."""
-    return media_type or None
-
-
-def _safe_media_name(key: str, media_type: int) -> str:
-    """Build a local filename for an incoming media item.
-
-    Uses the original filename when safe; otherwise falls back to a
-    timestamped name with the item's media-type extension.
-    """
-    base = os.path.basename(str(key or "").strip())
-    if base and base not in (".", ".."):
-        return "".join(c for c in base if c not in '\\/:*?"<>|')
-    ext = _media_extension(media_type)
-    return f"media_{int(time.time())}{ext}"
-
-
-def _media_extension(media_type: int) -> str:
-    if media_type == MEDIA_TYPE_VOICE:
-        return ".amr"
-    if media_type == MEDIA_TYPE_FILE:
-        return ".bin"
-    return ".dat"
-
-
-def _estimate_voice_seconds(byte_count: int) -> int:
-    """Rough voice duration in seconds (~2 KB/s at common WeChat AMR rates)."""
-    return max(1, round(byte_count / 2048))
+# 感知层辅助函数自事件源模块迁出；此处重导出以保持既有引用兼容
+# （channel.send 内部使用 + tests/test_media.py 直接导入 channel）
+from imChannels.wechat.event_source import (
+    WechatEventSource,
+    _extract_text,
+    _media_type_str,
+    _media_msg_type,
+    _safe_media_name,
+    _media_extension,
+    _estimate_voice_seconds,
+    _now,
+)
 
 
 class WeChatChannel(ChannelAdapter):
@@ -123,14 +64,15 @@ class WeChatChannel(ChannelAdapter):
         authenticator: WeChatAuthenticator,
         poll_timeout: int = 35,
     ):
+        super().__init__()
         self._client = client
         self._auth = authenticator
-        self._poll_timeout = poll_timeout
-        self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._stop_event = threading.Event()
-        self._last_error: Optional[str] = None
-        self._last_from_user_id: Optional[str] = None
+        # 感知端：轮询/媒体/落库/SSE/发布整体迁入，生命周期随本通道启停委托
+        self._source = WechatEventSource(
+            client=client,
+            authenticator=authenticator,
+            poll_timeout=poll_timeout,
+        )
 
         # 本通道私有 agent 会话状态（配合 runtime 使用；上下文持久化见 store.agent_sessions）
         self._request_sender: Dict[str, str] = {}    # request_id → sender_id
@@ -145,53 +87,25 @@ class WeChatChannel(ChannelAdapter):
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        return self._source.is_running
 
     @property
     def poll_timeout(self) -> int:
-        return self._poll_timeout
+        return self._source.poll_timeout
 
     @poll_timeout.setter
     def poll_timeout(self, value: int) -> None:
-        self._poll_timeout = max(5, value)
+        self._source.poll_timeout = value
 
     # ── Lifecycle ──────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the polling thread."""
-        if self._running:
-            log_info("[WeChat] Already running")
-            return
-        if not self._auth.is_authenticated:
-            log_error("[WeChat] Cannot start: not authenticated")
-            return
-
-        self._stop_event.clear()
-        self._running = True
-        self._last_error = None
-        self._thread = threading.Thread(
-            target=self._poll_loop,
-            daemon=True,
-            name="wechat-poll",
-        )
-        self._thread.start()
-        has_token = bool(self._client.bot_token)
-        update_session_status("wechat", "connected")
-        log_info(
-            f"[WeChat] Polling started (has_token={has_token}, "
-            f"poll_timeout={self._poll_timeout}, thread_alive={self._thread.is_alive()})"
-        )
+        """Start the polling event source (auth gate handled inside the source)."""
+        self._source.start()
 
     def stop(self) -> None:
-        """Stop the polling thread."""
-        if not self._running:
-            return
-        self._stop_event.set()
-        self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=10)
-        update_session_status("wechat", "disconnected")
-        log_info("[WeChat] Polling stopped")
+        """Stop the polling event source thread."""
+        self._source.stop()
 
     def restore_session(self) -> bool:
         """Restore session from store and auto-start if valid."""
@@ -208,7 +122,7 @@ class WeChatChannel(ChannelAdapter):
         Resolves ``to_user_id`` from kwargs, the latest incoming message,
         or the stored context_token.
         """
-        to_user_id = kwargs.pop("to_user_id", None) or self._last_from_user_id or get_to_user_id("wechat")
+        to_user_id = kwargs.pop("to_user_id", None) or self._source.last_from_user_id or get_to_user_id("wechat")
         context_token = kwargs.pop("context_token", None) or get_context_token("wechat")
 
         if not to_user_id:
@@ -258,7 +172,7 @@ class WeChatChannel(ChannelAdapter):
         ``sendmessage`` with a type-4 ``file_item`` referencing the media_id
         is sent. Returns the iLink API response or an error dict.
         """
-        to_user_id = to_user_id or self._last_from_user_id or get_to_user_id("wechat")
+        to_user_id = to_user_id or self._source.last_from_user_id or get_to_user_id("wechat")
         context_token = context_token or get_context_token("wechat")
 
         if not to_user_id:
@@ -297,7 +211,7 @@ class WeChatChannel(ChannelAdapter):
         ``file_path`` is typically an audio file produced under ``output/``.
         Sends a type-3 ``voice_item`` carrying the uploaded media_id.
         """
-        to_user_id = to_user_id or self._last_from_user_id or get_to_user_id("wechat")
+        to_user_id = to_user_id or self._source.last_from_user_id or get_to_user_id("wechat")
         context_token = context_token or get_context_token("wechat")
 
         if not to_user_id:
@@ -395,46 +309,24 @@ class WeChatChannel(ChannelAdapter):
         })
         return result
 
-    def _download_incoming_media(self, update: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-        """Download actionable incoming media (file/voice) to the download dir.
-
-        Returns ``(media_url, media_type)`` where ``media_url`` is the local
-        absolute path on success (``None`` otherwise).
-        """
-        for item in update.get("item_list") or []:
-            media = parse_media_item(item)
-            if not media or media["type"] not in (MEDIA_TYPE_FILE, MEDIA_TYPE_VOICE):
-                continue
-            safe_name = _safe_media_name(media["key"], media["type"])
-            dest = os.path.join(get_download_dir(), safe_name)
-            try:
-                self._client.download_media(media, dest)
-                log_info(f"[WeChat] Saved incoming {media['type']} media to {dest}")
-                return dest, _media_type_str(media["type"])
-            except Exception as e:
-                log_error(f"[WeChat] Failed to download incoming media {media.get('key')}: {e}")
-                return None, None
-        return None, None
-
     def get_messages(self, limit: int = 50) -> List[ChannelMessage]:
         raw = store_get_messages("wechat", limit)
         return [_raw_to_message(m) for m in raw]
 
     def get_status(self) -> ChannelStatus:
-        thread_alive = self._thread.is_alive() if self._thread else False
-        if self._running and not thread_alive:
-            self._last_error = self._last_error or "polling thread died unexpectedly"
+        source_status = self._source.get_status()
+        source_error = self._source.last_error
         return ChannelStatus(
             channel_type=self.CHANNEL_TYPE,
-            is_running=self._running,
+            is_running=self._source.is_running,
             is_authenticated=self._auth.is_authenticated,
             display_name="微信 iLinkBot",
-            error=self._last_error,
+            error=source_error,
             extra={
-                "poll_timeout": self._poll_timeout,
-                "thread_alive": thread_alive,
+                "poll_timeout": self._source.poll_timeout,
+                "thread_alive": source_status["thread_alive"],
                 "has_token": bool(self._client.bot_token),
-                "token_expired": "errcode -14" in (self._last_error or ""),
+                "token_expired": "errcode -14" in (source_error or ""),
                 "get_updates_buf": self._client.get_updates_buf[:32] if self._client.get_updates_buf else "",
             },
         )
@@ -478,130 +370,6 @@ class WeChatChannel(ChannelAdapter):
         if count == 0:
             return "本通道没有进行中的会话，无需清除"
         return f"微信通道已开始新会话：旧会话 {archived_id}（{count} 条记录）已保存到数据库。"
-
-    # ── Polling loop ───────────────────────────────────────────────────
-
-    def _poll_loop(self) -> None:
-        consecutive_errors = 0
-        cycle_count = 0
-        while not self._stop_event.is_set():
-            cycle_count += 1
-            try:
-                data = self._client.getupdates(timeout=self._poll_timeout)
-
-                # Check for token error (errcode or ret == -14)
-                errcode = data.get("errcode") or data.get("ret")
-                if errcode is not None and errcode != 0:
-                    if self._client.is_token_error(data):
-                        log_error("[WeChat] Bot token expired/invalid — stopping poll loop")
-                        self._last_error = "bot_token invalid (errcode -14), please re-scan QR code"
-                        self._auth._authenticated = False
-                        self._client.set_bot_token("")
-                        update_session_status("wechat", "token_expired")
-                        break
-                    else:
-                        log_error(f"[WeChat] getupdates returned errcode={errcode}: {data.get('errmsg', '')}")
-
-                msgs = data.get("msgs", [])
-                if msgs:
-                    consecutive_errors = 0
-                    log_info(f"[WeChat] Poll #{cycle_count}: got {len(msgs)} msg(s)")
-                    for msg in msgs:
-                        self._handle_update(msg)
-                else:
-                    if cycle_count <= 3 or cycle_count % 10 == 0:
-                        log_info(f"[WeChat] Poll #{cycle_count}: 0 msgs")
-            except Exception as e:
-                consecutive_errors += 1
-                self._last_error = str(e)
-                log_error(f"[WeChat] Poll error ({consecutive_errors}): {e}")
-                backoff = min(30, 2 ** consecutive_errors)
-                self._stop_event.wait(timeout=backoff)
-                continue
-
-            self._stop_event.wait(timeout=1.0)
-
-        self._running = False
-        log_info("[WeChat] Poll loop exited")
-
-    def _handle_update(self, update: Dict[str, Any]) -> None:
-        """Process a single incoming message from getupdates (iLink format)."""
-        msg_id = update.get("msg_id", str(uuid.uuid4().hex[:12]))
-        sender_id = update.get("from_user_id", "")
-        sender_name = update.get("from_user_name", sender_id)
-        content = _extract_text(update)
-        context_token = update.get("context_token", "")
-        message_type = update.get("message_type", 1)
-        timestamp_ms = update.get("create_time_ms")
-
-        # Detect + download actionable media (files & voice) to the download dir
-        media_url, media_type = self._download_incoming_media(update)
-
-        if media_url:
-            content = f"{content}\n文件已下载: {media_url}"
-
-        # Track last from_user_id for send()
-        if sender_id:
-            self._last_from_user_id = sender_id
-
-        # Convert timestamp
-        timestamp = _now()
-        if timestamp_ms:
-            try:
-                timestamp = time.strftime(
-                    "%Y-%m-%dT%H:%M:%S",
-                    time.gmtime(timestamp_ms / 1000),
-                )
-            except (ValueError, OSError):
-                pass
-
-        # Persist
-        save_message(
-            channel="wechat",
-            direction="incoming",
-            message_id=msg_id,
-            sender_id=sender_id,
-            sender_name=sender_name,
-            content=content,
-            msg_type=_media_msg_type(media_type) or "text",
-            media_url=media_url,
-            media_type=media_type,
-            context_token=context_token,
-            raw_data=update,
-            timestamp=timestamp,
-        )
-
-        # Broadcast to SSE
-        events.broadcast("wechat", {
-            "type": "message",
-            "direction": "incoming",
-            "message_id": msg_id,
-            "sender_id": sender_id,
-            "sender_name": sender_name,
-            "content": content,
-            "msg_type": _media_msg_type(media_type) or "text",
-            "media_url": media_url,
-            "media_type": media_type,
-            "context_token": context_token,
-            "timestamp": timestamp,
-        })
-
-        log_info(
-            f"[WeChat] Message received: {sender_name}({sender_id}): "
-            f"{content[:80]}"
-        )
-
-        # 感知解耦：封装为 WechatEvent 投递到外部事件总线，
-        # 由 EventBroker 路由到本通道 handle_event()（或未来的 Thinking Channel）
-        get_event_bus().publish(
-            WechatEvent(
-                sender_id=sender_id,
-                sender_name=sender_name,
-                content=content,
-                context_token=context_token,
-                raw=update,
-            )
-        )
 
     # ── 外部事件处理器（EventBroker 路由落点）─────────────────────────
 

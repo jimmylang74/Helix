@@ -1161,7 +1161,7 @@ sequenceDiagram
 | 部分 | 目录 | 职责 |
 |------|------|------|
 | **框架层** | `modules/channels/` | 通道抽象基类、生命周期管理器、每通道运行时装配、RPC/SSE 路由、消息持久化、输出通道注册表 |
-| **适配器层** | `imChannels/<type>/` | 具体平台的协议实现（认证、轮询、收发），当前有 `imChannels/wechat/` |
+| **适配器层** | `imChannels/<type>/` | 具体平台的协议实现（认证、收发）+ 消息轮询事件源（`event_source.py`），当前有 `imChannels/wechat/` |
 
 ```mermaid
 graph TB
@@ -1176,7 +1176,7 @@ graph TB
     end
 
     subgraph Adapters["imChannels/ (适配器层)"]
-        WC["WeChatChannel<br/>长轮询 + iLink 协议"]
+        WC["WeChatChannel<br/>事件源轮询 + iLink 协议"]
         WBC["WebChannel<br/>RPC + SSE, 无轮询"]
     end
 
@@ -1204,7 +1204,7 @@ graph TB
 
 ### 11.2 ChannelAdapter 抽象基类
 
-定义于 `modules/channels/base.py`，所有通道适配器的统一契约，成员分四类：
+定义于 `modules/channels/base.py`，所有通道适配器的统一契约，成员分五类：
 
 | 类别 | 成员 | 说明 |
 |------|------|------|
@@ -1212,6 +1212,7 @@ graph TB
 | 抽象 property | `channel_type -> str`、`is_running -> bool` | 通道唯一标识（如 `"wechat"`）与活跃状态 |
 | 抽象方法（生命周期/消息） | `start()` / `stop()` / `restore_session() -> bool` / `send(content, msg_type, **kwargs)` / `get_messages(limit)` / `get_status()` | 启动、停止、会话恢复、消息收发与状态上报 |
 | 抽象方法（**通道工具落点**） | `ask_user(request_id, question) -> str` / `get_context() -> str` / `clear_context() -> str` | 通道侧实现：阻塞提问并返回用户回答文本、读取本通道会话历史、归档旧会话开启新会话 |
+| 具体方法（**事件源挂载**） | `attach_source(source: EventSource)` / `detach_source()` | 将输入事件源（如微信轮询源）挂到通道：`start()`/`stop()` 联动启停所挂源，源经 `publish` 投递总线绕回 `handle_event` |
 
 同文件还定义了统一数据模型：`ChannelMessage`（消息）、`ChannelStatus`（状态）、`BotConfig`（配置）。
 
@@ -1286,7 +1287,7 @@ sequenceDiagram
 ① 构造适配器:   WebChannel() + WeChatChannel(client, authenticator)
 ② 注册:         channel_manager.register(web/wechat)     → ChannelManager
 ③ 装配 runtime: build_channel_runtime(ch) × N            → 私有 orchestrator + registry
-④ 恢复会话:     wechat_channel.restore_session()          → DB bot_token + 自动启动轮询
+④ 恢复会话:     wechat_channel.restore_session()          → DB bot_token + 自动启动事件源轮询
 ⑤ 注入路由:     configure_routes / configure_channel_routes(channel_manager)
                 → agent/* RPC 与用户应答经 ChannelManager 落到对应通道
                 → imbot/* 管理接口同样经 ChannelManager 分发
@@ -1297,15 +1298,15 @@ sequenceDiagram
 | 维度 | Web 通道 (`modules/channels/web/channel.py`) | 微信通道 (`imChannels/wechat/channel.py`) |
 |------|----------------------------------------------|-------------------------------------------|
 | `CHANNEL_TYPE` | `"web"` | `"wechat"` |
-| 请求入口 | RPC `agent/router` 直入私有编排器 | 长轮询 `_poll_loop` → `_dispatch_incoming` → worker 线程跑编排器 |
-| `start()` | 仅置 `_running = True`（无轮询线程） | 启动守护轮询线程 + 更新会话状态 |
+| 请求入口 | RPC `agent/router` 直入私有编排器 | 事件源长轮询 → EventBus → `handle_event` → `_dispatch_incoming` → worker 线程跑编排器 |
+| `start()` | 仅置 `_running = True`（无事件源） | 启动事件源轮询线程 + 更新会话状态 |
 | `send()` | 无独立推送出口，结果经 SSE 按 request_id 下发 | iLink `sendmessage`（to_user_id/context_token 多级解析 + 持久化） |
 | `ask_user` | 经 `llm_events` 推送 SSE 事件给前端，阻塞等 RPC 应答 | 先 `send("[提问] …")` 给用户，再阻塞等 poll loop 收到回答 |
 | `get_context` / `clear_context` | 全局会话集（`history_store`） | 通道私有 agent 会话（`store.agent_sessions`，按 `CHANNEL_TYPE` 归档） |
 | EventSink | `SSEEventSink`（推送前端） | `LogEventSink`（静默落日志） |
 | LLM 日志 | 沿用全局 `llm.log_file` | `llm.log_file_<channel_type>` 或派生 `llm_engine_wechat.log` |
 
-新增通道步骤：在 `imChannels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`。
+新增通道步骤：在 `imChannels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`；有消息感知需求（IM 长轮询等）则另实现 `EventSource` 并 `attach_source` 挂载（见 §11.9）。
 
 ### 11.8 输出通道注册表（OutputDispatcher）
 
@@ -1358,7 +1359,7 @@ sequenceDiagram
 - 组合根 `Helix.py` 装配：`get_dispatcher().register("ilinkbot", wechat_channel, label="iLinkBot")`——`web_sse` 等后续输出通道只需一行注册；调度器启动前先 `cron_store.ensure_schema()`。
 - `cron.list` RPC 下发 `output_channels` 选项（`get_dispatcher().available()`），前端据此动态渲染下拉，无需硬编码通道清单。
 
-### 11.9 外部事件输入总线（EventBus + EventBroker）
+### 11.9 外部事件输入总线（EventSource + EventBus + EventBroker）
 
 §11.1-11.7 覆盖「请求-响应」路径（外部请求进入通道 → 私有编排器 → 回发），§11.8 输出注册表覆盖「系统主动推送」的输出侧。本节覆盖第三类路径：**外部世界事件的输入**——事件源（定时器线程 / IM 轮询线程 / 未来 Webhook/MCP/邮件）与处理方（通道）完全解耦，中间经进程内输入事件总线衔接。三条路径正交不重叠：`llm_events`（LLM 输出事件/SSE）只服务前端流式展示、OutputDispatcher 只做跨通道输出、EventBus 只做外部输入。
 
@@ -1376,6 +1377,8 @@ sequenceDiagram
 | `modules/events/base.py` | `EventBase`（event_id / occurred_at / received_at / payload）；`TimerEvent`（`event_type="cron.timer"`）、`WechatEvent`（`event_type="wechat.message"`）携带各源专有字段 |
 | `modules/events/bus.py` | `EventBus` 进程内发布/订阅：`publish()` 非阻塞（入队即返回，绝不阻塞生产线程），每订阅者独立 FIFO 队列 + 消费者线程；stop / unsubscribe 幂等；`get_event_bus()` 进程级单例 |
 | `modules/events/broker.py` | `EventBroker` 路由：`register` 校验处理器 `handle_event` 契约；未注册类型 warning 丢弃（dropped 计数）、处理器异常 catch 后 log_error（failed 计数）不中断消费线程；`get_event_broker()` 单例；`__call__` 兼作总线消费入口 |
+| `modules/events/event_source.py` | `EventSource` 抽象基类：工作线程生命周期（start/stop 幂等 + stop_event）、`publish` 计数与最近发布时间戳、`get_status()` 快照、`join_timeout`；轮询循环异常终止时置 stop_event 并记录 `last_error`，终止状态立即可观测 |
+| `modules/events/source_registry.py` | `EventSourceRegistry` 进程级单例：`register`/`unregister`（重复注册幂等）、`start_all`/`stop_all` 统一启停、`snapshot()` 状态快照 |
 
 事件路由时序：
 
@@ -1399,15 +1402,24 @@ sequenceDiagram
 
 线程模型：EventBus 本身不是线程；每个订阅者一条 `eventbus-consumer` 消费者线程（当前组合根仅订阅 EventBroker，故全局恰一条）。消费者线程只做「取事件 → 查路由 → 调 handle_event」，重活由 handler 自起的 worker 线程承担——长任务不阻塞后续事件处理。
 
-组合根装配（`Helix.py`，位于 §11.6 步骤 ② cron 注册之后）：
+**事件源生命周期与挂载**：事件源统一实现 `EventSource` 抽象基类（工作线程 + 幂等 start/stop + `publish` 计数 + `get_status` 快照），组合根逐一 `register()` 进 `EventSourceRegistry`，并对每个通道调 `attach_source(source)` 挂载——通道 start/stop 时联动启停所挂源。进程退出经 atexit 回收，注册顺序即执行顺序（LIFO）：`stop_all` 后注册先执行，先停全部生产源、再停总线消费者，避免停止窗口内的孤发事件。
+
+组合根装配（`Helix.py` ②''''，位于 §11.6 步骤 ② cron 注册之后）：
 
 ```python
-from modules.events import get_event_broker, get_event_bus
+from modules.events import get_event_broker, get_event_bus, get_source_registry
 event_broker = get_event_broker()
 event_broker.register("cron.timer", cron_channel)
 event_broker.register("wechat.message", wechat_channel)
 get_event_bus().subscribe(event_broker)
 atexit.register(get_event_bus().stop)
+
+source_registry = get_source_registry()
+source_registry.register(get_scheduler())            # cron 调度器即 CronEventSource
+wechat_channel.attach_source(wechat_channel._source) # WechatEventSource 挂载
+source_registry.register(wechat_channel._source)
+cron_channel.attach_source(get_scheduler())
+atexit.register(source_registry.stop_all)            # LIFO: 先停生产源, 再停总线消费者
 ```
 
 **cron 集成**：`scheduler.py` 移除任务执行职责（`bind` / `_run_task` / `_run_system` / `_run_agent` 迁出），`_tick` 命中时仅 `publish(TimerEvent(task=task))`；执行逻辑迁移至 `CronChannel.handle_event`（自起 `cron-{id}` worker）——调度线程与任务执行彻底分离，长任务不再占用 tick 循环。

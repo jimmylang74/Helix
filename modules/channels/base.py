@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, Optional
 
 from modules.events.base import EventBase
+from modules.events.event_source import EventSource
 
 
 # ── Data Models ────────────────────────────────────────────────────────────
@@ -163,8 +164,11 @@ class ChannelClient(ABC):
 class ChannelAdapter(ABC):
     """High-level channel adapter combining auth + client + lifecycle.
 
-    Each concrete adapter (WeChat, Telegram, ...) owns one long-polling
-    background thread and exposes a simple start / stop / send interface.
+    Each concrete adapter (WeChat, Telegram, ...) exposes a simple
+    start / stop / send interface. 外部世界事件的感知已抽离为 EventSource
+    对象（轮询 getupdates / 定时器 tick 等），通道按需持有：单源通道可直接
+    持有并委托 start/stop，多源通道用 attach_source 挂载（_start_sources /
+    _stop_sources 随通道启停驱动）。
     """
 
     # 通道私有运行时（组合根调用 build_channel_runtime 后挂载，
@@ -215,6 +219,45 @@ class ChannelAdapter(ABC):
         Returns True if a valid session was restored and polling can resume.
         """
         ...
+
+    # ── 事件源挂载（多源通道 / 独立源的统一生命周期管理）──────────────────
+    #
+    # 事件源是"感知端"（轮询 getupdates / 定时器 tick / 未来 Webhook 注册后
+    # 待命），通道是"消费端"（handle_event）。单源通道可直接构造并持有事件源
+    # （如 WeChatChannel 持 WechatEventSource）并随 start/stop 委托；需要挂载
+    # 多个源的通道用本组方法登记，由 _start_sources/_stop_sources 统一驱动。
+
+    def __init__(self) -> None:
+        self._event_sources: Dict[str, EventSource] = {}
+
+    def attach_source(self, source: EventSource) -> bool:
+        """挂载一个事件源（以 source_name 为键）。重复挂载返回 False。"""
+        if source.source_name in self._event_sources:
+            return False
+        self._event_sources[source.source_name] = source
+        return True
+
+    def detach_source(self, source_name: str) -> bool:
+        """卸载事件源（不停止其线程）。返回是否曾挂载。"""
+        if source_name not in self._event_sources:
+            return False
+        del self._event_sources[source_name]
+        return True
+
+    @property
+    def event_sources(self) -> List[EventSource]:
+        """已挂载事件源列表（按挂载顺序）。"""
+        return list(self._event_sources.values())
+
+    def _start_sources(self) -> None:
+        """启动全部挂载事件源（逐个 start，各幂等）。"""
+        for source in self._event_sources.values():
+            source.start()
+
+    def _stop_sources(self) -> None:
+        """停止全部挂载事件源（逐个 stop，各幂等）。"""
+        for source in self._event_sources.values():
+            source.stop()
 
     # ── 通道相关工具的通道侧实现（注册见 runtime.py）─────────────────
 

@@ -24,7 +24,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from modules.utils.logger import log_error, log_info, log_warning
-from imChannels.wechat.crypto import (
+from modules.channels.wechat.crypto import (
     aes_decrypt,
     aes_encrypt,
     decode_aes_key,

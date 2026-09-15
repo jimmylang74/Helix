@@ -7,13 +7,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from imChannels.wechat.crypto import (
+from modules.channels.wechat.crypto import (
     aes_decrypt,
     aes_encrypt,
     decode_aes_key,
     generate_aes_key,
 )
-from imChannels.wechat.ilink_client import (
+from modules.channels.wechat.ilink_client import (
     ILinkBotsClient,
     MEDIA_TYPE_FILE,
     MEDIA_TYPE_IMAGE,
@@ -149,7 +149,7 @@ class TestParseMediaItem:
 
 class TestChannelHelpers:
     def test_media_type_str(self):
-        from imChannels.wechat.channel import _media_type_str
+        from modules.channels.wechat.channel import _media_type_str
 
         assert _media_type_str(MEDIA_TYPE_FILE) == "file"
         assert _media_type_str(MEDIA_TYPE_VOICE) == "voice"
@@ -158,27 +158,27 @@ class TestChannelHelpers:
         assert _media_type_str(99) == "text"
 
     def test_safe_media_name(self):
-        from imChannels.wechat.channel import _safe_media_name
+        from modules.channels.wechat.channel import _safe_media_name
 
         assert _safe_media_name("report.pdf", MEDIA_TYPE_FILE) == "report.pdf"
         assert _safe_media_name("", MEDIA_TYPE_FILE).startswith("media_")
         assert "/" not in _safe_media_name("../etc/passwd", MEDIA_TYPE_FILE)
 
     def test_estimate_voice_seconds(self):
-        from imChannels.wechat.channel import _estimate_voice_seconds
+        from modules.channels.wechat.channel import _estimate_voice_seconds
 
         assert _estimate_voice_seconds(2048) == 1
         assert _estimate_voice_seconds(20480) == 10
         assert _estimate_voice_seconds(0) == 1
 
     def test_media_msg_type(self):
-        from imChannels.wechat.channel import _media_msg_type
+        from modules.channels.wechat.channel import _media_msg_type
 
         assert _media_msg_type("file") == "file"
         assert _media_msg_type(None) is None
 
     def test_media_extension(self):
-        from imChannels.wechat.channel import _media_extension
+        from modules.channels.wechat.channel import _media_extension
 
         assert _media_extension(MEDIA_TYPE_VOICE) == ".amr"
         assert _media_extension(MEDIA_TYPE_FILE) == ".bin"
@@ -188,7 +188,7 @@ class TestChannelHelpers:
 
 
 class TestILinkMediaMethods:
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_getuploadurl_sends_correct_payload(self, mock_cls):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {

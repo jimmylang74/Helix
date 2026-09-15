@@ -1,4 +1,4 @@
-"""Unit tests for imChannels.wechat.ilink_client ILinkBotsClient."""
+"""Unit tests for modules.channels.wechat.ilink_client ILinkBotsClient."""
 
 import json
 from unittest.mock import MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from imChannels.wechat.ilink_client import (
+from modules.channels.wechat.ilink_client import (
     ILinkBotsClient,
     ILINK_BASE_URL,
     UPLOAD_MEDIA_TYPE_FILE,
@@ -50,7 +50,7 @@ class TestProxy:
 
 
 class TestPostJson:
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_post_json_sends_json_with_auth_headers(self, mock_session_cls):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"ok": True}
@@ -78,7 +78,7 @@ class TestPostJson:
         assert headers["Content-Type"] == "application/json"
         assert "X-WECHAT-UIN" in headers
 
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_post_json_no_token_skips_auth(self, mock_session_cls):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {}
@@ -92,7 +92,7 @@ class TestPostJson:
         headers = mock_session.post.call_args[1]["headers"]
         assert "Authorization" not in headers
 
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_post_json_raises_on_request_error(self, mock_session_cls):
         mock_session = MagicMock()
         mock_session.post.side_effect = requests.ConnectionError("fail")
@@ -102,7 +102,7 @@ class TestPostJson:
         with pytest.raises(requests.ConnectionError):
             client._post_json("ep")
 
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_post_json_raises_on_json_error(self, mock_session_cls):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
@@ -117,7 +117,7 @@ class TestPostJson:
 
 
 class TestGetHelper:
-    @patch("imChannels.wechat.ilink_client.requests.Session")
+    @patch("modules.channels.wechat.ilink_client.requests.Session")
     def test_get_sends_get_request(self, mock_session_cls):
         mock_resp = MagicMock()
         mock_resp.json.return_value = {"qrcode": "abc"}

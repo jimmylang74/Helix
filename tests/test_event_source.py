@@ -14,10 +14,10 @@ from modules.events import (
     WechatEvent,
     get_source_registry,
 )
-from imChannels.wechat import event_source as wechat_source_mod
-from imChannels.wechat.authenticator import WeChatAuthenticator
-from imChannels.wechat.event_source import WechatEventSource
-from imChannels.wechat.ilink_client import ILinkBotsClient
+from modules.channels.wechat import event_source as wechat_source_mod
+from modules.channels.wechat.authenticator import WeChatAuthenticator
+from modules.channels.wechat.event_source import WechatEventSource
+from modules.channels.wechat.ilink_client import ILinkBotsClient
 
 WAIT_TIMEOUT = 5.0
 

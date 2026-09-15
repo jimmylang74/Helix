@@ -2,7 +2,7 @@
 WeChat iLinkBot channel adapter — 消费端（感知已抽离至 WechatEventSource）。
 
 本模块不再拥有独立轮询线程：getupdates 长轮询、媒体感知、落库、SSE 广播与
-WechatEvent 发布整体迁入 imChannels/wechat/event_source.py（EventSource 子类）。
+WechatEvent 发布整体迁入 modules/channels/wechat/event_source.py（EventSource 子类）。
 本通道保留消费端职责：持有事件源（self._source）并委托 start/stop，send/send_file/
 send_voice 发送，handle_event 按发送方状态路由（待回答提问→broker.answer /
 任务进行中→忙碌提示 / 新请求→worker 跑私有编排器并回发结果）。
@@ -25,15 +25,15 @@ from modules.channels.store import (
     save_message,
 )
 from modules.events import EventBase
-from imChannels.wechat.authenticator import WeChatAuthenticator
-from imChannels.wechat.ilink_client import (
+from modules.channels.wechat.authenticator import WeChatAuthenticator
+from modules.channels.wechat.ilink_client import (
     ILinkBotsClient,
     MEDIA_TYPE_FILE,
     MEDIA_TYPE_VOICE,
     UPLOAD_MEDIA_TYPE_FILE,
     UPLOAD_MEDIA_TYPE_VOICE,
 )
-from imChannels.wechat.crypto import (
+from modules.channels.wechat.crypto import (
     aes_encrypt,
     encode_aes_key_wire,
     generate_aes_key,
@@ -41,7 +41,7 @@ from imChannels.wechat.crypto import (
 from modules.utils.logger import log_error, log_info, log_tool_call
 # 感知层辅助函数自事件源模块迁出；此处重导出以保持既有引用兼容
 # （channel.send 内部使用 + tests/test_media.py 直接导入 channel）
-from imChannels.wechat.event_source import (
+from modules.channels.wechat.event_source import (
     WechatEventSource,
     _extract_text,
     _media_type_str,

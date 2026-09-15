@@ -246,6 +246,12 @@ You can dynamically switch providers and fill in connection parameters from the 
 │   │   ├── routes.py         #     imbot/* RPC and /api/imbot-stream SSE
 │   │   ├── events.py         #     Channel message broadcast/subscribe (SSE)
 │   │   ├── store.py          #     Channel message and session-context persistence (SQLite)
+│   │   ├── wechat/           #     WeChat iLinkBot channel (IM channel adapter)
+│   │   │   ├── channel.py    #       Adapter: messaging / agent dispatch / tool trio (polling lives in the event source)
+│   │   │   ├── event_source.py #     WeChat polling event source (WechatEventSource, lifecycle tied to the channel)
+│   │   │   ├── authenticator.py #   QR-code login and session restore
+│   │   │   ├── ilink_client.py #    iLink API HTTP client
+│   │   │   └── README.md     #       WeChat channel documentation
 │   │   ├── web/              #     Web quick-test channel (channel/event_sink/history_store)
 │   │   └── cron/              #     Scheduled-task module (Helix-managed scheduling)
 │   │       ├── store.py       #       Task definitions (db/cron.json) + run results (db/cron.db SQLite)
@@ -289,13 +295,6 @@ You can dynamically switch providers and fill in connection parameters from the 
 │       ├── __init__.py
 │       ├── plugin.md         #     Plugin authoring guide
 │       └── calculator_tool.py #    Example: safe calculator tool
-├── imChannels/               # IM channel adapters (ChannelAdapter implementations)
-│   └── wechat/               #   WeChat iLinkBot channel
-│       ├── channel.py        #     Adapter: messaging / agent dispatch / tool trio (polling lives in the event source)
-│       ├── event_source.py   #     WeChat polling event source (WechatEventSource, lifecycle tied to the channel)
-│       ├── authenticator.py  #     QR-code login and session restore
-│       ├── ilink_client.py   #     iLink API HTTP client
-│       └── README.md         #     WeChat channel documentation
 ├── mcp/                      # MCP server implementations (stdio / Streamable HTTP transport)
 │   ├── searxng_server.py     #   SearXNG search MCP server
 │   ├── image_search_server.py #   Image search MCP server (Pexels/Unsplash)

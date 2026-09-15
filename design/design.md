@@ -1161,7 +1161,7 @@ sequenceDiagram
 | 部分 | 目录 | 职责 |
 |------|------|------|
 | **框架层** | `modules/channels/` | 通道抽象基类、生命周期管理器、每通道运行时装配、RPC/SSE 路由、消息持久化、输出通道注册表 |
-| **适配器层** | `imChannels/<type>/` | 具体平台的协议实现（认证、收发）+ 消息轮询事件源（`event_source.py`），当前有 `imChannels/wechat/` |
+| **适配器层** | `modules/channels/<type>/` | 具体平台的协议实现（认证、收发）+ 消息轮询事件源（`event_source.py`），当前有 `modules/channels/wechat/` |
 
 ```mermaid
 graph TB
@@ -1175,7 +1175,7 @@ graph TB
         RT["runtime.py<br/>build_channel_runtime<br/>→ ChannelRuntime"]
     end
 
-    subgraph Adapters["imChannels/ (适配器层)"]
+    subgraph Adapters["modules/channels/<type>/ (适配器层)"]
         WC["WeChatChannel<br/>事件源轮询 + iLink 协议"]
         WBC["WebChannel<br/>RPC + SSE, 无轮询"]
     end
@@ -1295,7 +1295,7 @@ sequenceDiagram
 
 ### 11.7 内置通道差异对比
 
-| 维度 | Web 通道 (`modules/channels/web/channel.py`) | 微信通道 (`imChannels/wechat/channel.py`) |
+| 维度 | Web 通道 (`modules/channels/web/channel.py`) | 微信通道 (`modules/channels/wechat/channel.py`) |
 |------|----------------------------------------------|-------------------------------------------|
 | `CHANNEL_TYPE` | `"web"` | `"wechat"` |
 | 请求入口 | RPC `agent/router` 直入私有编排器 | 事件源长轮询 → EventBus → `handle_event` → `_dispatch_incoming` → worker 线程跑编排器 |
@@ -1306,7 +1306,7 @@ sequenceDiagram
 | EventSink | `SSEEventSink`（推送前端） | `LogEventSink`（静默落日志） |
 | LLM 日志 | 沿用全局 `llm.log_file` | `llm.log_file_<channel_type>` 或派生 `llm_engine_wechat.log` |
 
-新增通道步骤：在 `imChannels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`；有消息感知需求（IM 长轮询等）则另实现 `EventSource` 并 `attach_source` 挂载（见 §11.9）。
+新增通道步骤：在 `modules/channels/<type>/` 实现 `ChannelAdapter` 全部抽象方法（含三件套落点）→ 在组合根构造并 `channel_manager.register(...)` → 对其调用 `build_channel_runtime(ch)`；有消息感知需求（IM 长轮询等）则另实现 `EventSource` 并 `attach_source` 挂载（见 §11.9）。
 
 ### 11.8 输出通道注册表（OutputDispatcher）
 

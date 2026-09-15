@@ -13,7 +13,7 @@ import base64
 
 from modules.channels.base import BotConfig, ChannelAuthenticator
 from modules.channels.store import save_session, get_session
-from imChannels.wechat.ilink_client import ILinkBotsClient
+from modules.channels.wechat.ilink_client import ILinkBotsClient
 from modules.utils.logger import log_error, log_info
 
 

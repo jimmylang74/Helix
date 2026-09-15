@@ -244,6 +244,12 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │   │   ├── routes.py          #     imbot/* RPC 与 /api/imbot-stream SSE
 │   │   ├── events.py          #     通道消息广播/订阅 (SSE)
 │   │   ├── store.py           #     通道消息与会话上下文持久化 (SQLite)
+│   │   ├── wechat/            #     微信 iLinkBot 通道 (IM 通道适配器)
+│   │   │   ├── channel.py     #       适配器: 收发/agent 分发/通道工具落点 (轮询在事件源)
+│   │   │   ├── event_source.py #      微信轮询事件源 (WechatEventSource, 随通道生命周期启停)
+│   │   │   ├── authenticator.py #     QR 码登录与会话恢复
+│   │   │   ├── ilink_client.py #      iLink API HTTP 客户端
+│   │   │   └── README.md      #       微信通道详细文档
 │   │   ├── web/               #     Web 快速测试通道 (channel/event_sink/history_store)
 │   │   └── cron/              #     定时任务模块 (Helix 自维护调度)
 │   │       ├── store.py       #       任务定义 (db/cron.json) + 运行结果 (db/cron.db SQLite)
@@ -287,13 +293,6 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 │       ├── __init__.py
 │       ├── plugin.md          #     插件编写指南
 │       └── calculator_tool.py #     示例: 安全计算器工具
-├── imChannels/                # IM 通道适配器 (ChannelAdapter 实现)
-│   └── wechat/                #   微信 iLinkBot 通道
-│       ├── channel.py         #     适配器: 收发/agent 分发/通道工具落点 (轮询在事件源)
-│       ├── event_source.py    #     微信轮询事件源 (WechatEventSource, 随通道生命周期启停)
-│       ├── authenticator.py   #     QR 码登录与会话恢复
-│       ├── ilink_client.py    #     iLink API HTTP 客户端
-│       └── README.md          #     微信通道详细文档
 ├── mcp/                       # MCP Server 实现 (stdio / Streamable HTTP 传输)
 │   ├── searxng_server.py      #   SearXNG 搜索 MCP Server
 │   ├── image_search_server.py #   图片搜索 MCP Server (Pexels/Unsplash)

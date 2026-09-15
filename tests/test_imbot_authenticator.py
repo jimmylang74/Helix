@@ -1,4 +1,4 @@
-"""Unit tests for imChannels.wechat.authenticator WeChatAuthenticator."""
+"""Unit tests for modules.channels.wechat.authenticator WeChatAuthenticator."""
 
 import os
 import tempfile
@@ -37,7 +37,7 @@ def mock_client():
 
 @pytest.fixture
 def authenticator(mock_client):
-    from imChannels.wechat.authenticator import WeChatAuthenticator
+    from modules.channels.wechat.authenticator import WeChatAuthenticator
     return WeChatAuthenticator(mock_client)
 
 

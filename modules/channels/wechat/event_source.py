@@ -26,8 +26,8 @@ from typing import Any, Dict, Optional, Tuple
 from modules.channels import events
 from modules.channels.store import save_message, update_session_status
 from modules.events import EventSource, WechatEvent
-from imChannels.wechat.authenticator import WeChatAuthenticator
-from imChannels.wechat.ilink_client import (
+from modules.channels.wechat.authenticator import WeChatAuthenticator
+from modules.channels.wechat.ilink_client import (
     ILinkBotsClient,
     MEDIA_TYPE_FILE,
     MEDIA_TYPE_IMAGE,

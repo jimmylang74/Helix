@@ -107,9 +107,9 @@ def main():
     from modules.channels.routes import configure as configure_channel_routes
     from modules.channels.runtime import build_channel_runtime
     from modules.channels.web.channel import WebChannel
-    from imChannels.wechat.authenticator import WeChatAuthenticator
-    from imChannels.wechat.channel import WeChatChannel
-    from imChannels.wechat.ilink_client import ILinkBotsClient
+    from modules.channels.wechat.authenticator import WeChatAuthenticator
+    from modules.channels.wechat.channel import WeChatChannel
+    from modules.channels.wechat.ilink_client import ILinkBotsClient
 
     # ① Host 驱动共享工具池：扫描插件目录 + 读取 Helix.json 配置 + 装载 MCP。
     #    该池仅作为通用工具来源；各通道私有 registry 在装配时从此复制，

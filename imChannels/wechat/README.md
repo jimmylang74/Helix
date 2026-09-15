@@ -24,13 +24,15 @@
                ▼
 ┌──────────────────────────────────────────────────────────────┐
 │  WeChatChannel (channel.py) — ChannelAdapter 实现             │
-│  高层适配器：生命周期 + 发送 + 轮询 + 通道工具落点            │
+│  高层适配器：生命周期 + 发送 + 通道工具落点 + 事件源挂载     │
 │  ┌──────────────────────────────────────────────────────┐    │
+│  │  事件源 event_source.py 承担感知                      │    │
 │  │  _poll_loop → _handle_update → save_message          │    │
 │  │       ├→ publish(WechatEvent) → EventBus             │    │
 │  │       └→ broker → handle_event → _dispatch_incoming  │    │
 │  │  send()        →  sendmessage()      →  broadcast    │    │
 │  │  ask_user / get_context / clear_context (三件套落点)  │    │
+│  │  attach_source → 事件源生命周期联动 (启停随通道)       │    │
 │  └──────────────────────────────────────────────────────┘    │
 └──────┬───────────────────────────────────┬───────────────────┘
        │ runtime.broker / orchestrator      │
@@ -66,7 +68,8 @@
 |------|------|
 | `ilink_client.py` | iLink API HTTP 客户端，封装 7 个端点 |
 | `authenticator.py` | QR 码登录流程，session 持久化 |
-| `channel.py` | `ChannelAdapter` 实现：轮询循环、消息处理、发送、SSE 广播、agent 私有 runtime 分发、通道工具三件套落点（ask_user / get_context / clear_context） |
+| `event_source.py` | `WechatEventSource`（`EventSource` 子类）：轮询循环（`_poll_loop`）、消息处理（`_handle_update`）、`publish(WechatEvent)` 投递事件总线、token 失效终止并清认证 |
+| `channel.py` | `ChannelAdapter` 实现：消息收发、SSE 广播、agent 私有 runtime 分发、通道工具三件套落点（ask_user / get_context / clear_context）、`attach_source` 挂载事件源 |
 
 > 多通道框架抽象基类与每通道运行时装配见 [design/design.md §11](../../design/design.md#11-多通道架构设计)。
 
@@ -134,7 +137,7 @@ wait → expired (二维码过期，需重新获取)
 Helix.py → WeChatChannel.restore_session()
          → WeChatAuthenticator.restore_from_store()
          → get_session("wechat") 从 DB 读取 bot_token
-         → 恢复认证状态 + 自动启动轮询
+         → 恢复认证状态 + 自动启动事件源轮询
 ```
 
 ---
@@ -144,7 +147,7 @@ Helix.py → WeChatChannel.restore_session()
 ### 轮询循环
 
 ```
-WeChatChannel._poll_loop() (后台线程)
+WechatEventSource._poll_loop() (事件源线程, event_source.py)
     │
     ├─ ILinkBotsClient.getupdates(get_updates_buf)
     │   POST https://ilinkai.weixin.qq.com/ilink/bot/getupdates
@@ -193,7 +196,7 @@ WeChatChannel._poll_loop() (后台线程)
 ### 消息处理流程
 
 ```
-_handle_update(update)
+WechatEventSource._handle_update(update)  (event_source.py)
     │
     ├─ 提取字段：msg_id, from_user_id, from_user_name, context_token, create_time_ms
     ├─ _extract_text(update) — 从 item_list 提取可读文本
@@ -213,7 +216,7 @@ _handle_update(update)
 
 | 场景 | errcode | 处理 |
 |------|---------|------|
-| bot_token 失效 | `-14` | 停止轮询，标记 `token_expired`，清空 bot_token，需重新扫码 |
+| bot_token 失效 | `-14` | 停止事件源轮询，标记 `token_expired`，清空 bot_token，需重新扫码 |
 | 其他错误 | 非 0 | 记录日志，继续轮询 |
 | 网络异常 | — | 指数退避重试（最大 30s） |
 
@@ -221,7 +224,7 @@ _handle_update(update)
 
 ## Agent 请求处理（通道私有 runtime 分发）
 
-微信通道持有组合根装配的**私有 agent 运行时**（`ChannelRuntime`：私有编排器 + 私有 ToolRegistry + 私有 UserQuestionBroker），收到的消息不再只做记录，而是路由进本通道的编排器执行。事件处理入口为 `handle_event(event)`：轮询线程的感知止步于 `publish(WechatEvent)`，总线消费者线程经 EventBroker 按 `event_type` 路由回本通道处理器（详见 [design/design.md §11.9](../../design/design.md#119-外部事件输入总线eventbus--eventbroker)），内容分发仍按发送方状态路由。
+微信通道持有组合根装配的**私有 agent 运行时**（`ChannelRuntime`：私有编排器 + 私有 ToolRegistry + 私有 UserQuestionBroker），收到的消息不再只做记录，而是路由进本通道的编排器执行。事件处理入口为 `handle_event(event)`：事件源线程的感知止步于 `publish(WechatEvent)`，总线消费者线程经 EventBroker 按 `event_type` 路由回本通道处理器（详见 [design/design.md §11.9](../../design/design.md#119-外部事件输入总线eventbus--eventbroker)），内容分发仍按发送方状态路由。
 
 ### 按发送方状态路由
 
@@ -268,7 +271,7 @@ _run_agent(sender_id, sender_name, content)
 
 | 工具 | WeChatChannel 实现 | 说明 |
 |------|-------------------|------|
-| `ask_user` | 校验 broker 就绪与是否已有等待中的提问 → `_request_sender` 定位提问目标 → `send("[提问] …")` 发给用户 → 记入 `_pending_ask` → `broker.ask(request_id, question)` **阻塞** worker 线程 | 回答经 poll loop 的 `_dispatch_incoming` 路由回 `broker.answer()`；请求结束时 `finally` 中 `broker.cancel()` 兜底唤醒 |
+| `ask_user` | 校验 broker 就绪与是否已有等待中的提问 → `_request_sender` 定位提问目标 → `send("[提问] …")` 发给用户 → 记入 `_pending_ask` → `broker.ask(request_id, question)` **阻塞** worker 线程 | 回答经事件源轮询 → `handle_event` → `_dispatch_incoming` 路由回 `broker.answer()`；请求结束时 `finally` 中 `broker.cancel()` 兜底唤醒 |
 | `get_context` | `get_active_agent_context("wechat")` 读取本通道进行中会话的全部记录，拼装为「用户请求 / 最终结果」列表 | 已归档会话不参与拼装 |
 | `clear_context` | `archive_agent_session("wechat")` 归档当前会话（全部记录保存入库）并开始新会话 | 无会话时返回无需清除 |
 
@@ -421,7 +424,7 @@ GET /api/imbot-stream?channel=wechat
 
 ### 广播时机
 
-- **incoming**: `_handle_update()` 收到新消息时
+- **incoming**: `WechatEventSource._handle_update()` 收到新消息时
 - **outgoing**: `send()` 成功发送消息时
 
 ---

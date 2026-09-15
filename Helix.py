@@ -183,13 +183,25 @@ def main():
     #      → EventBroker 按 event_type 路由到 Channel 处理器。消息类型与
     #      Channel 类型解耦 —— 未来新增消息源或切换处理方（如 Thinking
     #      Channel）只改此处注册，生产端零改动
-    from modules.events import get_event_broker, get_event_bus
+    from modules.events import get_event_broker, get_event_bus, get_source_registry
 
     event_broker = get_event_broker()
     event_broker.register("cron.timer", cron_channel)
     event_broker.register("wechat.message", wechat_channel)
     get_event_bus().subscribe(event_broker)
     atexit.register(get_event_bus().stop)
+
+    # ②'''' 事件源注册表装配：统一登记全部感知端（cron 调度器 / 微信轮询源），
+    #        Helix 退出时经 stop_all 统一回收感知线程。atexit 后注册先执行（LIFO）：
+    #        stop_all 先于 bus.stop —— 先停生产者、再停总线消费者
+    from modules.channels.cron.scheduler import get_scheduler
+
+    source_registry = get_source_registry()
+    source_registry.register(get_scheduler())
+    wechat_channel.attach_source(wechat_channel._source)
+    source_registry.register(wechat_channel._source)
+    cron_channel.attach_source(get_scheduler())
+    atexit.register(source_registry.stop_all)
 
     # ③ 每通道装配私有运行时（独立 LLM 后端/日志、事件出口、broker、
     #    工具表与编排器）；须在共享工具池就绪后执行，私有 registry

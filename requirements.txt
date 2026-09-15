@@ -11,4 +11,5 @@ pypinyin>=0.50
 json_repair>=0.61
 qrcode>=7.0
 mcp>=1.26
+openpyxl>=3.1
 

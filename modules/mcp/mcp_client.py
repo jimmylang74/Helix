@@ -9,13 +9,14 @@ Implements JSON-RPC 2.0 based MCP protocol for tool discovery and invocation.
 Auto-detects Streamable HTTP vs SSE when connecting to server type.
 """
 
+import ipaddress
 import json
 import os
 import queue
 import threading
 import subprocess
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from modules.utils.logger import log_error, log_info, log_tool_call, log_warning
@@ -50,6 +51,42 @@ class MCPTool:
 
     def __repr__(self) -> str:
         return f"MCPTool(name={self.name})"
+
+
+def _is_loopback_url(url: str) -> bool:
+    """True if the URL targets a loopback address.
+
+    Loopback endpoints (localhost / 127.0.0.0/8 / ::1) are by definition local
+    to the machine running Helix. Requests to them must never go through an
+    HTTP proxy: the proxy resolves the loopback against its own host, where no
+    MCP server is listening, and returns 502 Bad Gateway.
+    """
+    if not url:
+        return False
+    try:
+        host = urlparse(url).hostname
+    except ValueError:
+        return False
+    if not host:
+        return False
+    if host.lower() in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _configure_session(session: requests.Session, url: str) -> requests.Session:
+    """Bypass the process proxy for loopback endpoints.
+
+    requests honors HTTP_PROXY / HTTPS_PROXY from the process environment by
+    default (trust_env). Local MCP servers on the loopback must be reached
+    directly instead — see _is_loopback_url.
+    """
+    if _is_loopback_url(url):
+        session.trust_env = False
+    return session
 
 
 class MCPClient:
@@ -169,7 +206,7 @@ class MCPClient:
         log_info(f"MCP [{self.name}] connecting via SSE: {sse_url}")
 
         self._sse_stop.clear()
-        self._sse_session = requests.Session()
+        self._sse_session = _configure_session(requests.Session(), sse_url)
 
         try:
             # Start SSE listener in background thread
@@ -286,7 +323,7 @@ class MCPClient:
     def _try_streamable_http(self, base_url: str) -> bool:
         """Try connecting via Streamable HTTP. Returns True on success."""
         try:
-            self._http_session = requests.Session()
+            self._http_session = _configure_session(requests.Session(), base_url)
             self._http_endpoint = base_url
             self._active_protocol = "streamable_http"
 

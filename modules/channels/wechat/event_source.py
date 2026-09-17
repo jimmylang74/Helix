@@ -168,11 +168,37 @@ class WechatEventSource(EventSource):
         if stopped:
             update_session_status("wechat", "disconnected")
             log_info("[WeChat] Polling stopped")
+            # super().stop() 已置 _thread=None，is_running/thread_alive 均正确反映停止态
+            self._broadcast_status()
         return stopped
+
+    def _broadcast_status(self, is_running: Optional[bool] = None) -> None:
+        """向 SSE 订阅者广播一次通道状态快照（前端据此刷新连接状态徽章）。
+
+        is_running 供 token 失效分支在线程内广播时显式传入终态
+        （此时线程未退出，self.is_running 仍为 True）。
+        """
+        events.broadcast("wechat", {
+            "type": "status",
+            "status": {
+                "channel_type": "wechat",
+                "is_running": self.is_running if is_running is None else is_running,
+                "is_authenticated": self._auth.is_authenticated,
+                "poll_timeout": self._poll_timeout,
+                "thread_alive": bool(self._thread and self._thread.is_alive()),
+                "error": self._last_error,
+            },
+        })
 
     # ── 感知循环 ───────────────────────────────────────────────────────
 
     def _loop(self) -> None:
+        # 启动状态广播放线程内、首次 poll 之前：与 token 失效广播（is_running=False）
+        # 同线程顺序执行，"已启动"恒先于"已终止"。若留在 start()（主线程、线程启动
+        # 之后）广播，首轮 poll 立即失效时二者会乱序，前端先看到终态后被错误覆盖回
+        # "已连接"（直到下轮 5s 状态轮询纠正）。基类 start() 先赋值 self._thread 再
+        # start()，此处 is_running/thread_alive 均已正确反映运行态。
+        self._broadcast_status()
         consecutive_errors = 0
         cycle_count = 0
         while not self._stop_event.is_set():
@@ -189,6 +215,7 @@ class WechatEventSource(EventSource):
                         self._auth._authenticated = False
                         self._client.set_bot_token("")
                         update_session_status("wechat", "token_expired")
+                        self._broadcast_status(is_running=False)
                         break
                     else:
                         log_error(f"[WeChat] getupdates returned errcode={errcode}: {data.get('errmsg', '')}")

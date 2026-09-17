@@ -1,12 +1,24 @@
 const ilinkbot = {
     _es: null,
     _pollTimer: null,
+    _statusTimer: null,
 
     async init() {
         const result = await apiCall('imbot.wechat.status');
         if (result.success) this._updateUI(result.status);
         this._connectSSE();
         this._loadConfig();
+        this._startStatusTimer();
+    },
+
+    _startStatusTimer() {
+        if (this._statusTimer) return;
+        this._statusTimer = setInterval(() => this._refreshStatus(), 5000);
+    },
+
+    async _refreshStatus() {
+        const result = await apiCall('imbot.wechat.status');
+        if (result.success) this._updateUI(result.status, false);
     },
 
     async _loadConfig() {
@@ -81,7 +93,7 @@ const ilinkbot = {
                 statusEl.style.color = 'green';
                 document.getElementById('ilinkbotStartBtn').style.display = '';
                 document.getElementById('ilinkbotLogoutBtn').style.display = '';
-                this._updateStatusBadge(true, true);
+                this._refreshStatus();
                 showToast(__('config.ilinkbot.authSuccess'), 'success');
             } else if (status === 'expired') {
                 clearInterval(this._pollTimer);
@@ -227,6 +239,7 @@ const ilinkbot = {
             try {
                 const data = JSON.parse(event.data);
                 if (data.type === 'message') this._appendMessage(data);
+                else if (data.type === 'status' && data.status) this._updateUI(data.status, false);
             } catch (e) { /* ignore parse errors */ }
         };
         es.onerror = () => {
@@ -236,7 +249,7 @@ const ilinkbot = {
         };
     },
 
-    _updateUI(status) {
+    _updateUI(status, fullSync = true) {
         if (!status) return;
         const running = status.is_running;
         const authed = status.is_authenticated;
@@ -246,12 +259,12 @@ const ilinkbot = {
         document.getElementById('ilinkbotLogoutBtn').style.display = authed ? '' : 'none';
         document.getElementById('ilinkbotQrArea').style.display = 'none';
 
-        if (status.poll_timeout) {
+        if (fullSync && status.poll_timeout) {
             document.getElementById('ilinkbotPollTimeout').value = status.poll_timeout;
         }
 
         this._updateStatusBadge(running, authed);
-        if (running) this.loadMessages();
+        if (fullSync && running) this.loadMessages();
     },
 
     _updateStatusBadge(running, authed) {

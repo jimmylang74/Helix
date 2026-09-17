@@ -315,8 +315,11 @@ class TestWechatEventSource:
                 assert kw["content"] == "hello"
                 assert kw["msg_type"] == "text"
 
-                broadcast.assert_called_once()
-                payload = broadcast.call_args.args[1]
+                # start() 也会广播一条 status，故按 type 过滤出消息广播再断言
+                msg_calls = [c for c in broadcast.call_args_list
+                             if c.args[1].get("type") == "message"]
+                assert len(msg_calls) == 1
+                payload = msg_calls[0].args[1]
                 assert payload["type"] == "message"
                 assert payload["direction"] == "incoming"
                 assert payload["content"] == "hello"
@@ -345,6 +348,44 @@ class TestWechatEventSource:
             status = src.get_status()
             assert status["status"] == "stopped"
             assert status["last_error"] == src.last_error
+
+    def test_start_broadcasts_status_event(self):
+        src = self._make_source()
+        with mock.patch("modules.channels.events.broadcast") as broadcast:
+            assert src.start() is True
+            try:
+                # 启动广播在轮询线程内发出（_loop 开头），需等待其到达
+                assert _wait_until(
+                    lambda: any(
+                        c.args[1].get("type") == "status"
+                        for c in broadcast.call_args_list
+                    )
+                )
+                status_calls = [c for c in broadcast.call_args_list
+                                if c.args[1].get("type") == "status"]
+                assert len(status_calls) == 1
+                payload = status_calls[0].args[1]["status"]
+                assert payload["is_running"] is True
+                assert payload["is_authenticated"] is True
+            finally:
+                src.stop()
+
+    def test_token_error_broadcasts_final_status(self):
+        client = _FakeClient()
+        client.responses.append({"errcode": -14, "errmsg": "invalid token"})
+        auth = _FakeAuth()
+        src = self._make_source(client=client, auth=auth)
+        with mock.patch("modules.channels.events.broadcast") as broadcast, mock.patch.object(
+            wechat_source_mod, "update_session_status"
+        ):
+            src.start()
+            assert _wait_until(lambda: not src.is_running)
+            status_calls = [c for c in broadcast.call_args_list
+                            if c.args[1].get("type") == "status"]
+            assert len(status_calls) == 2  # _loop 启动广播一次 + token 失效终态一次
+            payload = status_calls[-1].args[1]["status"]
+            assert payload["is_running"] is False
+            assert payload["is_authenticated"] is False
 
     def test_non_token_errcode_keeps_polling(self):
         client = _FakeClient()

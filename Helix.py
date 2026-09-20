@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from modules.utils.logger import init_logger, log_info, log_error, log_orchestrator
 from modules.config.config_manager import ConfigManager
 from modules.app.routes import api_bp, admin_bp, create_admin_routes
+from modules.channels.thinking.webhook_routes import thinking_bp
 from modules.channels.routes import imbot_bp
 from HelixCore.tools.base import tool_registry
 from modules.mcp.mcp_registry import registry as mcp_registry
@@ -44,6 +45,7 @@ def create_service_app() -> Flask:
     app.json.sort_keys = False
     app.register_blueprint(api_bp)
     app.register_blueprint(imbot_bp)
+    app.register_blueprint(thinking_bp)
     return app
 
 
@@ -61,6 +63,7 @@ def create_admin_app() -> Flask:
     app.register_blueprint(admin_bp)
     app.register_blueprint(api_bp)
     app.register_blueprint(imbot_bp)
+    app.register_blueprint(thinking_bp)
     create_admin_routes(app)
 
     # Add CORS headers
@@ -169,7 +172,7 @@ def main():
     # ②'' 输出通道注册表（通用跨通道推送）：wechat 通道即 iLinkBot 输出，
     #     任意通道可在此 register 为 sink，供 cron 等消费者跨通道推送
     from modules.channels.dispatcher import get_dispatcher
-    get_dispatcher().register("ilinkbot", wechat_channel, label="iLinkBot")
+    get_dispatcher().register("ilinkbot", wechat_channel, label="微信")
 
     # ②' 定时任务通道：Helix 启动即拉起调度器线程（区别于系统 crond，
     #    由 Helix 后端自维护）。不注册 ask_user 三件套 —— 定时任务为
@@ -178,6 +181,18 @@ def main():
 
     cron_channel = CronChannel()
     channel_manager.register(cron_channel)
+
+    # ②'''''' 思考通道：外部事件（RSS 订阅 / WebHook 推送）固定以 Thinking
+    #       意图交给智能体处理，结果落 db/thinking.db。不注册 ask_user
+    #       三件套 —— 自动处理无提问、无上下文关联（同 cron 通道）
+    from modules.channels.thinking.channel import ThinkingChannel
+    from modules.channels.thinking.sources import (
+        get_rss_source,
+        get_webhook_source,
+    )
+
+    thinking_channel = ThinkingChannel()
+    channel_manager.register(thinking_channel)
 
     # ②''' 外部事件输入总线装配：事件源（定时器线程/微信轮询线程）→ EventBus
     #      → EventBroker 按 event_type 路由到 Channel 处理器。消息类型与
@@ -188,6 +203,8 @@ def main():
     event_broker = get_event_broker()
     event_broker.register("cron.timer", cron_channel)
     event_broker.register("wechat.message", wechat_channel)
+    event_broker.register("rss.feed", thinking_channel)
+    event_broker.register("webhook.push", thinking_channel)
     get_event_bus().subscribe(event_broker)
     atexit.register(get_event_bus().stop)
 
@@ -201,6 +218,12 @@ def main():
     wechat_channel.attach_source(wechat_channel._source)
     source_registry.register(wechat_channel._source)
     cron_channel.attach_source(get_scheduler())
+    rss_source = get_rss_source()
+    webhook_source = get_webhook_source()
+    thinking_channel.attach_source(rss_source)
+    thinking_channel.attach_source(webhook_source)
+    source_registry.register(rss_source)
+    source_registry.register(webhook_source)
     atexit.register(source_registry.stop_all)
 
     # ③ 每通道装配私有运行时（独立 LLM 后端/日志、事件出口、broker、
@@ -209,6 +232,7 @@ def main():
     for ch in (web_channel, wechat_channel):
         build_channel_runtime(ch)
     build_channel_runtime(cron_channel, include_channel_tools=False)
+    build_channel_runtime(thinking_channel, include_channel_tools=False)
 
     wechat_channel.restore_session()
 
@@ -217,6 +241,7 @@ def main():
     from modules.channels.cron import store as cron_store
     cron_store.ensure_schema()
     cron_channel.start()
+    thinking_channel.start()
 
     # ④ 注入 routes：RPC agent/* 与用户应答/取消经 ChannelManager 落到对应通道，
     #    imbot/* 管理接口同样经 ChannelManager 分发

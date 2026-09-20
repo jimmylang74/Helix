@@ -320,7 +320,7 @@ class WeChatChannel(ChannelAdapter):
             channel_type=self.CHANNEL_TYPE,
             is_running=self._source.is_running,
             is_authenticated=self._auth.is_authenticated,
-            display_name="微信 iLinkBot",
+            display_name="微信",
             error=source_error,
             extra={
                 "poll_timeout": self._source.poll_timeout,

@@ -22,6 +22,8 @@ async function initConfigPage() {
     initMCPStatusStream();
     ilinkbot.init();
     loadCronTasks();
+    loadThinkingConfig();
+    loadThinkingEvents();
 }
 
 if (document.readyState === 'loading') {
@@ -1354,4 +1356,252 @@ function showCronResultOutput(resultId) {
 
 function closeCronResultsModal() {
     document.getElementById('cronResultsModal').style.display = 'none';
+}
+
+// ============================================================
+// Thinking（思考通道）
+// ============================================================
+
+let thinkingOutputChannelsCache = [];
+let thinkingFeedsCache = [];
+let thinkingEventsCache = [];
+
+async function loadThinkingConfig() {
+    const result = await apiCall('thinking.config');
+    if (!result.success) {
+        const el = document.getElementById('thinkingErrorInfo');
+        if (el) el.textContent = result.error || '';
+        return;
+    }
+    const cfg = result.config || {};
+    const channel = result.channel || {};
+    const sources = result.sources || {};
+
+    const badge = document.getElementById('thinkingChannelBadge');
+    const running = channel.is_running;
+    badge.textContent = running ? __('config.thinking.started') : __('config.thinking.stopped');
+    badge.className = 'badge ' + (running ? 'badge-success' : 'badge-secondary');
+
+    document.getElementById('thinkingConcurrency').value = cfg.concurrency || 0;
+
+    thinkingOutputChannelsCache = result.output_channels || [];
+    renderThinkingOutputChannelOptions();
+    setThinkingOutputChannelSelection(cfg.output_channels || []);
+
+    document.getElementById('thinkingRssInterval').value = (cfg.rss && cfg.rss.interval) || 300;
+    thinkingFeedsCache = (cfg.rss && cfg.rss.feeds) || [];
+    renderThinkingFeeds();
+
+    const wh = cfg.webhook || {};
+    document.getElementById('thinkingWebhookEnabled').checked = wh.enabled !== false;
+    document.getElementById('thinkingWebhookSecret').value = wh.secret || '';
+    document.getElementById('thinkingWebhookPath').value = wh.path || '/api/thinking/webhook';
+    const endpoint = document.getElementById('thinkingWebhookEndpoint');
+    if (endpoint) endpoint.textContent = API_BASE + (wh.path || '/api/thinking/webhook');
+    const whStatus = document.getElementById('thinkingWebhookStatus');
+    if (whStatus) whStatus.textContent = wh.enabled === false ? __('config.thinking.webhookDisabled') : __('config.thinking.webhookEnabled');
+
+    const rssStatus = sources.rss || {};
+    const rssEl = document.getElementById('thinkingRssStatus');
+    if (rssEl) rssEl.textContent = rssStatus.events_produced > 0 ? __('config.thinking.rssProduced', { n: rssStatus.events_produced }) : '';
+
+    const timeEl = document.getElementById('thinkingServerTimeInfo');
+    if (timeEl && result.server_time) timeEl.textContent = __('config.cron.serverTime') + ': ' + result.server_time;
+
+    document.getElementById('thinkingErrorInfo').textContent = channel.error || '';
+}
+
+function renderThinkingOutputChannelOptions() {
+    const container = document.getElementById('thinkingOutputChannelsCheckboxes');
+    if (!container || container.dataset.rendered) return;
+    if (!thinkingOutputChannelsCache.length) {
+        container.innerHTML = '<span class="text-muted">' + __('config.thinking.noOutputChannels') + '</span>';
+        return;
+    }
+    container.innerHTML = thinkingOutputChannelsCache.map(c => `
+        <label>
+            <input type="checkbox" class="intent-checkbox" data-container="thinkingOutputChannelsCheckboxes" value="${c.id}" onchange="updateMultiselectLabel('thinkingOutputChannelsCheckboxes')">
+            ${c.label || c.id}
+        </label>
+    `).join('');
+    container.dataset.rendered = '1';
+    updateMultiselectLabel('thinkingOutputChannelsCheckboxes');
+}
+
+function setThinkingOutputChannelSelection(keys) {
+    const container = document.getElementById('thinkingOutputChannelsCheckboxes');
+    if (!container) return;
+    container.querySelectorAll('.intent-checkbox').forEach(cb => {
+        cb.checked = (keys || []).includes(cb.value);
+    });
+    updateMultiselectLabel('thinkingOutputChannelsCheckboxes');
+}
+
+async function saveThinkingChannelConfig() {
+    const result = await apiCall('thinking.config.save', {
+        concurrency: parseInt(document.getElementById('thinkingConcurrency').value, 10) || 0,
+        output_channels: getSelectedIntents('thinkingOutputChannelsCheckboxes'),
+    });
+    if (result.success) {
+        showToast(__('config.thinking.saved'), 'success');
+        loadThinkingConfig();
+    } else {
+        showToast(__('config.thinking.saveFailed') + (result.error || ''), 'error');
+    }
+}
+
+function renderThinkingFeeds() {
+    const tbody = document.getElementById('thinkingFeedsTable');
+    if (!thinkingFeedsCache.length) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-muted">' + __('config.thinking.noFeeds') + '</td></tr>';
+        return;
+    }
+    tbody.innerHTML = thinkingFeedsCache.map(f => `
+        <tr>
+            <td><code style="background:transparent;padding:0;">${f.url}</code></td>
+            <td><span class="badge ${f.enabled !== false ? 'badge-success' : 'badge-danger'}">${f.enabled !== false ? __('config.thinking.enabled') : __('config.thinking.disabled')}</span></td>
+            <td>
+                <button class="btn btn-sm btn-outline" onclick="toggleThinkingFeed('${f.url}')">${f.enabled !== false ? __('config.thinking.disableFeed') : __('config.thinking.enableFeed')}</button>
+                <button class="btn btn-sm btn-danger" onclick="removeThinkingFeed('${f.url}')">${__('config.mcp.delete')}</button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+async function saveThinkingRssConfig() {
+    const result = await apiCall('thinking.config.save', {
+        rss: {
+            interval: parseInt(document.getElementById('thinkingRssInterval').value, 10) || 300,
+            feeds: thinkingFeedsCache,
+        },
+    });
+    if (result.success) {
+        showToast(__('config.thinking.saved'), 'success');
+        loadThinkingConfig();
+    } else {
+        showToast(__('config.thinking.saveFailed') + (result.error || ''), 'error');
+    }
+}
+
+function addThinkingFeed() {
+    const input = document.getElementById('thinkingNewFeedUrl');
+    const url = (input.value || '').trim();
+    if (!/^https?:\/\/.+/i.test(url)) {
+        showToast(__('config.thinking.invalidFeedUrl'), 'error');
+        return;
+    }
+    if (thinkingFeedsCache.some(f => f.url === url)) {
+        showToast(__('config.thinking.duplicateFeed'), 'error');
+        return;
+    }
+    thinkingFeedsCache.push({ url, enabled: true });
+    input.value = '';
+    renderThinkingFeeds();
+    saveThinkingRssConfig();
+}
+
+async function toggleThinkingFeed(url) {
+    const feed = thinkingFeedsCache.find(f => f.url === url);
+    if (!feed) return;
+    feed.enabled = feed.enabled === false;
+    renderThinkingFeeds();
+    saveThinkingRssConfig();
+}
+
+async function removeThinkingFeed(url) {
+    thinkingFeedsCache = thinkingFeedsCache.filter(f => f.url !== url);
+    renderThinkingFeeds();
+    saveThinkingRssConfig();
+}
+
+async function saveThinkingWebhookConfig() {
+    const result = await apiCall('thinking.config.save', {
+        webhook: {
+            enabled: document.getElementById('thinkingWebhookEnabled').checked,
+            secret: document.getElementById('thinkingWebhookSecret').value.trim(),
+            path: document.getElementById('thinkingWebhookPath').value.trim() || '/api/thinking/webhook',
+        },
+    });
+    if (result.success) {
+        showToast(__('config.thinking.saved'), 'success');
+        loadThinkingConfig();
+    } else {
+        showToast(__('config.thinking.saveFailed') + (result.error || ''), 'error');
+    }
+}
+
+async function testThinkingWebhook() {
+    const path = document.getElementById('thinkingWebhookPath').value.trim() || '/api/thinking/webhook';
+    const secret = document.getElementById('thinkingWebhookSecret').value.trim();
+    const headers = { 'Content-Type': 'application/json' };
+    if (secret) headers['X-Webhook-Secret'] = secret;
+    try {
+        const res = await fetch(API_BASE + path, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ source: 'frontend-test', content: '思考通道 WebHook 连通性测试' }),
+        });
+        if (res.ok) {
+            showToast(__('config.thinking.webhookTestOk'), 'success');
+            setTimeout(() => loadThinkingEvents(), 800);
+        } else {
+            showToast(__('config.thinking.webhookTestFail') + ' HTTP ' + res.status, 'error');
+        }
+    } catch (e) {
+        showToast(__('config.thinking.webhookTestFail') + ' ' + e.message, 'error');
+    }
+}
+
+// ── Thinking Event Log ──────────────────────────────────────
+
+async function loadThinkingEvents() {
+    const filter = document.getElementById('thinkingEventTypeFilter');
+    const result = await apiCall('thinking.events', {
+        limit: 100,
+        event_type: filter ? filter.value || null : null,
+    });
+    const tbody = document.getElementById('thinkingEventsTable');
+    if (!result.success) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">' + __('config.thinking.loadFailed') + (result.error || '') + '</td></tr>';
+        return;
+    }
+    thinkingEventsCache = result.events || [];
+    if (!thinkingEventsCache.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">' + __('config.thinking.noEvents') + '</td></tr>';
+        return;
+    }
+    tbody.innerHTML = thinkingEventsCache.map(r => {
+        const ok = r.status === 'success';
+        const duration = r.duration_ms >= 1000
+            ? (r.duration_ms / 1000).toFixed(1) + 's'
+            : (r.duration_ms || 0) + 'ms';
+        return `
+        <tr>
+            <td>${r.started_at || '-'}</td>
+            <td><span class="badge badge-info">${r.event_type}</span></td>
+            <td>${r.title || '-'}</td>
+            <td><span class="badge ${ok ? 'badge-success' : 'badge-danger'}">${ok ? __('config.cron.statusSuccess') : __('config.cron.statusFailed')}</span></td>
+            <td>${duration}</td>
+            <td><button class="btn btn-sm btn-outline" onclick="showThinkingEventDetail('${r.event_id}')">${__('config.thinking.viewDetail')}</button></td>
+        </tr>`;
+    }).join('');
+}
+
+function showThinkingEventDetail(eventId) {
+    const r = thinkingEventsCache.find(x => x.event_id === eventId);
+    if (!r) return;
+    const parts = [];
+    parts.push(`[${r.event_type}] ${r.title || ''}`);
+    parts.push(`event_id: ${r.event_id}`);
+    parts.push(`started_at: ${r.started_at} | finished_at: ${r.finished_at} | duration: ${r.duration_ms}ms`);
+    parts.push(`status: ${r.status}`);
+    if (r.content) parts.push('\n[内容] ' + r.content);
+    if (r.output) parts.push('\n[输出] ' + r.output);
+    if (r.error) parts.push('\n[错误] ' + r.error);
+    document.getElementById('thinkingEventDetailPre').textContent = parts.join('\n');
+    document.getElementById('thinkingEventModal').style.display = 'flex';
+}
+
+function closeThinkingEventModal() {
+    document.getElementById('thinkingEventModal').style.display = 'none';
 }

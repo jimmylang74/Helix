@@ -86,4 +86,46 @@ class WechatEvent(EventBase):
         )
 
 
-__all__ = ["EventBase", "TimerEvent", "WechatEvent"]
+class RssEvent(EventBase):
+    """RSS 订阅源新条目事件 — RssEventSource 轮询线程解析并投递。"""
+
+    event_type = "rss.feed"
+    source = "rss"
+
+    def __init__(
+        self,
+        feed_url: str = "",
+        entry_id: str = "",
+        entry_title: str = "",
+        entry_link: str = "",
+        entry_summary: str = "",
+    ) -> None:
+        super().__init__(
+            feed_url=feed_url,
+            entry_id=entry_id,
+            entry_title=entry_title,
+            entry_link=entry_link,
+            entry_summary=entry_summary,
+        )
+
+
+class WebhookEvent(EventBase):
+    """WebHook 推送事件 — WebhookEventSource 收到 HTTP 回调时产生并投递。
+
+    注意：source 是 EventBase 的类属性（"webhook"），构造参数里的 origin 指
+    推送方标识（如服务名/来源标签），与事件来源分类互不冲突。
+    """
+
+    event_type = "webhook.push"
+    source = "webhook"
+
+    def __init__(
+        self,
+        origin: str = "",
+        content: str = "",
+        raw: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(origin=origin, content=content, raw=raw)
+
+
+__all__ = ["EventBase", "TimerEvent", "WechatEvent", "RssEvent", "WebhookEvent"]

@@ -32,6 +32,8 @@ from modules.utils.logger import log_info, log_error, log_debug
 from modules.channels.cron import store as cron_store
 from modules.channels.cron.scheduler import get_scheduler
 from modules.channels.dispatcher import get_dispatcher
+from modules.channels.thinking import store as thinking_store
+from modules.events.source_registry import get_source_registry
 
 
 # 运行时注入：ChannelManager 由组合根（Helix.py）装配后经 configure() 注入，
@@ -559,6 +561,72 @@ def _reload_scheduler_if_started():
         scheduler.reload()
 
 
+# ---- Thinking（思考通道）----
+
+def _thinking_config(params):
+    cfg = thinking_store.load_config()
+    channel = _channel_manager.get("thinking") if _channel_manager else None
+    sources = {}
+    for src in get_source_registry().get_all():
+        if src.source_name in ("rss", "webhook"):
+            sources[src.source_name] = src.get_status()
+    return {
+        "success": True,
+        "config": cfg,
+        "channel": channel.get_status().to_dict() if channel else None,
+        "sources": sources,
+        "output_channels": get_dispatcher().available(),
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _thinking_config_save(params):
+    data = dict(params or {})
+    # 部分更新合并：只覆盖传入的字段，未传字段保留现有配置，
+    # 避免 rss/webhook/output_channels/concurrency 相互覆盖丢失
+    current = thinking_store.load_config()
+    merged = {
+        **current,
+        **data,
+        "rss": {**current.get("rss", {}), **data.get("rss", {})},
+        "webhook": {**current.get("webhook", {}), **data.get("webhook", {})},
+    }
+    try:
+        cfg = thinking_store.validate_config(merged)
+    except thinking_store.ThinkingValidationError as e:
+        raise ValueError(str(e))
+    thinking_store.save_config(cfg)
+    return {"success": True, "config": cfg}
+
+
+def _thinking_events(params):
+    data = params or {}
+    events = thinking_store.get_events(
+        limit=data.get("limit", 100),
+        event_type=data.get("event_type"),
+    )
+    return {"success": True, "events": events, "total": len(events)}
+
+
+def _thinking_status(params):
+    channel = _channel_manager.get("thinking") if _channel_manager else None
+    status = (
+        channel.get_status().to_dict()
+        if channel
+        else {
+            "channel_type": "thinking",
+            "is_running": False,
+            "is_authenticated": True,
+            "display_name": "思考通道",
+        }
+    )
+    return {
+        "success": True,
+        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        **status,
+    }
+
+
 # ============================================================
 # Dispatch table: JSON-RPC method → handler function
 # ============================================================
@@ -603,6 +671,11 @@ METHODS = {
     "cron.status":         _cron_status,
     "cron.start":          _cron_start,
     "cron.stop":           _cron_stop,
+    # Thinking（思考通道）
+    "thinking.config":       _thinking_config,
+    "thinking.config.save":  _thinking_config_save,
+    "thinking.events":       _thinking_events,
+    "thinking.status":       _thinking_status,
 }
 
 try:

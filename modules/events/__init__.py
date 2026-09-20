@@ -11,7 +11,7 @@ EventBroker 按 event_type 路由到不同的 Channel 处理器 —— 消息类
 - EventSourceRegistry：进程内注册表（组合根统一 start_all/stop_all 启停）
 """
 
-from modules.events.base import EventBase, TimerEvent, WechatEvent
+from modules.events.base import EventBase, TimerEvent, WechatEvent, RssEvent, WebhookEvent
 from modules.events.broker import EventBroker, get_event_broker
 from modules.events.bus import EventBus, get_event_bus
 from modules.events.event_source import EventSource
@@ -21,6 +21,8 @@ __all__ = [
     "EventBase",
     "TimerEvent",
     "WechatEvent",
+    "RssEvent",
+    "WebhookEvent",
     "EventSource",
     "EventSourceRegistry",
     "get_source_registry",

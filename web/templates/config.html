@@ -11,8 +11,9 @@
     <button class="tab-btn" data-tab="plugins" data-i18n="config.tab.plugins">插件管理</button>
     <button class="tab-btn" data-tab="intents" data-i18n="config.tab.intents">意图管理</button>
     <button class="tab-btn" data-tab="server" data-i18n="config.tab.server">服务设置</button>
-    <button class="tab-btn" data-tab="ilinkbot" data-i18n="config.tab.ilinkbot">iLinkBot</button>
+    <button class="tab-btn" data-tab="ilinkbot" data-i18n="config.tab.ilinkbot">微信</button>
     <button class="tab-btn" data-tab="cron" data-i18n="config.tab.cron">定时任务</button>
+    <button class="tab-btn" data-tab="thinking" data-i18n="config.tab.thinking">思考通道</button>
 </div>
 
 <!-- LLM Config -->
@@ -502,11 +503,11 @@
     </div>
 </div>
 
-<!-- iLinkBot Config -->
+<!-- WeChat（微信）Config -->
 <div class="tab-content" id="tab-ilinkbot">
     <div class="card">
         <div class="card-header">
-            <h3 data-i18n="config.ilinkbot.title">微信 iLinkBot</h3>
+            <h3 data-i18n="config.ilinkbot.title">微信配置</h3>
             <span id="ilinkbotStatusBadge" class="badge badge-secondary" data-i18n="config.ilinkbot.disconnected">未连接</span>
         </div>
         <div class="card-body">
@@ -730,6 +731,152 @@
             </div>
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
                 <button class="btn btn-outline" onclick="closeCronResultsModal()" data-i18n="config.plugins.close">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="tab-content" id="tab-thinking">
+    <!-- Channel Status -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.thinking.title">思考通道</h3>
+            <span id="thinkingChannelBadge" class="badge badge-secondary" data-i18n="config.thinking.stopped">已停止</span>
+        </div>
+        <div class="card-body">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button class="btn btn-outline" onclick="loadThinkingConfig()"><span data-i18n="config.cron.refresh">刷新</span></button>
+                <span id="thinkingServerTimeInfo" class="text-muted"></span>
+                <span id="thinkingErrorInfo" style="color:#d9534f;"></span>
+            </div>
+            <small class="text-muted" style="display:block;margin-top:12px;" data-i18n="config.thinking.hint">外部事件（RSS 订阅 / WebHook 推送）固定以思考意图交给智能体处理，结果写入 db/thinking.db；不注册 ask_user 三件套，不会向用户提问。</small>
+        </div>
+    </div>
+
+    <!-- Channel Config -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.thinking.channelConfig">通道配置</h3>
+            <button class="btn btn-sm btn-primary" onclick="saveThinkingChannelConfig()" data-i18n="common.save">保存</button>
+        </div>
+        <div class="card-body">
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.thinking.concurrency">并发上限</label>
+                    <input type="number" id="thinkingConcurrency" class="form-control" min="0" max="100" value="0">
+                    <small class="text-muted" data-i18n="config.thinking.concurrencyHint">同时处理的事件数上限（0 表示不限制），超出的并发立即报错记录</small>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.thinking.fieldOutputChannels">处理结果输出通道</label>
+                    <div class="multiselect-dropdown" id="thinkingOutputChannelsDropdown">
+                        <button type="button" class="form-control multiselect-toggle" onclick="toggleMultiselect(this)" data-i18n-placeholder="config.thinking.outputChannelsPlaceholder" data-placeholder="不推送（仅写入数据库）" data-all-label="config.thinking.allChannels">不推送（仅写入数据库）</button>
+                        <div class="multiselect-menu" id="thinkingOutputChannelsCheckboxes"></div>
+                    </div>
+                    <small class="text-muted" data-i18n="config.thinking.outputChannelsHint">事件处理完成后把结果推送到所选通道；不选则不推送（结果仍会写入数据库）</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RSS Feeds -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.thinking.rssTitle">RSS 订阅源</h3>
+            <button class="btn btn-sm btn-primary" onclick="saveThinkingRssConfig()" data-i18n="common.save">保存</button>
+            <span id="thinkingRssStatus" class="text-muted"></span>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label data-i18n="config.thinking.rssInterval">轮询间隔（秒）</label>
+                <input type="number" id="thinkingRssInterval" class="form-control" min="30" max="86400" value="300">
+                <small class="text-muted" data-i18n="config.thinking.rssIntervalHint">30-86400 秒，默认 300；新条目经 rss_seen 去重后投递 rss.feed 事件</small>
+            </div>
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.thinking.colFeed">订阅地址</th>
+                        <th data-i18n="config.thinking.colEnabled">启用</th>
+                        <th data-i18n="config.thinking.colActions">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="thinkingFeedsTable">
+                    <tr><td colspan="3" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                </tbody>
+            </table>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+                <input type="text" id="thinkingNewFeedUrl" class="form-control" style="flex:1;" data-i18n-placeholder="config.thinking.feedPlaceholder" placeholder="https://example.com/feed.xml">
+                <button class="btn btn-outline" onclick="addThinkingFeed()"><span data-i18n="config.thinking.addFeed">+ 添加订阅</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- WebHook -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.thinking.webhookTitle">WebHook 推送</h3>
+            <span id="thinkingWebhookStatus" class="text-muted"></span>
+        </div>
+        <div class="card-body">
+            <div class="form-group">
+                <label><input type="checkbox" id="thinkingWebhookEnabled" onchange="saveThinkingWebhookConfig()"> <span data-i18n="config.thinking.webhookEnabled">启用 WebHook</span></label>
+                <small class="text-muted" style="display:block;margin-top:4px;" data-i18n="config.thinking.webhookHint">启用后向回调地址 POST JSON 即触发一次思考处理；开启且配置了密钥时校验 X-Webhook-Secret 请求头</small>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.thinking.webhookSecret">密钥（X-Webhook-Secret）</label>
+                    <input type="text" id="thinkingWebhookSecret" class="form-control" value="">
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label data-i18n="config.thinking.webhookPath">回调路径</label>
+                    <input type="text" id="thinkingWebhookPath" class="form-control" value="/api/thinking/webhook">
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <button class="btn btn-primary" onclick="saveThinkingWebhookConfig()" data-i18n="config.thinking.webhookSave">保存 WebHook 配置</button>
+                <span class="text-muted" data-i18n="config.thinking.webhookEndpoint">回调地址</span>
+                <code id="thinkingWebhookEndpoint" class="text-muted" style="background:#f8f9fa;border-radius:4px;padding:2px 6px;"></code>
+                <button class="btn btn-outline" onclick="testThinkingWebhook()"><span data-i18n="config.thinking.webhookTest">测试</span></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Log -->
+    <div class="card">
+        <div class="card-header">
+            <h3 data-i18n="config.thinking.eventLog">事件日志</h3>
+            <select id="thinkingEventTypeFilter" class="form-control" style="width:160px;" onchange="loadThinkingEvents()">
+                <option value="" data-i18n="config.thinking.allEvents">全部事件</option>
+                <option value="rss.feed">rss.feed</option>
+                <option value="webhook.push">webhook.push</option>
+            </select>
+            <button class="btn btn-outline" onclick="loadThinkingEvents()"><span data-i18n="config.cron.refresh">刷新</span></button>
+        </div>
+        <div class="card-body">
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th data-i18n="config.thinking.colStartedAt">开始时间</th>
+                        <th data-i18n="config.thinking.colEventType">类型</th>
+                        <th data-i18n="config.thinking.colTitle">标题</th>
+                        <th data-i18n="config.thinking.colStatus">状态</th>
+                        <th data-i18n="config.thinking.colDuration">耗时</th>
+                        <th data-i18n="config.thinking.colActions">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="thinkingEventsTable">
+                    <tr><td colspan="6" class="text-center" data-i18n="common.loading">加载中...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Event Detail Modal -->
+    <div id="thinkingEventModal" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeThinkingEventModal()">
+        <div style="background:white;border-radius:8px;padding:24px;max-width:800px;width:90%;max-height:80vh;overflow-y:auto;" onclick="event.stopPropagation()">
+            <h3 style="margin-bottom:16px;" data-i18n="config.thinking.eventDetail">事件详情</h3>
+            <div id="thinkingEventDetailPre" style="background:#f8f9fa;border-radius:6px;padding:12px;font-size:13px;font-family:monospace;white-space:pre-wrap;max-height:400px;overflow-y:auto;"></div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+                <button class="btn btn-outline" onclick="closeThinkingEventModal()" data-i18n="config.plugins.close">关闭</button>
             </div>
         </div>
     </div>

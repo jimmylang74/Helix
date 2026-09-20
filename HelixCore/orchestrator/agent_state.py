@@ -12,6 +12,9 @@ class AgentState(TypedDict, total=False):
     request_id: str
     forced_intent: str
 
+    # 外部上下文注入（Thinking 画像/日期时间/地点等 host 预渲染文本）
+    context_injections: Dict[str, str]
+
     # Data collection (set during tool execution)
     urls_to_fetch: List[str]
     fetched_content: List[str]

@@ -51,8 +51,17 @@ async function initQuickTestPage() {
     restoreFromStorage();
 }
 
+// 固定内部意图：不入 intents.get 注册表、不参与自动分类，仅能经 intent 参数
+// 显式指定，此处提供手动选择入口。后端 routes.FIXED_FORCED_INTENTS 已放行
+// thinking，且该意图的请求会自动注入 Helix.md 画像/日期时间/地点
+// （host.helix_profile.build_injections）。标签与后端常量 THINKING_INTENT_NAME 一致。
+const FIXED_INTERNAL_INTENTS = [
+    { id: 'thinking', label: 'Thinking 内省' },
+];
+
 // Load registered intent types from config and populate the requestType
-// dropdown dynamically (generic plus any config-registered intents)
+// dropdown dynamically (generic plus any config-registered intents),
+// then append the fixed internal intents (thinking)
 async function loadRequestTypes() {
     const select = document.getElementById('requestType');
     if (!select) return;
@@ -66,6 +75,14 @@ async function loadRequestTypes() {
         const opt = document.createElement('option');
         opt.value = id;
         opt.textContent = intent.name || id;
+        select.appendChild(opt);
+    }
+    // 固定内部意图追加在注册意图之后
+    for (const fixed of FIXED_INTERNAL_INTENTS) {
+        if (select.querySelector(`option[value="${fixed.id}"]`)) continue;
+        const opt = document.createElement('option');
+        opt.value = fixed.id;
+        opt.textContent = fixed.label;
         select.appendChild(opt);
     }
     select.value = current;

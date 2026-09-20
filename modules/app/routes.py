@@ -19,7 +19,10 @@ from modules.channels.web import history_store
 from modules.utils.paths import PROJECT_ROOT, project_path
 
 from HelixCore.tools.base import tool_registry as global_tool_registry
+from HelixCore.prompts.task_graph_prompts import GENERIC_INTENT_ID
+from HelixCore.prompts.thinking_prompts import THINKING_INTENT_ID
 from modules.host.plugin_loader import save_tool_config
+from modules.host.helix_profile import build_injections
 from modules.config.config_manager import ConfigManager
 from modules.host.intent_store import intent_store
 from modules.mcp.mcp_registry import registry as mcp_registry
@@ -34,6 +37,11 @@ from modules.channels.dispatcher import get_dispatcher
 # 运行时注入：ChannelManager 由组合根（Helix.py）装配后经 configure() 注入，
 # RPC agent/* 经其路由到 Web 通道私有运行时，用户应答/取消跨通道分发
 _channel_manager: Any = None
+
+# 固定内部意图白名单：不在 Helix.json intents.* 中注册，仅可经 intent 参数
+# 显式指定（generic 为固定兜底；thinking 为内省意图，需经 build_injections
+# 注入画像/日期时间/地点上下文）
+FIXED_FORCED_INTENTS = {GENERIC_INTENT_ID, THINKING_INTENT_ID}
 
 
 def configure(channel_manager):
@@ -157,10 +165,10 @@ def _agent_router(params):
     forced_intent = params.get("intent", "auto")
     if forced_intent != "auto":
         registered = _web_runtime().intent_provider.get_registered_intents()
-        if forced_intent not in registered:
+        if forced_intent not in FIXED_FORCED_INTENTS and forced_intent not in registered:
             raise ValueError(
                 f"Invalid intent: {forced_intent}. Must be one of: auto, "
-                + ", ".join(sorted(registered))
+                + ", ".join(sorted(set(registered) | FIXED_FORCED_INTENTS))
             )
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
@@ -170,7 +178,17 @@ def _agent_router(params):
         created_at = datetime.now().isoformat(timespec="seconds")
         result = None
         try:
-            result = _web_runtime().orchestrator.process_request(user_request, request_id, forced_intent=forced_intent)
+            context_injections = (
+                build_injections()
+                if forced_intent == THINKING_INTENT_ID
+                else None
+            )
+            result = _web_runtime().orchestrator.process_request(
+                user_request,
+                request_id,
+                forced_intent=forced_intent,
+                context_injections=context_injections,
+            )
         finally:
             # Host 侧收尾：请求结束（成功/失败/取消/异常）即唤醒可能仍阻塞的 ask_user
             _web_runtime().broker.cancel(request_id)

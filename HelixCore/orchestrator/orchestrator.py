@@ -38,6 +38,11 @@ from HelixCore.prompts.task_graph_prompts import (
     GENERIC_INTENT_ID,
     COMMON_JSON_CONTRACT,
 )
+from HelixCore.prompts.thinking_prompts import (
+    THINKING_INTENT_ID,
+    build_thinking_planning_system_prompt,
+    render_thinking_planning_user_prompt,
+)
 from HelixCore.utils.tokenizer import TokenEstimator, create_estimator_for_config
 
 
@@ -101,8 +106,14 @@ class AgentOrchestrator:
         user_request: str,
         request_id: Optional[str] = None,
         forced_intent: str = "auto",
+        context_injections: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Main entry point — process a user request end-to-end."""
+        """Main entry point — process a user request end-to-end.
+
+        context_injections: 可选——host 侧预渲染的上下文注入（如 Thinking
+        意图的 Helix.md 画像/日期时间/地点等纯文本，见 modules/host/
+        helix_profile.build_injections），经 state 透传到对应规划提示词模板。
+        """
         if not request_id:
             request_id = f"req_{uuid.uuid4().hex[:12]}"
 
@@ -112,6 +123,7 @@ class AgentOrchestrator:
 
         state = create_initial_state(user_request, request_id)
         state["forced_intent"] = forced_intent
+        state["context_injections"] = context_injections or {}
         with self._states_lock:
             self._active_states[request_id] = state
 
@@ -237,7 +249,20 @@ class AgentOrchestrator:
         intents_cfg = self._intent_provider.get_registered_intents()
 
         forced_intent = state.get("forced_intent", "auto")
-        if forced_intent != "auto":
+        if forced_intent == THINKING_INTENT_ID:
+            # Thinking 固定内部意图：专用规划提示词（被动接收·事件驱动）；
+            # 画像/日期时间/地点由 host 侧预渲染后经 context_injections 注入
+            injections = state.get("context_injections") or {}
+            system_prompt = build_thinking_planning_system_prompt(
+                agent_profile=injections.get("agent_profile", ""),
+                datetime_text=injections.get("datetime", ""),
+                location_text=injections.get("location", ""),
+                tools=tool_definitions,
+            )
+            self._log.agent_to_llm(
+                f"Forced intent={forced_intent}, planning task graph (Thinking)..."
+            )
+        elif forced_intent != "auto":
             # 已知 intent，直接用对应 system prompt 规划
             system_prompt = self._get_system_prompt(
                 forced_intent, intents_cfg, tool_definitions
@@ -261,11 +286,20 @@ class AgentOrchestrator:
         planning_sampling = self._config.get_graph_sampling("planning")
         planning_context = state["user_request"]
         for ask_round in range(max_ask_rounds + 1):
-            user_prompt = render_planning_user_prompt(tool_definitions).format(
-                user_request=planning_context,
-                json_contract=COMMON_JSON_CONTRACT,
-                intent_enum=build_intent_enum(intents_cfg),
-            )
+            if forced_intent == THINKING_INTENT_ID:
+                user_prompt = render_thinking_planning_user_prompt(
+                    tool_definitions
+                ).format(
+                    user_request=planning_context,
+                    json_contract=COMMON_JSON_CONTRACT,
+                    intent_enum=THINKING_INTENT_ID,
+                )
+            else:
+                user_prompt = render_planning_user_prompt(tool_definitions).format(
+                    user_request=planning_context,
+                    json_contract=COMMON_JSON_CONTRACT,
+                    intent_enum=build_intent_enum(intents_cfg),
+                )
 
             # 检查 token 预算
             if not self._check_token_budget(

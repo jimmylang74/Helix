@@ -501,6 +501,16 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function prettyPrintJson(text) {
+    const trimmed = String(text ?? '').trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return text;
+    try {
+        return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch (_) {
+        return text;
+    }
+}
+
 function toggleAutoRefreshLog() {
     // kept for HTML compatibility; log stream is always active
 }
@@ -979,9 +989,14 @@ function addLlmLogEntry(entry) {
                 div.innerHTML = '<span class="llm-log-thinking-label">💭 [end]</span>';
                 break;
             case 'assistant':
-                buildCollapsibleBlock(div, '🤖 Assistant:', 'llm-log-assistant-label', entry.content, true);
+                buildCollapsibleBlock(div, '🤖 Assistant:', 'llm-log-assistant-label', prettyPrintJson(entry.content), true);
                 break;
             case 'assistant_end':
+                if (_lastLlmLogType === 'assistant' && _lastLlmLogDiv) {
+                    const raw = _lastLlmLogDiv.textContent;
+                    const pretty = prettyPrintJson(raw);
+                    if (pretty !== raw) _lastLlmLogDiv.textContent = pretty;
+                }
                 div.innerHTML = '<span class="llm-log-assistant-label">🤖 [end]</span>';
                 break;
             case 'tool_call':

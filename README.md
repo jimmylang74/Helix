@@ -52,6 +52,7 @@
 - **配置化意图体系**: 内置 generic 兜底意图，PPT 生成、代码生成等意图在 `Helix.json` 中配置（含规划/节点执行/总结各阶段提示词），可通过 Web 控制台动态增改
 - **插件化工具体系**: 内置插件 + 外部插件 + MCP 工具三层架构，支持自动发现与热插拔
 - **多通道接入**: 每个通道（Web 快速测试 / 微信 iLinkBot）持有独立的私有 agent 运行时（编排器 + 工具注册表 + 提问 broker），LLM 只能触达所在通道的工具；通道三件套工具（`ask_user` / `get_context` / `clear_context`）按通道适配落点
+- **终端 CLI 快速测试**: `Helix-cli.py` 作为独立应用通过 HTTP 远程调用已运行的 Helix 服务（Web 通道，进程内不启动 Agent 实例），支持 Thinking/节点/最终结果 SSE 流式输出、ask_user 交互与 `--json` 机器可读输出
 - **外部事件输入总线**: 定时器 / IM 轮询 / 未来 Webhook/MCP/邮件等外部事件源统一投递到 `modules/events/` 输入事件总线（EventBus，非阻塞发布 + 每订阅者独立消费线程），由 EventBroker 按事件类型（`cron.timer` / `wechat.message`）路由到对应通道处理器 `handle_event`——事件源统一实现 `EventSource` 抽象基类、经 `EventSourceRegistry` 登记并由组合根统一启停，与处理方完全解耦，新增事件源或切换处理方只需在组合根注册，生产端零改动
 - **定时任务系统**: Helix 自维护调度器（独立于系统 crond），支持 daily/weekly/monthly 触发与 system（Shell 命令）/ agent（智能体执行）两类任务；任务定义存于 `db/cron.json`（手工编辑自动热重载），运行结果写入 `db/cron.db`（SQLite）；Web 控制台可视化管理，LLM 可经全局共享的 cron 工具自主增删改查任务
 - **外部插件扩展**: 在 `plugins/user/` 目录下放入 `.py` 文件即可注册自定义工具，无需修改框架代码
@@ -125,6 +126,7 @@ python3 Helix.py --debug
 
 - **API服务**: `http://localhost:11555/api/rpc`
 - **管理控制台**: `http://localhost:11556/`
+- **Helix CLI**: `python3 Helix-cli.py "请求文本"`（详见 [Helix CLI 命令行快速测试](#helix-cli-命令行快速测试)）
 
 ## API 使用
 
@@ -153,6 +155,59 @@ curl -X POST http://localhost:11555/api/rpc \
 详细API文档见 [API.md](design/API.md)
 
 系统设计文档见 [design/design.md](design/design.md)（含架构图、时序图、MCP 与插件化设计）
+
+## Helix CLI 命令行快速测试
+
+`Helix-cli.py` 是终端版快速测试工具：作为独立应用通过 HTTP 远程调用已运行的 Helix 服务（Web 通道），进程内不启动任何 Agent 实例，协议与浏览器快速测试页完全一致（Thinking / 节点进度 / 最终结果经 SSE 流式推送）。Think 输出与节点进度 → stderr，最终结果 → stdout，可直接管道或命令替换。
+
+### 快速开始
+
+```bash
+# 基本用法（Helix 已运行，默认连接 127.0.0.1:11556）
+python3 Helix-cli.py "帮我写一个斐波那契脚本"
+
+# 强制意图
+python3 Helix-cli.py --intent coding "实现冒泡排序"
+python3 Helix-cli.py --intent thinking "回顾今天"
+
+# stdout 只含最终答案
+answer="$(python3 Helix-cli.py --no-ask '1+1=?')"
+
+# 远程服务
+python3 Helix-cli.py --host 192.168.10.39 --no-ask "你好"
+
+# 机器可读输出（stdout 为单个 JSON 对象）
+python3 Helix-cli.py --json --no-ask "3+4 等于多少"
+```
+
+bash 函数封装：
+
+```bash
+source Helix-cli.sh
+helix_cli "帮我写一个斐波那契脚本"
+```
+
+### 参数说明
+
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `request` | 请求文本（位置参数） | — |
+| `--host` / `--port` | Helix 服务地址（admin 端口，RPC 与 SSE 同源） | `127.0.0.1` / `11556` |
+| `--intent` | 强制意图（`auto` 自动识别，或指定 `Helix.json` 中配置的意图，如 `coding`/`ppt`/`thinking`） | `auto` |
+| `--no-ask` | 非交互：ask_user 自动答复 `N/A` | 关 |
+| `--no-thinking` | 屏蔽 Thinking 过程输出 | 关 |
+| `--json` | stdout 输出单个 JSON 对象（`success`/`request_id`/`final_result`/`error` 等） | 关 |
+| `--no-color` | 禁用 ANSI 颜色 | 关 |
+| `--timeout` | 整体等待上限（秒），超时尝试取消服务端请求 | `600` |
+| `--show-config` | 列出服务端 LLM 配置（api_key 脱敏）后退出 | — |
+| `--list-providers` | 列出支持的 LLM 供应商后退出 | — |
+
+说明：
+
+- **输出约定**：过程输出（Thinking/节点进度/工具调用/错误）→ stderr；最终结果 → stdout。`--json` 模式下 stdout 为单个 JSON 对象。
+- **中断与超时**：Ctrl+C 或超时会先向服务端发送取消请求（`agent/cancel`）再退出；退出码 `0` 成功 / `1` 错误或超时 / `130` 中断。
+- **代理处理**：请求 `127.0.0.1`/`localhost` 时自动绕过 `http_proxy`/`https_proxy` 环境代理；远程地址则按环境代理设置走。
+- **会话上下文**：CLI 经 Web 通道与会话上下文交互，与 Web 快速测试页共享会话记忆。
 
 ## 定时任务
 
@@ -205,6 +260,8 @@ Helix 内置自维护的定时任务调度器（区别于操作系统 crond）�
 ```
 ├── Helix.py                  # 主入口 (Flask 双端口: API + Admin)
 ├── Helix.json                 # 配置文件 (LLM/MCP/意图/工具)
+├── Helix-cli.py               # 独立 HTTP CLI（远程 Web 通道快速测试）
+├── Helix-cli.sh               # helix_cli bash 函数封装
 ├── requirements.txt           # Python 依赖
 ├── README.md                  # 说明文档 (中文)
 ├── README_EN.md               # 说明文档 (英文)

@@ -55,6 +55,7 @@ A hybrid-driven AI Agent service built on Python / Flask / python-pptx / ai_engi
 - **Configurable intent system**: Built-in generic fallback intent; intents such as PPT generation and code generation are configured in `Helix.json` (including planning/node-execution/summarization prompts per phase) and can be dynamically added or changed via the Web console.
 - **Plugin-based tool system**: Three-layer architecture of built-in plugins + external plugins + MCP tools, with auto-discovery and hot-swap support.
 - **Multi-channel access**: Each channel (Web quick test / WeChat iLinkBot) owns a private agent runtime (orchestrator + tool registry + question broker); the LLM can only reach tools registered in its own channel. The channel tool trio (`ask_user` / `get_context` / `clear_context`) is adapted per channel.
+- **Terminal CLI quick test**: `Helix-cli.py` is a standalone application that calls a running Helix service over HTTP (Web channel) without starting any agent runtime in-process; it streams Thinking / node progress / final results over SSE and supports interactive ask_user plus `--json` machine-readable output.
 - **External event input bus**: External event sources — the timer, IM polling, and future Webhook/MCP/email — publish uniformly to the `modules/events/` input event bus (EventBus; non-blocking publish + one consumer thread per subscriber), routed by EventBroker by event type (`cron.timer` / `wechat.message`) to the matching channel handler `handle_event`. Event sources implement the shared `EventSource` base and register with the `EventSourceRegistry` (started/stopped together from the composition root); producers and handlers are fully decoupled: adding an event source or switching handlers requires only a registration change in the composition root — zero changes on the producer side.
 - **Scheduled tasks (cron)**: A Helix-managed scheduler (independent of the OS crond) supporting daily/weekly/monthly triggers with two task types — system (shell command) and agent (handled by the agent). Task definitions live in `db/cron.json` (manual edits are hot-reloaded); run results are written to `db/cron.db` (SQLite). Manageable visually from the Web console, and the LLM can manage tasks itself via globally shared cron tools.
 - **External plugin extension**: Drop a `.py` file into `plugins/user/` to register a custom tool without modifying the framework code.
@@ -128,6 +129,7 @@ python3 Helix.py --debug
 
 - **API**: `http://localhost:11555/api/rpc`
 - **Admin console**: `http://localhost:11556/`
+- **Helix CLI**: `python3 Helix-cli.py "your request"` (see [Helix CLI Quick Test](#helix-cli-quick-test))
 
 ## API Usage
 
@@ -156,6 +158,59 @@ curl -X POST http://localhost:11555/api/rpc \
 Full API documentation: [API.md](design/API.md)
 
 System design document: [design/design.md](design/design.md) (in Chinese; includes architecture diagrams, sequence diagrams, MCP & plugin design)
+
+## Helix CLI Quick Test
+
+`Helix-cli.py` is a terminal quick-test tool: a standalone application that calls a running Helix service over HTTP (Web channel) with no in-process agent runtime — its protocol is identical to the browser quick-test page (Thinking / node progress / final result are pushed over SSE). Thinking output and node progress go to **stderr**; the final result goes to **stdout**, so it can be piped or used in command substitution directly.
+
+### Quick Start
+
+```bash
+# Basic usage (Helix running; defaults to 127.0.0.1:11556)
+python3 Helix-cli.py "Write a Fibonacci script for me"
+
+# Force an intent
+python3 Helix-cli.py --intent coding "Implement bubble sort"
+python3 Helix-cli.py --intent thinking "Review today"
+
+# stdout contains only the final answer
+answer="$(python3 Helix-cli.py --no-ask '1+1=?')"
+
+# Remote service
+python3 Helix-cli.py --host 192.168.10.39 --no-ask "Hello"
+
+# Machine-readable output (stdout is a single JSON object)
+python3 Helix-cli.py --json --no-ask "What is 3+4?"
+```
+
+bash function wrapper:
+
+```bash
+source Helix-cli.sh
+helix_cli "Write a Fibonacci script for me"
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `request` | Request text (positional) | — |
+| `--host` / `--port` | Helix address (admin port; RPC and SSE are same-origin) | `127.0.0.1` / `11556` |
+| `--intent` | Force an intent (`auto` for auto-detection, or one configured in `Helix.json`, e.g. `coding`/`ppt`/`thinking`) | `auto` |
+| `--no-ask` | Non-interactive: auto-reply `N/A` to ask_user | off |
+| `--no-thinking` | Hide Thinking stream output | off |
+| `--json` | stdout emits a single JSON object (`success`/`request_id`/`final_result`/`error`, etc.) | off |
+| `--no-color` | Disable ANSI colors | off |
+| `--timeout` | Overall wait limit (seconds); the server-side request is cancelled on timeout | `600` |
+| `--show-config` | Print the server LLM config (api_key masked) and exit | — |
+| `--list-providers` | List supported LLM providers and exit | — |
+
+Notes:
+
+- **Output contract**: process output (Thinking/node progress/tool calls/errors) → stderr; the final result → stdout. With `--json`, stdout is a single JSON object.
+- **Interrupt & timeout**: Ctrl+C or a timeout first sends a cancellation request (`agent/cancel`) before exiting; exit codes are `0` success / `1` error or timeout / `130` interrupted.
+- **Proxy handling**: requests to `127.0.0.1`/`localhost` bypass the `http_proxy`/`https_proxy` environment proxy; remote addresses follow the environment proxy settings.
+- **Session context**: the CLI interacts with session context through the Web channel and shares session memory with the Web quick-test page.
 
 ## Scheduled Tasks
 
@@ -207,6 +262,8 @@ You can dynamically switch providers and fill in connection parameters from the 
 ```
 ├── Helix.py                  # Main entry (Flask dual ports: API + Admin)
 ├── Helix.json                # Configuration file (LLM/MCP/intents/tools)
+├── Helix-cli.py              # Standalone HTTP CLI (remote Web-channel quick test)
+├── Helix-cli.sh              # helix_cli bash function wrapper
 ├── requirements.txt          # Python dependencies
 ├── README.md                 # Documentation (Chinese)
 ├── README_EN.md              # Documentation (English)

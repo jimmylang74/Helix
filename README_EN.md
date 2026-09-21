@@ -161,7 +161,7 @@ System design document: [design/design.md](design/design.md) (in Chinese; includ
 
 ## Helix CLI Quick Test
 
-`Helix-cli.py` is a terminal quick-test tool: a standalone application that calls a running Helix service over HTTP (Web channel) with no in-process agent runtime — its protocol is identical to the browser quick-test page (Thinking / node progress / final result are pushed over SSE). Thinking output and node progress go to **stderr**; the final result goes to **stdout**, so it can be piped or used in command substitution directly.
+`Helix-cli.py` is a terminal quick-test tool: a standalone application that calls a running Helix service over HTTP (Web channel) with no in-process agent runtime — its protocol is identical to the browser quick-test page (Thinking / node progress / final result are pushed over SSE). By default it prints only the final result (→ **stdout**, ready to pipe or use in command substitution) to keep the terminal clean; pass `--verbose` to watch the full process.
 
 ### Quick Start
 
@@ -201,13 +201,14 @@ helix_cli "Write a Fibonacci script for me"
 | `--no-thinking` | Hide Thinking stream output | off |
 | `--json` | stdout emits a single JSON object (`success`/`request_id`/`final_result`/`error`, etc.) | off |
 | `--no-color` | Disable ANSI colors | off |
+| `--verbose` | Print detailed diagnostics (LLM sending / raw responses / node progress, etc.) | off |
 | `--timeout` | Overall wait limit (seconds); the server-side request is cancelled on timeout | `600` |
 | `--show-config` | Print the server LLM config (api_key masked) and exit | — |
 | `--list-providers` | List supported LLM providers and exit | — |
 
 Notes:
 
-- **Output contract**: process output (Thinking/node progress/tool calls/errors) → stderr; the final result → stdout. With `--json`, stdout is a single JSON object.
+- **Output contract**: by default only the final result (→ stdout) and errors/ask_user interactions (→ stderr) are printed; LLM sending, raw responses, node progress and other diagnostics are off unless `--verbose` is given; Thinking is shown by default, `--no-thinking` hides it. With `--json`, stdout is a single JSON object.
 - **Interrupt & timeout**: Ctrl+C or a timeout first sends a cancellation request (`agent/cancel`) before exiting; exit codes are `0` success / `1` error or timeout / `130` interrupted.
 - **Proxy handling**: requests to `127.0.0.1`/`localhost` bypass the `http_proxy`/`https_proxy` environment proxy; remote addresses follow the environment proxy settings.
 - **Session context**: the CLI interacts with session context through the Web channel and shares session memory with the Web quick-test page.

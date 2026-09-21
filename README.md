@@ -158,7 +158,7 @@ curl -X POST http://localhost:11555/api/rpc \
 
 ## Helix CLI 命令行快速测试
 
-`Helix-cli.py` 是终端版快速测试工具：作为独立应用通过 HTTP 远程调用已运行的 Helix 服务（Web 通道），进程内不启动任何 Agent 实例，协议与浏览器快速测试页完全一致（Thinking / 节点进度 / 最终结果经 SSE 流式推送）。Think 输出与节点进度 → stderr，最终结果 → stdout，可直接管道或命令替换。
+`Helix-cli.py` 是终端版快速测试工具：作为独立应用通过 HTTP 远程调用已运行的 Helix 服务（Web 通道），进程内不启动任何 Agent 实例，协议与浏览器快速测试页完全一致（Thinking / 节点进度 / 最终结果经 SSE 流式推送）。默认仅输出最终结果（→ stdout，可直接管道或命令替换），终端保持简洁；需要观察完整过程时加 `--verbose`。
 
 ### 快速开始
 
@@ -198,13 +198,14 @@ helix_cli "帮我写一个斐波那契脚本"
 | `--no-thinking` | 屏蔽 Thinking 过程输出 | 关 |
 | `--json` | stdout 输出单个 JSON 对象（`success`/`request_id`/`final_result`/`error` 等） | 关 |
 | `--no-color` | 禁用 ANSI 颜色 | 关 |
+| `--verbose` | 输出详细过程信息（LLM Sending / 原始响应 / 节点进度等诊断输出） | 关 |
 | `--timeout` | 整体等待上限（秒），超时尝试取消服务端请求 | `600` |
 | `--show-config` | 列出服务端 LLM 配置（api_key 脱敏）后退出 | — |
 | `--list-providers` | 列出支持的 LLM 供应商后退出 | — |
 
 说明：
 
-- **输出约定**：过程输出（Thinking/节点进度/工具调用/错误）→ stderr；最终结果 → stdout。`--json` 模式下 stdout 为单个 JSON 对象。
+- **输出约定**：默认仅输出最终结果（→ stdout）与错误/ask_user 交互（→ stderr）；LLM Sending、原始响应、节点进度等诊断过程输出默认关闭，`--verbose` 可开启；Thinking 默认显示，`--no-thinking` 关闭。`--json` 模式下 stdout 为单个 JSON 对象。
 - **中断与超时**：Ctrl+C 或超时会先向服务端发送取消请求（`agent/cancel`）再退出；退出码 `0` 成功 / `1` 错误或超时 / `130` 中断。
 - **代理处理**：请求 `127.0.0.1`/`localhost` 时自动绕过 `http_proxy`/`https_proxy` 环境代理；远程地址则按环境代理设置走。
 - **会话上下文**：CLI 经 Web 通道与会话上下文交互，与 Web 快速测试页共享会话记忆。

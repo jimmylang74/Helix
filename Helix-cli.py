@@ -9,8 +9,10 @@
     SSE   {base}/api/status-stream       节点状态 / 最终结果流
 
 默认 base 为 admin 端口 11556（/api/rpc 与两个 SSE 端点同源）；--host/--port
-可指向其他地址。过程输出（Thinking/节点进度/节点结果）→ stderr；最终结果
-→ stdout，可直接管道/命令替换。--json 模式下 stdout 输出单个 JSON 对象。
+可指向其他地址。默认仅输出最终结果（→ stdout，可直接管道/命令替换）与
+错误/ask_user 交互；诊断输出（LLM Sending / 原始响应 / 节点进度等）需
+--verbose 开启，Thinking 默认显示、--no-thinking 关闭。--json 模式下
+stdout 输出单个 JSON 对象。
 """
 
 import argparse
@@ -157,6 +159,7 @@ def _handle_ask_user(base, request_id, question, no_ask, color, out):
 
 def _llm_thread(base, args, request_id, state, out):
     color = state.color
+    verbose = args.verbose
     url = f"{base}/api/llm-stream?request_id={quote(request_id)}"
     try:
         for event in sse_events(url):
@@ -168,22 +171,27 @@ def _llm_thread(base, args, request_id, state, out):
                 if not args.no_thinking:
                     out(_color(color, "cyan", "\n"))
             elif etype in ("assistant", "assistant_delta"):
-                out(_color(color, "dim", event.get("delta") or event.get("content") or ""), end="")
+                if verbose:
+                    out(_color(color, "dim", event.get("delta") or event.get("content") or ""), end="")
             elif etype == "assistant_end":
-                out(_color(color, "dim", "\n"))
+                if verbose:
+                    out(_color(color, "dim", "\n"))
             elif etype == "sending":
-                prov = event.get("provider", "")
-                model = event.get("model", "")
-                params_txt = ""
-                if event.get("temperature") is not None:
-                    params_txt = f" (Temperature={event['temperature']}, Top_p={event.get('top_p')})"
-                out(_color(color, "yellow", f"📤 Sending to LLM: {prov}/{model}{params_txt}"))
+                if verbose:
+                    prov = event.get("provider", "")
+                    model = event.get("model", "")
+                    params_txt = ""
+                    if event.get("temperature") is not None:
+                        params_txt = f" (Temperature={event['temperature']}, Top_p={event.get('top_p')})"
+                    out(_color(color, "yellow", f"📤 Sending to LLM: {prov}/{model}{params_txt}"))
             elif etype in ("tool_call_begin", "tool_call_start"):
-                out(_color(color, "yellow", f"🔧 {event.get('name', 'tool')} ({event.get('id', '')})"))
+                if verbose:
+                    out(_color(color, "yellow", f"🔧 {event.get('name', 'tool')} ({event.get('id', '')})"))
             elif etype == "tool_call_result":
-                name = event.get("name", "")
-                result = event.get("result", "")
-                out(_color(color, "green", f"  → {name} 结果: {str(result)[:200]}"))
+                if verbose:
+                    name = event.get("name", "")
+                    result = event.get("result", "")
+                    out(_color(color, "green", f"  → {name} 结果: {str(result)[:200]}"))
             elif etype == "ask_user":
                 _handle_ask_user(base, request_id, event.get("question", ""), args.no_ask, color, out)
             elif etype == "error":
@@ -199,6 +207,7 @@ def _llm_thread(base, args, request_id, state, out):
 
 def _status_thread(base, args, request_id, state, out):
     color = state.color
+    verbose = args.verbose
     url = f"{base}/api/status-stream?request_id={quote(request_id)}&cursor=0"
     nodes = {}
     last_phase = ""
@@ -208,7 +217,8 @@ def _status_thread(base, args, request_id, state, out):
                 continue
             phase = event.get("orchestrator_phase", "")
             if phase and phase != last_phase:
-                out(_color(color, "bold", f"〔{phase}〕"))
+                if verbose:
+                    out(_color(color, "bold", f"〔{phase}〕"))
                 last_phase = phase
             for node in event.get("task_graph_nodes") or []:
                 nid = node.get("id") or node.get("title")
@@ -216,16 +226,18 @@ def _status_thread(base, args, request_id, state, out):
                 if not nid or (nid in nodes and nodes[nid] == ns):
                     continue
                 nodes[nid] = ns
-                mark = {"Running": "▶", "Done": "✓", "Failed": "✗", "Ready": "▷"}.get(ns, "·")
-                code = ("green" if ns == "Done" else "red" if ns == "Failed"
-                        else "yellow" if ns == "Running" else "dim")
-                out(_color(color, code, f"  {mark} {node.get('title') or nid} [{ns}]"))
+                if verbose:
+                    mark = {"Running": "▶", "Done": "✓", "Failed": "✗", "Ready": "▷"}.get(ns, "·")
+                    code = ("green" if ns == "Done" else "red" if ns == "Failed"
+                            else "yellow" if ns == "Running" else "dim")
+                    out(_color(color, code, f"  {mark} {node.get('title') or nid} [{ns}]"))
             node_result = event.get("node_result")
             if node_result and node_result.get("response"):
-                title = node_result.get("node_title") or node_result.get("node_id") or "节点"
-                out(_color(color, "green", f"▶ 节点结果: {title}"))
-                for seg in str(node_result["response"]).splitlines():
-                    out(f"  {seg}")
+                if verbose:
+                    title = node_result.get("node_title") or node_result.get("node_id") or "节点"
+                    out(_color(color, "green", f"▶ 节点结果: {title}"))
+                    for seg in str(node_result["response"]).splitlines():
+                        out(f"  {seg}")
             with state.lock:
                 if event.get("token_usage"):
                     state.token_usage = event["token_usage"]
@@ -351,6 +363,8 @@ def build_parser():
     p.add_argument("--no-ask", action="store_true", help="非交互：ask_user 自动答复 N/A")
     p.add_argument("--json", action="store_true", help="stdout 输出单个 JSON 对象")
     p.add_argument("--no-color", action="store_true", help="禁用 ANSI 颜色")
+    p.add_argument("--verbose", action="store_true",
+                   help="输出详细过程信息（LLM Sending/原始响应/节点进度等诊断输出，默认关闭）")
     p.add_argument("--host", default=DEFAULT_HOST, help=f"Helix 主机（默认 {DEFAULT_HOST}）")
     p.add_argument("--port", type=int, default=DEFAULT_PORT,
                    help=f"Helix admin 端口（默认 {DEFAULT_PORT}，RPC+SSE 同源）")
@@ -383,7 +397,7 @@ def main(argv=None):
     if args.json:
         print(json.dumps(summary, ensure_ascii=False))
     elif ok:
-        print(summary.get("final_result") or "", end="")
+        print(summary.get("final_result") or "")
         files = summary.get("generated_files") or []
         if files:
             print("\n生成文件:", file=sys.stderr)

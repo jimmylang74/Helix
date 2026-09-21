@@ -12,7 +12,7 @@
   },
   "llm": {
     "provider": "ollama_native",
-    "model": "qwen3.5:27b",
+    "model": "qwen3.8:27b",
     "endpoint": "http://192.168.10.39:11434",
     "api_key": "",
     "verbose": true,

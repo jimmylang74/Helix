@@ -13,4 +13,6 @@ db/
 catch/
 *.bak
 *.log
+mcp/codegraph/node
+mcp/codegraph/.node-extract.*
 

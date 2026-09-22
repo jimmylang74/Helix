@@ -1,0 +1,24 @@
+#!/bin/sh
+# CodeGraph MCP launcher (extracted from oh-my-openagent plugin / ~/.omo/codegraph).
+# Self-contained: ships the official node-v24.16.0-linux-x64 tarball; on first run
+# it is auto-extracted into $DIR/node (gitignored cache), afterwards the cache is
+# used directly. Falls back to system `node` (>=20 <25) if the tarball is missing.
+# --liftoff-only avoids the V8 turboshaft WASM Zone OOM (issues #293/#298).
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+if [ ! -x "$DIR/node" ]; then
+  TARBALL="$DIR/node-v24.16.0-linux-x64.tar.xz"
+  if [ -f "$TARBALL" ] && command -v tar >/dev/null 2>&1 && command -v xz >/dev/null 2>&1; then
+    TMP="$DIR/.node-extract.$$"
+    mkdir -p "$TMP" && \
+    tar -xJf "$TARBALL" -C "$TMP" node-v24.16.0-linux-x64/bin/node 2>/dev/null && \
+    mv "$TMP/node-v24.16.0-linux-x64/bin/node" "$DIR/node" && \
+    chmod +x "$DIR/node"
+    rm -rf "$TMP"
+  fi
+fi
+if [ -x "$DIR/node" ]; then
+  NODE="$DIR/node"
+else
+  NODE="node"
+fi
+exec "$NODE" --liftoff-only "$DIR/lib/dist/bin/codegraph.js" "$@"

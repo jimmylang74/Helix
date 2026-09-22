@@ -134,6 +134,27 @@
       "type": "server",
       "enabled": true,
       "url": "http://192.168.10.39:8005/mcp"
+    },
+    "websearch": {
+      "type": "local",
+      "enabled": true,
+      "command": "python3",
+      "args": [
+        "mcp/websearch/websearch_mcp.py"
+      ],
+      "env": {
+        "WEBSEARCH_PROVIDER": "exa",
+        "EXA_API_KEY": ""
+      }
+    },
+    "codegraph": {
+      "type": "local",
+      "enabled": true,
+      "command": "mcp/codegraph/bin/codegraph",
+      "args": [
+        "serve",
+        "--mcp"
+      ]
     }
   },
   "imbot": {

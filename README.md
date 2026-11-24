@@ -128,6 +128,112 @@ python3 Helix.py --debug
 - **管理控制台**: `http://localhost:11556/`
 - **Helix CLI**: `python3 Helix-cli.py "请求文本"`（详见 [Helix CLI 命令行快速测试](#helix-cli-命令行快速测试)）
 
+## Debian/Ubuntu 安装包
+
+项目根目录提供 `build_deb.sh`，可把当前代码、配置和 Python 依赖打包成 systemd 服务安装包。
+
+### 构建
+
+```bash
+# 生成 dist/helix_1.0.0_<arch>.deb
+./build_deb.sh
+
+# 自定义版本号
+HELIX_VERSION=1.2.3 ./build_deb.sh
+```
+
+构建依赖：`dpkg-deb`、`fakeroot`、`python3` 和 `pip`。脚本会把 `requirements.txt` 中的依赖下载为 wheels 并放进安装包，因此安装时默认不需要联网。
+
+注意：内置 wheels 按构建机器的 Python 版本下载（Ubuntu 24.04 为 Python 3.12）。目标机器的 Python 版本不同时，请改用在线安装模式：
+
+```bash
+HELIX_BUNDLE_WHEELS=0 ./build_deb.sh
+```
+
+### 安装
+
+```bash
+sudo dpkg -i dist/helix_1.0.0_amd64.deb
+
+systemctl status Helix.service
+systemctl enable Helix.service    # 通常安装时已自动 enable
+systemctl start Helix.service
+```
+
+安装包会创建独立的 `helix` 系统用户，并在 `postinst` 中创建虚拟环境、安装依赖、注册并启用 `Helix.service`。默认安装不会改动当前源码目录。
+
+| 内容 | 路径 |
+|------|------|
+| 程序目录 | `/opt/helix` |
+| 配置 | `/opt/helix/Helix.json`（dpkg conffile，升级时保留本地修改） |
+| Python 虚拟环境 | `/var/lib/helix/venv` |
+| 运行时数据 | `/opt/helix/db`、`output`、`download`、`.codegraph` |
+| 日志 | `/var/log/helix`，并通过软链接挂在 `/opt/helix` 下 |
+| systemd unit | `/lib/systemd/system/Helix.service` |
+| logrotate | `/etc/logrotate.d/helix` |
+
+项目内部的相对目录关系与源码一致，`modules/utils/paths.py` 推导出的 `PROJECT_ROOT` 为 `/opt/helix`。
+
+### 与已有 Helix.service 共存
+
+如果机器上已经存在 `/etc/systemd/system/Helix.service`（例如当前开发机），systemd 会优先使用 `/etc` 下的 unit，而不是包里的 `/lib/systemd/system/Helix.service`。安装包会检测到该情况并：
+
+- 保留现有 unit 文件、enable 软链接、进程和工作目录不变；
+- 不执行 `enable`、`start`、`restart` 或 `stop`；
+- 只把包文件安装到独立目录，不会触碰 `/home/jimmy/code/Helix` 下的源码、数据库、日志和配置文件。
+
+这样可以避免正在运行的实例被重新拉起（重启会截断 `debugout.log`、终止 MCP 子进程并重绑 11555/11556/8004 端口）。
+
+### 配置说明
+
+包内 `/opt/helix/Helix.json` 是**最小配置**，不会复制当前开发机上的完整配置，也不会包含任何外部 MCP 服务器、内网地址或 API Key：
+
+```json
+{
+  "server": {
+    "debug": false,
+    "proxy": ""
+  },
+  "llm": {
+    "provider": "ollama_native",
+    "model": "qwen2.5:7b",
+    "endpoint": "http://localhost:11434",
+    "api_key": ""
+  }
+}
+```
+
+- 首次启动时 `ConfigManager` 会把缺失的内置字段补齐，包括默认意图、微信下载目录，以及 `searxng` / `image_search` 两个**本地** MCP 服务器；不会自动添加外部 MCP 服务器。
+- 如需接入外部 MCP 服务，请在安装完成后自行编辑 `/opt/helix/Helix.json` 的 `mcp_servers` 段，或通过管理控制台配置。
+- LLM 默认指向本机 Ollama（`http://localhost:11434`，`qwen2.5:7b`），代理默认关闭；请按实际环境修改。
+- `mcp` 依赖在包内限制为 `1.x`，因为当前 `mcp/weather_mcp.py` 仍使用 `mcp.server.fastmcp`（mcp 2.x 已移除该模块）。
+
+### 容器中验证
+
+最小化安装验证：
+
+```bash
+docker run --rm --user root \
+  -v "$PWD/dist:/dist:ro" ubuntu24.04:dev \
+  bash -lc 'dpkg -i /dist/helix_1.0.0_amd64.deb && dpkg -s helix && ls -l /lib/systemd/system/Helix.service'
+```
+
+带 systemd 的完整验证：
+
+```bash
+docker run -d --name helix-deb-test --user root --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+  -v "$PWD/dist:/dist:ro" ubuntu24.04:dev /lib/systemd/systemd
+
+docker exec helix-deb-test bash -lc 'dpkg -i /dist/helix_1.0.0_amd64.deb'
+docker exec helix-deb-test systemctl status Helix.service
+docker exec helix-deb-test curl -I http://127.0.0.1:11556/
+
+docker rm -f helix-deb-test
+```
+
+已验证内容：安装包可正常 `dpkg -i`；`Helix.service` 为 enabled/active；11555/11556 端口监听；管理控制台返回 HTTP 200；包内最小配置不含外部 MCP 服务器；已有 `/etc/systemd/system/Helix.service` 时安装/卸载均不会修改或停用该 unit。若自行在容器中加入外部 MCP 服务器，相关连接错误可忽略。
+
 ## API 使用
 
 所有请求通过单一入口 `POST /api/rpc` 分发，`method` 字段决定处理逻辑。

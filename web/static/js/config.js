@@ -9,6 +9,7 @@ let confirmModalResolve = null;
 let llmExtraConfig = {};
 let mcpStatusCache = {};
 let mcpServersCache = {};
+let mcpToolsRefreshTimer = null;
 
 async function initConfigPage() {
     if (window.__configInited) return;
@@ -394,6 +395,16 @@ function renderCustomMCPServers(mcpServers) {
     }).join('');
 }
 
+function scheduleMCPToolsRefresh() {
+    // Reconnects can re-register MCP tools; the tool table must follow suit.
+    // Debounce so a burst of state updates triggers a single reload.
+    if (mcpToolsRefreshTimer) clearTimeout(mcpToolsRefreshTimer);
+    mcpToolsRefreshTimer = setTimeout(() => {
+        mcpToolsRefreshTimer = null;
+        loadPlugins();
+    }, 200);
+}
+
 function initMCPStatusStream() {
     if (window.__mcpStatusStream) return;
     const es = new EventSource('/api/mcp-status-stream');
@@ -412,6 +423,7 @@ function initMCPStatusStream() {
                 connected: payload.connected,
                 tools_count: payload.tools_count,
             };
+            scheduleMCPToolsRefresh();
         }
         renderCustomMCPServers(mcpServersCache);
     };
@@ -541,7 +553,7 @@ async function testBuiltinMCP(name) {
     }
 
     const result = await apiCall('mcp.test', { name, config });
-    if (result.success && result.result && result.result.connected) {
+    if (result.success && result.result && result.result.connected && !result.result.error) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
         resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${__('config.mcp.tools')}: ${tools})`;
         resultEl.style.color = 'green';
@@ -688,7 +700,7 @@ async function testCustomMCP() {
     resultEl.textContent = __('config.mcp.testingLabel');
 
     const result = await apiCall('mcp.test', { name, config });
-    if (result.success && result.result && result.result.connected) {
+    if (result.success && result.result && result.result.connected && !result.result.error) {
         const tools = (result.result.tools || []).map(t => t.name).join(', ');
         resultEl.innerHTML = __('config.mcp.testSuccess') + ` (${result.result.tools_count} tools: ${tools})`;
         resultEl.style.color = 'green';

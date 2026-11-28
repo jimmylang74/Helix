@@ -80,17 +80,28 @@ class MCPRegistry:
         # before the client tries to connect.
         self._spawn_server(name, config)
         client = create_mcp_client(name, config)
-        connected = client.connect()
+        try:
+            connected = client.connect()
+            if connected:
+                tools = client.list_tools()
+                if client.tools_discovery_failed:
+                    # Handshake alone is not readiness: leave the server
+                    # disconnected so the monitor keeps retrying discovery.
+                    log_warning(f"MCP Registry: '{name}' connected but tool discovery failed")
+                    client.disconnect()
+                    connected = False
+        except Exception as e:
+            log_error(f"MCP Registry: error initializing '{name}': {e}")
+            connected = False
+
+        # Still register but mark as not connected when discovery failed.
+        with self._clients_lock:
+            self._clients[name] = client
+
         if connected:
-            tools = client.list_tools()
-            with self._clients_lock:
-                self._clients[name] = client
             log_info(f"MCP Registry: connected '{name}' ({len(tools)} tools)")
         else:
             log_error(f"MCP Registry: failed to connect '{name}'")
-            # Still register but mark as not connected
-            with self._clients_lock:
-                self._clients[name] = client
         return client
 
     # ── Built-in HTTP server spawning ─────────────────────────
@@ -200,7 +211,12 @@ class MCPRegistry:
 
     def _reconnect_loop(self):
         while not self._reconnect_stop.wait(self._get_reconnect_interval()):
-            self._check_and_reconnect()
+            try:
+                self._check_and_reconnect()
+            except Exception as e:
+                # A single bad server must never kill monitoring for all
+                # servers; retry on the next interval instead.
+                log_error(f"MCP Registry: reconnect monitor pass failed: {e}")
 
     def _get_reconnect_interval(self) -> float:
         try:
@@ -216,7 +232,11 @@ class MCPRegistry:
         if not self._initialized_flag:
             with self._lifecycle_lock:
                 if not self._initialized_flag:
-                    self.initialize()
+                    try:
+                        self.initialize()
+                    except Exception as e:
+                        log_error(f"MCP Registry: deferred initialization failed: {e}")
+                        return
         for name, client in self.get_all_clients().items():
             if not client.enabled:
                 continue
@@ -225,14 +245,31 @@ class MCPRegistry:
                     log_warning(f"MCP Registry: '{name}' health check failed, marking disconnected")
                     client.disconnect()
                     self._notify_state_change(name, False)
-            else:
+                continue
+            try:
                 server_cfg = (self.config.get("mcp_servers", {}) or {}).get(name, {})
                 if server_cfg.get("spawn"):
                     self._spawn_server(name, server_cfg)
-                if client.connect():
-                    tools = client.list_tools()
-                    log_info(f"MCP Registry: '{name}' reconnected ({len(tools)} tools)")
-                    self._notify_state_change(name, True)
+                if not client.connect():
+                    continue
+                tools = client.list_tools()
+                if client.tools_discovery_failed:
+                    # Handshake succeeded but tools/list did not: stay
+                    # disconnected so the next pass retries discovery and
+                    # no stale "connected with 0 tools" state is published.
+                    log_warning(
+                        f"MCP Registry: '{name}' reconnected but tool discovery failed, retrying"
+                    )
+                    client.disconnect()
+                    continue
+                log_info(f"MCP Registry: '{name}' reconnected ({len(tools)} tools)")
+                self._notify_state_change(name, True)
+            except Exception as e:
+                log_error(f"MCP Registry: error reconnecting '{name}': {e}")
+                try:
+                    client.disconnect()
+                except Exception:
+                    pass
 
     def _notify_state_change(self, name: str, connected: bool):
         if self.on_server_state_change is None:

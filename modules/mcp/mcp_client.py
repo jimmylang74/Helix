@@ -24,6 +24,11 @@ from modules.utils.logger import log_error, log_info, log_tool_call, log_warning
 # MCP Protocol Version
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
+# Tool discovery must be bounded separately from long-running tool calls:
+# a half-open HTTP session may accept the handshake and then hang on
+# tools/list for minutes, which previously killed the reconnect monitor.
+TOOL_DISCOVERY_TIMEOUT = 15.0
+
 
 class MCPError(Exception):
     """MCP protocol error."""
@@ -115,6 +120,9 @@ class MCPClient:
         self.transport_type: str = config.get("type", "local")
         self._connected = False
         self._tools: list[MCPTool] = []
+        # Set when tools/list fails so callers can distinguish a failed
+        # discovery from a server that genuinely exposes zero tools.
+        self._last_tools_error: str | None = None
         self._lock = threading.Lock()
         self._request_id = 0
         self._pending: dict[int, queue.Queue[dict[str, Any]]] = {}
@@ -180,6 +188,7 @@ class MCPClient:
         """Disconnect from the MCP server."""
         self._connected = False
         self._tools = []
+        self._last_tools_error = None
         if self.transport_type == "server":
             if self._active_protocol == "streamable_http":
                 self._disconnect_streamable_http()
@@ -683,6 +692,13 @@ class MCPClient:
 
             return resp.get("result")
 
+        except Exception as e:
+            # Transport errors (e.g. requests ReadTimeoutError on a half-open
+            # session) must be reported as a failed request, not propagated:
+            # the reconnect monitor and tool callers rely on a bool/None result.
+            log_error(f"MCP [{self.name}] request failed: {method} -> {e}")
+            return None
+
         finally:
             self._pending.pop(req_id, None)
 
@@ -732,31 +748,49 @@ class MCPClient:
     # ── Tool Discovery ─────────────────────────────────────────
 
     def list_tools(self) -> list[MCPTool]:
-        """Discover tools from the MCP server."""
+        """Discover tools from the MCP server.
+
+        Never raises: a failed discovery is reported through
+        ``tools_discovery_failed`` so the registry can retry instead of
+        treating a half-open connection as ready with zero tools.
+        """
         if not self._connected:
+            self._last_tools_error = "not connected"
             log_error(f"MCP [{self.name}] not connected")
             return []
 
-        result = self._send_request("tools/list")
-        if not result:
-            log_error(f"MCP [{self.name}] tools/list failed")
-            return []
+        try:
+            result = self._send_request("tools/list", timeout=TOOL_DISCOVERY_TIMEOUT)
+            if not result:
+                self._last_tools_error = "no response from tools/list"
+                log_error(f"MCP [{self.name}] tools/list failed")
+                return []
 
-        tools_data = result.get("tools", [])
-        tools = []
-        for t in tools_data:
-            tool = MCPTool(
-                name=t.get("name", "unknown"),
-                description=t.get("description", ""),
-                input_schema=t.get("inputSchema", t.get("parameters", {})),
-            )
-            tools.append(tool)
+            tools_data = result.get("tools", [])
+            tools = []
+            for t in tools_data:
+                tool = MCPTool(
+                    name=t.get("name", "unknown"),
+                    description=t.get("description", ""),
+                    input_schema=t.get("inputSchema", t.get("parameters", {})),
+                )
+                tools.append(tool)
+        except Exception as e:
+            self._last_tools_error = str(e)
+            log_error(f"MCP [{self.name}] tools/list error: {e}")
+            return []
 
         with self._lock:
             self._tools = tools
+            self._last_tools_error = None
 
         log_info(f"MCP [{self.name}] discovered {len(tools)} tool(s)")
         return tools
+
+    @property
+    def tools_discovery_failed(self) -> bool:
+        """True when the last tools/list attempt failed (vs. a valid empty list)."""
+        return self._last_tools_error is not None
 
     def get_tools(self) -> list[MCPTool]:
         """Get cached tools (re-discover if not yet fetched)."""
@@ -874,6 +908,8 @@ class MCPClient:
                 {"name": t.name, "description": t.description}
                 for t in tools
             ]
+            if self.tools_discovery_failed:
+                result["error"] = "Tool discovery failed"
         except Exception as e:
             result["error"] = str(e)
         finally:
